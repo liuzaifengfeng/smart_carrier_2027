@@ -18,28 +18,29 @@
 robot_chassis:
 ├─ power_system(24V)
 │  ├─ battery_lithium: 24V 原始动力电源 → 直供 6x_motor_bus
-│  ├─ dcdc_19v(24V→19V) → jetson_nano
-│  ├─ dcdc_5v(24V→5V)  → esp32_s3 / scan_module / radar_module / 2x_servo
+│  ├─ dcdc_12v(24V→12V) → servo_control_board (舵机控制板)
+│  │  └─ dcdc_19v(12V→19V) → jetson_nano
+│  ├─ dcdc_5v(24V→5V)  → esp32_s3 / scan_module / radar_module
 ├─ compute_mcu
 │  ├─ jetson_nano: 视觉/AI 算力核心
 │  ├─ esp32_s3: 底层主控(运动/IO/总线)
-│  └─ link: Type-C UART ⇄ 双向 (jetson_nano ↔ esp32_s3)
+│  └─ link: Type-C UART ⇄ 双向通信 (jetson_nano ↔ esp32_s3)
 ├─ sensor_layer
 │  ├─ usb_cam_1: USB → jetson_nano (前向视觉)
 │  ├─ usb_cam_2: USB → jetson_nano (全景/俯视)
 │  ├─ scan_module: UART TTL → esp32_s3 (条码/二维码)
-│  └─ radar_module: UART TTL → jetson_nano (激光/超声波测距)
+│  ├─ radar_module: UART TTL → jetson_nano (激光/超声波测距)
+│  └─ servo_feedback: UART ⇄ esp32_s3 (通过控制板返回状态/负载/角度)
 └─ actuator_layer
-   ├─ 4x_motor_bus: UART BUS ⇄ esp32_s3 (底盘 4x 麦克纳姆轮, 指令/反馈)
-   ├─ 2x_servo/2x_motor: UART/PWM → esp32_s3 (机械爪结构, 转向/云台)
+   ├─ 6x_motor_bus: UART BUS ⇄ esp32_s3 (6x 轮毂/底盘电机, 指令/反馈)
+   └─ 2x_servo: UART ⇄ esp32_s3 → 12V servo_control_board (双独立舵机, 转向/云台)
 ```
 
 **关键接线对应（主控侧）**
 | 外设 | 接主控(ESP32) | 接 jetson_nano | 说明 |
 |---|---|---|---|
-| 4x 底盘麦轮 | ✅ UART BUS | — | 沿用旧 Emm_V5 4 轮运动学 |
-| 2x 机械爪电机 | ✅ UART/PWM | — | 抓取/云台（非底盘） |
-| 2x 舵机 | ✅ PWM/UART | — | 转向/云台 |
+| 6x 轮毂/底盘电机 | ✅ UART BUS | — | 经由双向串行总线控制，直连24V供电 |
+| 12V 舵机控制板 | ✅ UART | — | 控制2个转向/云台舵机并反馈数据 |
 | 二维码扫描 | ✅ UART TTL | — | scan_module |
 | USB 摄像头 ×2 | — | ✅ USB | 前向/俯视视觉 |
 | 雷达模块 | — | ✅ UART | 定位/避障(由 jetson 处理) |
@@ -51,7 +52,7 @@ src/
 ├── main.cpp        # 主控：新赛制状态机 + 机载电脑通信 + 任务码解析
 ├── chassis.h/.cpp  # 底盘运动原语（movepose / GotoPose，麦克纳姆轮）
 ├── Emm_V5.h/.cpp   # 电机驱动协议（原样保留，底层驱动）
-├── pwm.h/.cpp      # 舵机 PWM 驱动（原样保留，角度待标定）
+├── servo.h/.cpp    # UART 总线舵机驱动（Fashion Star 协议，HA8-U25H-M）
 └── ota_service.*   # WiFi + OTA 无线烧录（原样保留）
 ```
 
@@ -89,7 +90,7 @@ src/
 4. **转盘动态抓取**：原料区为旋转转盘（6-10s/圈、转向随机、120°分布）。
 5. **抓取/放置/码垛**：禁止手爪夹持运送，需放上载物台；码垛需高度控制。
 6. **避障**：场地有随机黑色障碍物（φ50×100mm）。
-7. **舵机初始角度**：`pwm.cpp` 内待机械组确认后标定。
+7. **舵机初始角度**：`servo.cpp` / 业务抓取逻辑中待机械组确认后标定。
 
 ## 备份
 原版完整项目已备份至 `../chaoshi_backup_2027/`

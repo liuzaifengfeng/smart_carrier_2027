@@ -32,7 +32,7 @@
 
 #include "Emm_V5.h"
 #include "chassis.h"
-#include "pwm.h"
+#include "servo.h"
 
 // ================= 基础配置 =================
 #define MODE_key 0             // 开机按键(长按进调试模式)
@@ -310,14 +310,14 @@ void Task_Debug_CMD(void *pvParameters) {
                     buffer[bufferIndex] = '\0';
                     char cmd[20]; float p1=0,p2=0,p3=0;
                     if (sscanf(buffer, "%s %f %f %f", cmd, &p1, &p2, &p3) >= 1) {
-                        // [TODO] 按需接入: GOTOpose / movepose / PWM / height / enable 等
+                        // [TODO] 按需接入: GOTOpose / movepose / SERVO / height / enable 等
                         if (strcmp(cmd, "GOTOpose") == 0)     GotoPose(p1,p2,p3,false,false);
                         else if (strcmp(cmd, "GOTORpose") == 0) GotoPose(p1,p2,p3,true,false);
                         else if (strcmp(cmd, "movepose") == 0)  movepose(p1,p2,p3);
-                        else if (strcmp(cmd, "PWM") == 0)       ledcWrite((int)p1, angleToDuty((int)p2));
+                        else if (strcmp(cmd, "SERVO") == 0)     Servo_SetAngle((uint8_t)p1, p2, 500);
                         else if (strcmp(cmd, "En_C") == 0)      Emm_V5_En_Control_all(p1);
                         else if (strcmp(cmd, "help") == 0)
-                            Serial.println("Cmds: GOTOpose GOTORpose movepose PWM En_C");
+                            Serial.println("Cmds: GOTOpose GOTORpose movepose SERVO<id,angle> En_C");
                     }
                     bufferIndex = 0;
                 }
@@ -332,7 +332,7 @@ void Task_Debug_CMD(void *pvParameters) {
 // ================= setup / loop =================
 void setup() {
     Serial.begin(115200);
-    initPWM();
+    Servo_Init();    // 总线舵机初始化 (默认 Serial2: RX=16, TX=15, 115200bps)
     Emm_V5_Init();   // 电机初始化
     // [TODO] 若有传感器/定位硬件, 在此初始化
     FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
