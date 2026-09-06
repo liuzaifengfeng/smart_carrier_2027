@@ -10,7 +10,7 @@ void Emm_V5_Init(void)
   delay(100);
   Emm_V5_Reset_Clog_Pro(0);
   Emm_V5_Reset_CurPos_To_Zero(0);
-  Serial.println("Emm_V5 initialized");
+  Serial.println("[Emm_V5] initialized! UART initialized on SERIAL1");
 }
 
 /**

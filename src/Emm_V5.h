@@ -3,8 +3,8 @@
 
 #include <Arduino.h>
 
-#define SERIAL1_TXD_PIN 18
-#define SERIAL1_RXD_PIN 17
+#define SERIAL1_TXD_PIN 17
+#define SERIAL1_RXD_PIN 18
 
 #define    ABS(x)    ((x) > 0 ? (x) : -(x)) 
 

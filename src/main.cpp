@@ -33,6 +33,7 @@
 #include "Emm_V5.h"
 #include "chassis.h"
 #include "servo.h"
+#include "scanner.h"
 
 // ================= 基础配置 =================
 #define MODE_key 0             // 开机按键(长按进调试模式)
@@ -40,6 +41,8 @@
 #define NUM_LEDS 1
 #define OTA_HOSTNAME "smartcarrier"
 #define VERSION "0.1.0-framework"
+
+CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 
 // 电机使能/同步常量(沿用 Emm_V5)
 #define CHASSIS_MOTOR_1 1
@@ -162,6 +165,21 @@ void vHomeTimerCallback(TimerHandle_t xTimer) {
 }
 
 // ================= 主状态机 =================
+
+// 伪函数: 等待扫码消息队列 (供主状态机在各环节调用)
+// 当前为占位实现, 后续在此补充: 解析任务码 / 匹配物料 / 触发抓取等业务逻辑
+// @param out       输出缓冲区
+// @param len       缓冲区长度
+// @param timeoutMs 阻塞超时(ms), 0=非阻塞
+// @return true 拿到一帧扫码字符串
+static bool waitScannerCode(char *out, uint32_t len, uint32_t timeoutMs) {
+    if (Scanner_WaitCode(out, len, timeoutMs)) {
+        Serial.printf("[SCANNER] recv: %s\n", out);
+        return true;
+    }
+    return false;
+}
+
 void Task_MainStateMachine(void *pvParameters) {
     vTaskDelay(1000 / portTICK_PERIOD_MS);
 
@@ -181,9 +199,18 @@ void Task_MainStateMachine(void *pvParameters) {
             updateDisplay("READ TASK");
             // 方案A: 机器人走到二维码板, 机载电脑读码后发 "task:<码>"
             // 方案B: 机载电脑直接下发任务码
+            // 方案C: 扫码枪读二维码/条码, 从扫码消息队列取任务码
             // [TODO] 移动到二维码板位姿
-            // 等待 taskReceived
-            while (!taskReceived) vTaskDelay(100 / portTICK_PERIOD_MS);
+            while (!taskReceived) {
+                // 非阻塞检查扫码消息队列(伪函数)
+                char scanCode[SCANNER_BUF_LEN];
+                if (waitScannerCode(scanCode, sizeof(scanCode), 0)) {
+                    currentTask = parseTaskCode(scanCode);
+                    taskReceived = currentTask.valid;
+                    Serial.printf("[SCANNER] task code %s\n", currentTask.valid ? "OK" : "ERR");
+                }
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+            }
             updateDisplay(currentTask.valid ? "TASK OK" : "TASK ERR");
             xQueueReset(xVisualTaskQueue); // 清残留信号
             currentState = STATE_GRAB_ROUND1;
@@ -334,13 +361,14 @@ void setup() {
     Serial.begin(115200);
     Servo_Init();    // 总线舵机初始化 (默认 Serial2: RX=16, TX=15, 115200bps)
     Emm_V5_Init();   // 电机初始化
+    Scanner_Init();  // 扫码模块初始化 (软串口 RX=IO4, 9600bps)
     // [TODO] 若有传感器/定位硬件, 在此初始化
     FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
     FastLED.setBrightness(10);
 
-    currentPose = {250, 400, 0};   // [TODO] 初始位姿按实际
+    currentPose = {0, 0, 0};   // [TODO] 初始位姿按实际
     // 注意: 原 initLidar() 已移除, 雷达/定位方案待定
-    init_ota_service("ssid", "password", OTA_HOSTNAME);//调试使用，正式比赛时注释掉
+    init_ota_service("null", "1234567899", OTA_HOSTNAME);//调试使用，正式比赛时注释掉
     leds[0] = CRGB::Red; FastLED.show();
 
     // 一键启动: 物理按键(长按)进入 Release 运行模式
