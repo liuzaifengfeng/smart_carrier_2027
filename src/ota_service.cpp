@@ -69,13 +69,13 @@ static void wifi_task(void *pvParameters) {
 
             if (wifi_ssid != nullptr && wifi_password != nullptr) {
                 if (WiFi.status() != WL_CONNECTED) {
-                    //Serial.println("try connecting to WiFi... " + String(wifi_ssid) + " " + String(wifi_password));
+                    Serial.println("try connecting to WiFi... " + String(wifi_ssid) + " " + String(wifi_password));
                     WiFi.begin(wifi_ssid, wifi_password);
                 }
-            vTaskDelay(pdMS_TO_TICKS(4100000));
+            vTaskDelay(pdMS_TO_TICKS(10000));//未连接，等待10秒后重试连接
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(1000000));
+        vTaskDelay(pdMS_TO_TICKS(30000));//已连接，等待每30秒检查一次WiFi连接状态
     }
 }
 

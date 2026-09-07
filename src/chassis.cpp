@@ -24,18 +24,30 @@ void movepose(bool forward, float speed, bool stop) {
         return;
     }
 
+    vTaskDelay(pdMS_TO_TICKS(5));
+
     if (forward) { // 前进
         Emm_V5_Vel_Control(1, 0, speed, 50, 1);
+        vTaskDelay(pdMS_TO_TICKS(5));
         Emm_V5_Vel_Control(2, 0, speed, 50, 1);
+        vTaskDelay(pdMS_TO_TICKS(5));
         Emm_V5_Vel_Control(3, 1, speed, 50, 1);
+        vTaskDelay(pdMS_TO_TICKS(5));
         Emm_V5_Vel_Control(4, 1, speed, 50, 1);
+        vTaskDelay(pdMS_TO_TICKS(5));
     } else {       // 后退
         Emm_V5_Vel_Control(1, 1, speed, 50, 0);
+        vTaskDelay(pdMS_TO_TICKS(5));
         Emm_V5_Vel_Control(2, 1, speed, 50, 1);
+        vTaskDelay(pdMS_TO_TICKS(5));
         Emm_V5_Vel_Control(3, 0, speed, 50, 1);
+        vTaskDelay(pdMS_TO_TICKS(5));
         Emm_V5_Vel_Control(4, 0, speed, 50, 1);
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
+    vTaskDelay(pdMS_TO_TICKS(5));
     Emm_V5_Synchronous_motion(0);
+    vTaskDelay(pdMS_TO_TICKS(5));
     isMoving = true;
 }
 

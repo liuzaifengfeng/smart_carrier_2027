@@ -39,8 +39,8 @@
 #define MODE_key 0             // 开机按键(长按进调试模式)
 #define LED_PIN 48
 #define NUM_LEDS 1
-#define OTA_HOSTNAME "smartcarrier"
-#define VERSION "0.1.0-framework"
+#define OTA_HOSTNAME "smartcarrier_ESP32S3"
+#define VERSION "0.1.3-framework"
 
 CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 
@@ -164,7 +164,6 @@ void vHomeTimerCallback(TimerHandle_t xTimer) {
     }
 }
 
-// ================= 主状态机 =================
 
 // 伪函数: 等待扫码消息队列 (供主状态机在各环节调用)
 // 当前为占位实现, 后续在此补充: 解析任务码 / 匹配物料 / 触发抓取等业务逻辑
@@ -180,6 +179,7 @@ static bool waitScannerCode(char *out, uint32_t len, uint32_t timeoutMs) {
     return false;
 }
 
+// ================= 主状态机 =================
 void Task_MainStateMachine(void *pvParameters) {
     vTaskDelay(1000 / portTICK_PERIOD_MS);
 
@@ -338,13 +338,19 @@ void Task_Debug_CMD(void *pvParameters) {
                     char cmd[20]; float p1=0,p2=0,p3=0;
                     if (sscanf(buffer, "%s %f %f %f", cmd, &p1, &p2, &p3) >= 1) {
                         // [TODO] 按需接入: GOTOpose / movepose / SERVO / height / enable 等
-                        if (strcmp(cmd, "GOTOpose") == 0)     GotoPose(p1,p2,p3,false,false);
-                        else if (strcmp(cmd, "GOTORpose") == 0) GotoPose(p1,p2,p3,true,false);
-                        else if (strcmp(cmd, "movepose") == 0)  movepose(p1,p2,p3);
-                        else if (strcmp(cmd, "SERVO") == 0)     Servo_SetAngle((uint8_t)p1, p2, 500);
-                        else if (strcmp(cmd, "En_C") == 0)      Emm_V5_En_Control_all(p1);
+                        if (strcmp(cmd, "GOTOpose") == 0) 
+                            {  Serial.printf("GOTOpose %f %f %f\n", p1, p2, p3);  GotoPose(p1,p2,p3,false,false);}
+                        else if (strcmp(cmd, "GOTORpose") == 0) 
+                            {  Serial.printf("GOTORpose %f %f %f\n", p1, p2, p3);  GotoPose(p1,p2,p3,true,false);}
+                        else if (strcmp(cmd, "movepose") == 0) 
+                            {  Serial.printf("movepose %f %f %f\n", p1, p2, p3);  movepose(p1,p2,p3);}
+                        else if (strcmp(cmd, "SERVO") == 0) 
+                            {  Serial.printf("SERVO %f %f\n", p1, p2);  Servo_SetAngle((uint8_t)p1, p2, 500);}
+                        else if (strcmp(cmd, "En_C") == 0) 
+                            {  Serial.printf("En_C %f\n", p1);  Emm_V5_En_Control_all(p1);}
                         else if (strcmp(cmd, "help") == 0)
-                            Serial.println("Cmds: GOTOpose GOTORpose movepose SERVO<id,angle> En_C");
+                            {    Serial.println("Cmds: GOTOpose GOTORpose movepose SERVO<id,angle> En_C");}
+                        else  {    Serial.println("Unknown cmd, try help");}
                     }
                     bufferIndex = 0;
                 }
@@ -359,6 +365,7 @@ void Task_Debug_CMD(void *pvParameters) {
 // ================= setup / loop =================
 void setup() {
     Serial.begin(115200);
+    Serial.printf("version: %s\n", VERSION);
     Servo_Init();    // 总线舵机初始化 (默认 Serial2: RX=16, TX=15, 115200bps)
     Emm_V5_Init();   // 电机初始化
     Scanner_Init();  // 扫码模块初始化 (软串口 RX=IO4, 9600bps)
