@@ -56,7 +56,8 @@ CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 float X_PULSE     = 13.3f;    // X向 每毫米脉冲
 float Y_PULSE     = 13.6f;    // Y向 每毫米脉冲
 float THETA_PULSE = 51.8f;    // 旋转 每度脉冲
-float HEIGHT_PULSE = 32.26f;  // 升降 每毫米脉冲 [TODO]未标定
+float HEIGHT_PULSE = 32.26f;  // 升降机械臂 每毫米脉冲 [TODO]未标定
+float LENGTH_PULSE = 32.26f;  // 伸缩机械臂 每毫米脉冲 [TODO]未标定
 
 
 // ================= 任务码 =================
@@ -99,12 +100,11 @@ TaskCode parseTaskCode(const char* code) {
 // ================= 机载电脑通信(串口)协议 =================
 // 机载电脑 -> ESP32 (通过 Serial0)
 //   "ready"                  : 机载电脑就绪
-//   "task:<任务码>"          : 下发搬运任务码
 //   "color:<编号>"           : 识别到指定颜色物料,请求抓取
 //   "target:<x,y,theta>"     : 下发目标坐标(视觉定位引导)
 //   "ok"                     : 视觉确认到位
 // ESP32 -> 机载电脑
-//   "[TASK:<任务码>]"        : 确认收到任务
+//   "[Task : <任务码>]"        : 确认收到任务
 //   "[GRAB_OK]" / "[PLACE_OK]" : 抓取/放置完成反馈
 
 // ================= 业务状态 =================
@@ -123,7 +123,7 @@ enum RobotState {
 RobotState currentState = STATE_WAIT_START;
 
 // 共享业务变量(由机载电脑指令/任务更新)
-volatile bool ready = false;       // 机载电脑就绪
+volatile bool nano_ready = false;       // 机载电脑就绪
 volatile bool taskReceived = false;// 已拿到任务码
 volatile int  roundProgress = 0;   // 当前轮次已抓/放物料数 0-3
 volatile bool enableRun = false;   // 一键启动触发
@@ -198,9 +198,7 @@ void Task_MainStateMachine(void *pvParameters) {
 
         case STATE_READ_TASK:
             updateDisplay("READ TASK");
-            // 方案A: 机器人走到二维码板, 机载电脑读码后发 "task:<码>"
-            // 方案B: 机载电脑直接下发任务码
-            // 方案C: 扫码枪读二维码/条码, 从扫码消息队列取任务码
+            // 方案: 机器人走到二维码板,扫码枪读二维码/条码, 从扫码消息队列取任务码
             // [TODO] 移动到二维码板位姿
             while (!taskReceived) {
                 // 非阻塞检查扫码消息队列(伪函数)
@@ -223,7 +221,12 @@ void Task_MainStateMachine(void *pvParameters) {
             // [TODO] 转盘同步/跟随, 逐次抓取, 每次抓完放上载物台
             // 规则: 每次抓1个; 物料必须放到机器人上才能抓下一个
             //       不允许手爪夹持运送
-            updateDisplay("GRAB R1");
+            updateDisplay("GRAB R1");// 第一批
+            // [TODO] 抓取3个物料
+            // [TODO] 放置到载物台
+
+            vTaskDelay(10000 / portTICK_PERIOD_MS);//暂时阻塞10s
+
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_PLACE_COARSE1; }
             break;
 
@@ -290,9 +293,13 @@ void Task_Serial_CMD(void *pvParameters) {
                 rxBuffer[rxIdx] = '\0';
                 if (rxIdx > 0) {
                     if (strstr(rxBuffer, "ready")) {
-                        ready = true;
+                        nano_ready = true;
                         Serial.println("ready->");
                     }
+                    else if (strcmp(rxBuffer, "start") == 0) {
+                        enableRun = true;
+                        Serial.println("start->");
+                    }   
                     else if (strncmp(rxBuffer, "task:", 5) == 0) {
                         currentTask = parseTaskCode(rxBuffer + 5);
                         taskReceived = currentTask.valid;
@@ -373,6 +380,8 @@ void setup() {
     FastLED.setBrightness(10);
 
     currentPose = {0, 0, 0};   // [TODO] 初始位姿按实际
+    currentArm = {0, 0};        // [TODO] 初始臂位姿按实际
+
     // 注意: 原 initLidar() 已移除, 雷达/定位方案待定
     init_ota_service("null", "1234567899", OTA_HOSTNAME);//调试使用，正式比赛时注释掉
     leds[0] = CRGB::Red; FastLED.show();

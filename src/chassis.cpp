@@ -1,8 +1,41 @@
 #include "chassis.h"
 #include "Emm_V5.h"
+#include "servo.h"
 
 // 理想位姿(由主控维护; 真实位姿的获取方案待定)
-RobotPose currentPose = {0, 0, 0};
+//车体位姿——X坐标、Y坐标、Theta角度
+RobotPose currentPose = {0, 0, 0};//X,Y,Theta
+//机械臂位姿——大臂高度、小臂伸出长度、转台角度、夹爪角度
+ArmPose currentArm = {0, 0, 0, 0};//high,length,turret_angle,pawl_angle
+
+
+void MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
+
+        if (currentArm.high - high != 0) {
+            uint8_t dir = (currentArm.high - high > 0) ? 0 : 1;
+            uint32_t pulses = (uint32_t)(fabsf(currentArm.high - high) * HEIGHT_PULSE);
+            Emm_V5_Pos_Control(5, dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+
+        if (currentArm.length - length != 0) {
+            uint8_t dir = (currentArm.length - length > 0) ? 0 : 1;
+            uint32_t pulses = (uint32_t)(fabsf(currentArm.length - length) * LENGTH_PULSE);
+            Emm_V5_Pos_Control(6, dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        
+        if(currentArm.turret_angle - turret_angle != 0) {
+            Servo_SetAngleMTurn(1, turret_angle, speed, 0);
+        }
+
+        if(currentArm.pawl_angle - pawl_angle != 0) {
+            Servo_SetAngleMTurn(2, pawl_angle, speed, 0);
+        }
+
+}
+
+
 
 /**
  * @brief 速度模式直线移动(麦克纳姆轮, 通用)
