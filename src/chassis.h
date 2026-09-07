@@ -19,12 +19,11 @@ extern float THETA_PULSE;  // 旋转 每度脉冲
 extern float HEIGHT_PULSE; // 升降 每毫米脉冲
 
 // ================= 运动原语(麦克纳姆轮, 通用) =================
-void movepose(bool forward, float speed, bool stop);
+void MovePose(bool forward, float speed, bool stop);
 // @brief 速度模式直线移动. forward=前进/后退, speed=mm/s, stop=true停止
 
-void GotoPose(float x, float y, float theta, bool isRelative, bool isAdjust);
+void GotoPose(float x, float y, float theta, bool isRelative);
 // @brief 位置模式移动到位.
 //        isRelative=true 相对移动 / false 绝对移动(需定位)
-//        isAdjust=是否仅微调(不更新理想位姿)
 
 #endif // CHASSIS_H

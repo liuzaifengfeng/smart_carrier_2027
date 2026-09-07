@@ -10,7 +10,7 @@ RobotPose currentPose = {0, 0, 0};
  * @param speed   速度 (mm/s)
  * @param stop    true=停止 false=开始移动
  */
-void movepose(bool forward, float speed, bool stop) {
+void MovePose(bool forward, float speed, bool stop) {
     static bool isMoving = false;
 
     if (stop) {
@@ -27,26 +27,24 @@ void movepose(bool forward, float speed, bool stop) {
     vTaskDelay(pdMS_TO_TICKS(5));
 
     if (forward) { // 前进
-        Emm_V5_Vel_Control(1, 0, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(5));
-        Emm_V5_Vel_Control(2, 0, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(5));
-        Emm_V5_Vel_Control(3, 1, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(5));
-        Emm_V5_Vel_Control(4, 1, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(5));
-    } else {       // 后退
         Emm_V5_Vel_Control(1, 1, speed, 50, 0);
         vTaskDelay(pdMS_TO_TICKS(5));
-        Emm_V5_Vel_Control(2, 1, speed, 50, 1);
+        Emm_V5_Vel_Control(2, 0, speed, 50, 0);
         vTaskDelay(pdMS_TO_TICKS(5));
-        Emm_V5_Vel_Control(3, 0, speed, 50, 1);
+        Emm_V5_Vel_Control(3, 1, speed, 50, 0);
         vTaskDelay(pdMS_TO_TICKS(5));
-        Emm_V5_Vel_Control(4, 0, speed, 50, 1);
+        Emm_V5_Vel_Control(4, 0, speed, 50, 0);
+        vTaskDelay(pdMS_TO_TICKS(5));
+    } else {       // 后退
+        Emm_V5_Vel_Control(1, 0, speed, 50, 0);
+        vTaskDelay(pdMS_TO_TICKS(5));
+        Emm_V5_Vel_Control(2, 1, speed, 50, 0);
+        vTaskDelay(pdMS_TO_TICKS(5));
+        Emm_V5_Vel_Control(3, 0, speed, 50, 0);
+        vTaskDelay(pdMS_TO_TICKS(5));
+        Emm_V5_Vel_Control(4, 1, speed, 50, 0);
         vTaskDelay(pdMS_TO_TICKS(5));
     }
-    vTaskDelay(pdMS_TO_TICKS(5));
-    Emm_V5_Synchronous_motion(0);
     vTaskDelay(pdMS_TO_TICKS(5));
     isMoving = true;
 }
@@ -54,11 +52,10 @@ void movepose(bool forward, float speed, bool stop) {
 /**
  * @brief 位置模式移动到位(麦克纳姆轮运动学, 通用)
  * @param isRelative true=相对坐标 false=绝对坐标
- * @param isAdjust   微调标志(是否更新理想位姿)
  * 注意: 4 轮同向=平移, 4 轮同转向=原地旋转. 具体轮序(direction)
  *       需按实际电机接线确认. [TODO]
  */
-void GotoPose(float x, float y, float theta, bool isRelative, bool isAdjust) {
+void GotoPose(float x, float y, float theta, bool isRelative) {
     int speed = 80;   // 移动速度
 
     if (isRelative) {
@@ -66,31 +63,40 @@ void GotoPose(float x, float y, float theta, bool isRelative, bool isAdjust) {
         if (x != 0) {
             uint8_t dir = (x > 0) ? 0 : 1;
             uint32_t pulses = (uint32_t)(fabsf(x) * X_PULSE);
-            Emm_V5_Pos_Control(1, dir,          speed, 50, pulses, 0, 1);
-            Emm_V5_Pos_Control(2, dir==0?1:0,    speed, 50, pulses, 0, 1);
-            Emm_V5_Pos_Control(3, dir,          speed, 50, pulses, 0, 1);
-            Emm_V5_Pos_Control(4, dir==0?1:0,    speed, 50, pulses, 0, 1);
-            Emm_V5_Synchronous_motion(0);
+            Emm_V5_Pos_Control(1, dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            Emm_V5_Pos_Control(2, dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            Emm_V5_Pos_Control(3, !dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            Emm_V5_Pos_Control(4, !dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(100));
         }
         // 平移 Y
         if (y != 0) {
             uint8_t dir = (y > 0) ? 0 : 1;
             uint32_t pulses = (uint32_t)(fabsf(y) * Y_PULSE);
-            Emm_V5_Pos_Control(1, dir, speed, 50, pulses, 0, 1);
-            Emm_V5_Pos_Control(2, dir, speed, 50, pulses, 0, 1);
-            Emm_V5_Pos_Control(3, dir==0?1:0, speed, 50, pulses, 0, 1);
-            Emm_V5_Pos_Control(4, dir==0?1:0, speed, 50, pulses, 0, 1);
-            Emm_V5_Synchronous_motion(0);
+            Emm_V5_Pos_Control(1, !dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            Emm_V5_Pos_Control(2,  dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            Emm_V5_Pos_Control(3, !dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            Emm_V5_Pos_Control(4,  dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(100));
         }
         // 原地旋转
         if (theta != 0) {
-            uint8_t dir = (theta > 0) ? 0 : 1;
+            uint8_t dir = (theta < 0) ? 0 : 1;
             uint32_t pulses = (uint32_t)(fabsf(theta) * THETA_PULSE);
-            Emm_V5_Pos_Control(1, dir, speed, 50, pulses, 0, 1);
-            Emm_V5_Pos_Control(2, dir, speed, 50, pulses, 0, 1);
-            Emm_V5_Pos_Control(3, dir, speed, 50, pulses, 0, 1);
-            Emm_V5_Pos_Control(4, dir, speed, 50, pulses, 0, 1);
-            Emm_V5_Synchronous_motion(0);
+            Emm_V5_Pos_Control(1, dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            Emm_V5_Pos_Control(2, dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            Emm_V5_Pos_Control(3, dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            Emm_V5_Pos_Control(4, dir, speed, 50, pulses, 0, 0);
+            vTaskDelay(pdMS_TO_TICKS(100));
         }
     } else {
         // 绝对坐标: 需先获取当前位姿, 算出位移增量再调用相对移动.

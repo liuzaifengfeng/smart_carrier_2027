@@ -40,7 +40,7 @@
 #define LED_PIN 48
 #define NUM_LEDS 1
 #define OTA_HOSTNAME "smartcarrier_ESP32S3"
-#define VERSION "0.1.3-framework"
+#define VERSION "0.1.4-framework"
 
 CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 
@@ -52,11 +52,12 @@ CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 #define LIFT_MOTOR_5   5      // 升降电机
 #define ARM_MOTOR_6   6      // 机械臂电机
 
-// 运动标定系数(新底盘需重新标定) [TODO]
-float X_PULSE     = 10.5f;    // X向 每毫米脉冲
-float Y_PULSE     = 11.4f;    // Y向 每毫米脉冲
-float THETA_PULSE = 83.4f;    // 旋转 每度脉冲
-float HEIGHT_PULSE = 32.26f;  // 升降 每毫米脉冲
+// 运动标定系数
+float X_PULSE     = 13.3f;    // X向 每毫米脉冲
+float Y_PULSE     = 13.6f;    // Y向 每毫米脉冲
+float THETA_PULSE = 51.8f;    // 旋转 每度脉冲
+float HEIGHT_PULSE = 32.26f;  // 升降 每毫米脉冲 [TODO]未标定
+
 
 // ================= 任务码 =================
 // 2027赛制任务码格式: 四组三位数 "R1+ P1+ R2+ P2"
@@ -339,17 +340,15 @@ void Task_Debug_CMD(void *pvParameters) {
                     if (sscanf(buffer, "%s %f %f %f", cmd, &p1, &p2, &p3) >= 1) {
                         // [TODO] 按需接入: GOTOpose / movepose / SERVO / height / enable 等
                         if (strcmp(cmd, "GOTOpose") == 0) 
-                            {  Serial.printf("GOTOpose %f %f %f\n", p1, p2, p3);  GotoPose(p1,p2,p3,false,false);}
-                        else if (strcmp(cmd, "GOTORpose") == 0) 
-                            {  Serial.printf("GOTORpose %f %f %f\n", p1, p2, p3);  GotoPose(p1,p2,p3,true,false);}
-                        else if (strcmp(cmd, "movepose") == 0) 
-                            {  Serial.printf("movepose %f %f %f\n", p1, p2, p3);  movepose(p1,p2,p3);}
+                            {  Serial.printf("GOTOpose %0.f, %0.f, %0.f\n", p1, p2, p3);  GotoPose(p1,p2,p3,true);}
+                        else if (strcmp(cmd, "Movepose") == 0) 
+                            {  Serial.printf("Movepose %0.f, %0.f, %0.f\n", p1, p2, p3); MovePose(p1,p2,p3);}
                         else if (strcmp(cmd, "SERVO") == 0) 
-                            {  Serial.printf("SERVO %f %f\n", p1, p2);  Servo_SetAngle((uint8_t)p1, p2, 500);}
+                            {  Serial.printf("SERVO %0.f, %0.f\n", p1, p2);  Servo_SetAngle((uint8_t)p1, p2, 500);}
                         else if (strcmp(cmd, "En_C") == 0) 
-                            {  Serial.printf("En_C %f\n", p1);  Emm_V5_En_Control_all(p1);}
+                            {  Serial.printf("En_C %0.f\n", p1);  Emm_V5_En_Control_all(p1);}
                         else if (strcmp(cmd, "help") == 0)
-                            {    Serial.println("Cmds: GOTOpose GOTORpose movepose SERVO<id,angle> En_C");}
+                            {    Serial.println("Cmds: GOTOpose<x,y,theta> Movepose<forward,speed,stop> SERVO<id,angle> En_C<enable>");}
                         else  {    Serial.println("Unknown cmd, try help");}
                     }
                     bufferIndex = 0;

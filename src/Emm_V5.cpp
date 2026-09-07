@@ -6,7 +6,7 @@
   */
 void Emm_V5_Init(void)
 {
-  Serial1.begin(115200, SERIAL_8N1, SERIAL1_TXD_PIN, SERIAL1_RXD_PIN);
+  Serial1.begin(115200, SERIAL_8N1, SERIAL1_RXD_PIN, SERIAL1_TXD_PIN);
   delay(100);
   Emm_V5_Reset_Clog_Pro(0);
   Emm_V5_Reset_CurPos_To_Zero(0);

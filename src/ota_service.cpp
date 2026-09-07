@@ -11,6 +11,9 @@ static const char* wifi_hostname = nullptr;
 
 static TaskHandle_t xOtaTaskHandle = NULL;
 
+// 声明外部需要暂停的业务任务句柄
+extern TaskHandle_t xTask_MainStateMachine_Handle;
+
 static void ota_task(void *pvParameters) {
     const char* hostname = (const char*)pvParameters;
 
@@ -19,16 +22,31 @@ static void ota_task(void *pvParameters) {
 
     ArduinoOTA.setHostname(hostname);
 
+    // OTA 开始：挂起业务任务，防止总线竞争和中断干扰
     ArduinoOTA.onStart([]() {
         String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
         Serial.println("Start updating " + type);
+
+        // 挂起主状态机任务，独占 CPU 和总线
+        if (xTask_MainStateMachine_Handle != NULL) {
+            vTaskSuspend(xTask_MainStateMachine_Handle);
+        }
     });
-    ArduinoOTA.onEnd([]() { Serial.println("\nEnd"); });
+
+    ArduinoOTA.onEnd([]() { 
+        Serial.println("\nEnd"); 
+    });
+
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
         Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
     });
+
+    // 出错时恢复业务
     ArduinoOTA.onError([](ota_error_t error) {
         Serial.printf("Error[%u]: ", error);
+        if (xTask_MainStateMachine_Handle != NULL) {
+            vTaskResume(xTask_MainStateMachine_Handle);
+        }
     });
 
     ArduinoOTA.begin();
@@ -36,7 +54,7 @@ static void ota_task(void *pvParameters) {
 
     for (;;) {
         ArduinoOTA.handle();
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(2)); // 缩短轮询延时，加快吞吐
     }
 }
 
@@ -52,7 +70,16 @@ static void wifi_task(void *pvParameters) {
 
                 if (!otaStarted && wifi_hostname != nullptr) {
                     otaStarted = true;
-                    xTaskCreate(ota_task, "OTA_Task", 16384, (void*)wifi_hostname, 6, &xOtaTaskHandle);
+                    // 优先级提到 10（高于主状态机的 8），并绑定到 Core 0 与网络栈同核
+                    xTaskCreatePinnedToCore(
+                        ota_task, 
+                        "OTA_Task", 
+                        16384, 
+                        (void*)wifi_hostname, 
+                        10, 
+                        &xOtaTaskHandle, 
+                        0
+                    );
                 }
             }
         } else {
@@ -72,10 +99,10 @@ static void wifi_task(void *pvParameters) {
                     Serial.println("try connecting to WiFi... " + String(wifi_ssid) + " " + String(wifi_password));
                     WiFi.begin(wifi_ssid, wifi_password);
                 }
-            vTaskDelay(pdMS_TO_TICKS(10000));//未连接，等待10秒后重试连接
+                vTaskDelay(pdMS_TO_TICKS(10000));
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(30000));//已连接，等待每30秒检查一次WiFi连接状态
+        vTaskDelay(pdMS_TO_TICKS(30000));
     }
 }
 
