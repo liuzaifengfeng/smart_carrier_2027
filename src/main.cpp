@@ -56,8 +56,8 @@ CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 float X_PULSE     = 13.3f;    // X向 每毫米脉冲
 float Y_PULSE     = 13.6f;    // Y向 每毫米脉冲
 float THETA_PULSE = 51.8f;    // 旋转 每度脉冲
-float HEIGHT_PULSE = 32.26f;  // 升降机械臂 每毫米脉冲 [TODO]未标定
-float LENGTH_PULSE = 32.26f;  // 伸缩机械臂 每毫米脉冲 [TODO]未标定
+float HEIGHT_PULSE = 46.5f;  // 升降机械臂 每毫米脉冲 
+float LENGTH_PULSE = 28.6f;  // 伸缩机械臂 每毫米脉冲 
 
 
 // ================= 任务码 =================
@@ -166,8 +166,7 @@ void vHomeTimerCallback(TimerHandle_t xTimer) {
 }
 
 
-// 伪函数: 等待扫码消息队列 (供主状态机在各环节调用)
-// 当前为占位实现, 后续在此补充: 解析任务码 / 匹配物料 / 触发抓取等业务逻辑
+// @brief 等待扫码消息队列 (供主状态机在各环节调用)
 // @param out       输出缓冲区
 // @param len       缓冲区长度
 // @param timeoutMs 阻塞超时(ms), 0=非阻塞
@@ -350,12 +349,16 @@ void Task_Debug_CMD(void *pvParameters) {
                             {  Serial.printf("GOTOpose %0.f, %0.f, %0.f\n", p1, p2, p3);  GotoPose(p1,p2,p3,true);}
                         else if (strcmp(cmd, "Movepose") == 0) 
                             {  Serial.printf("Movepose %0.f, %0.f, %0.f\n", p1, p2, p3); MovePose(p1,p2,p3);}
+                        else if (strcmp(cmd, "MoveArm_1") == 0) 
+                            {  Serial.printf("MoveArm_1 %0.f, %0.f,  %0.f\n", p1, p2, p3); MoveArm(p1,p2,-1,-1,p3);}
+                        else if (strcmp(cmd, "MoveArm_2") == 0) 
+                            {  Serial.printf("MoveArm_2 %0.f, %0.f,  %0.f\n", p1, p2, p3); MoveArm(-1,-1,p1,p2,p3);}
                         else if (strcmp(cmd, "SERVO") == 0) 
-                            {  Serial.printf("SERVO %0.f, %0.f\n", p1, p2);  Servo_SetAngle((uint8_t)p1, p2, 500);}
+                            {  Serial.printf("SERVO %0.f, %0.f\n", p1, p2);  Servo_SetAngle((uint8_t)p1, p2, 0, 0);}
                         else if (strcmp(cmd, "En_C") == 0) 
                             {  Serial.printf("En_C %0.f\n", p1);  Emm_V5_En_Control_all(p1);}
                         else if (strcmp(cmd, "help") == 0)
-                            {    Serial.println("Cmds: GOTOpose<x,y,theta> Movepose<forward,speed,stop> SERVO<id,angle> En_C<enable>");}
+                            {    Serial.println("Cmds:\n GOTOpose<x,y,theta> \n Movepose<forward,speed,stop> \n MoveArm_1<high,length,speed> \n MoveArm_2<turret_angle,pawl_angle,speed> \n SERVO<id,angle> \n En_C<enable>");}
                         else  {    Serial.println("Unknown cmd, try help");}
                     }
                     bufferIndex = 0;
@@ -368,7 +371,7 @@ void Task_Debug_CMD(void *pvParameters) {
     }
 }
 
-// ================= setup / loop =================
+// ================= setup  =================
 void setup() {
     Serial.begin(115200);
     Serial.printf("version: %s\n", VERSION);
