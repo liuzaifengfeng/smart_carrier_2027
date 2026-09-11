@@ -27,6 +27,18 @@ ROBOT_SIZE_MM = 300.0
 ROBOT_HALF_MM = ROBOT_SIZE_MM / 2.0
 MAX_RELATIVE_MOVE_MM = FIELD_SIZE_MM * math.sqrt(2.0)
 FIELD_EDGE_EPSILON_MM = 1e-6
+ARM_HEIGHT_LIMIT_MM = 200.0
+ARM_TRAVEL_LIMIT_MM = 170.0
+
+# 地图中机械机构的简化俯视尺寸。黄色伸缩臂自身长度保持不变，
+# ``ArmPose.length`` 只改变它沿舵盘中轴线的位置。
+ARM_TURRET_FORWARD_MM = 108.0
+ARM_TURRET_RADIUS_MM = 43.0
+ARM_SLIDER_FIXED_LENGTH_MM = 210.0
+ARM_SLIDER_WIDTH_MM = 34.0
+ARM_SLIDER_HOME_OFFSET_MM = 35.0
+ARM_SLIDER_CENTER_TRAVEL_MM = 65.0
+ARM_JAW_RADIUS_MM = 35.0
 
 
 @dataclass(frozen=True)
@@ -89,9 +101,9 @@ def parse_arm_request(raw_values: list[str]) -> ArmPose:
         raise ValueError("机械臂姿态参数不能包含无穷大或 NaN")
 
     limits = (
-        (0.0, 200.0, "高度"),
-        (0.0, 170.0, "伸出长度"),
-        (-360.0, 360.0, "转台角度"),
+        (0.0, ARM_HEIGHT_LIMIT_MM, "大臂高度"),
+        (0.0, ARM_TRAVEL_LIMIT_MM, "伸缩距离"),
+        (-360.0, 360.0, "舵盘角度"),
         (-360.0, 360.0, "夹爪角度"),
     )
     for value, (minimum, maximum, label) in zip(values, limits):
@@ -103,6 +115,11 @@ def parse_arm_request(raw_values: list[str]) -> ArmPose:
 def world_to_normalized(x: float, y: float) -> tuple[float, float]:
     """将场地坐标转换为左上原点的 0~1 画布坐标。"""
     return 1.0 - y / FIELD_SIZE_MM, 1.0 - x / FIELD_SIZE_MM
+
+
+def normalized_to_world(u: float, v: float) -> tuple[float, float]:
+    """将左上原点的归一化画布坐标转换为场地 X/Y 坐标。"""
+    return FIELD_SIZE_MM * (1.0 - v), FIELD_SIZE_MM * (1.0 - u)
 
 
 def robot_corners(pose: Pose) -> list[tuple[float, float]]:
@@ -186,8 +203,8 @@ COMMAND_FIELDS = {
     "GOTOpose": (("X 增量", "0"), ("Y 增量", "0"), ("θ 增量", "0")),
     "Movepose": (("前进 0/1", "1"), ("速度", "80"), ("停止 0/1", "0")),
     "En_C": (("使能 0/1", "1"),),
-    "MoveArm_1": (("高度", "-1"), ("伸出长度", "-1"), ("速度", "80")),
-    "MoveArm_2": (("转台角度", "-1"), ("夹爪角度", "-1"), ("速度", "80")),
+    "MoveArm_1": (("大臂高度", "-1"), ("伸缩距离", "-1"), ("速度", "80")),
+    "MoveArm_2": (("舵盘角度", "-1"), ("夹爪角度", "-1"), ("速度", "80")),
     "SERVO": (("舵机 ID", "1"), ("角度", "0")),
 }
 
@@ -232,11 +249,11 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
         require_binary(0, "使能参数")
         integer_indexes = {0}
     elif command == "MoveArm_1":
-        require_range_or_skip(0, 0.0, 200.0, "高度")
-        require_range_or_skip(1, 0.0, 170.0, "伸出长度")
+        require_range_or_skip(0, 0.0, ARM_HEIGHT_LIMIT_MM, "大臂高度")
+        require_range_or_skip(1, 0.0, ARM_TRAVEL_LIMIT_MM, "伸缩距离")
         require_range(2, 1.0, 1000.0, "速度")
     elif command == "MoveArm_2":
-        require_range_or_skip(0, -360.0, 360.0, "转台角度")
+        require_range_or_skip(0, -360.0, 360.0, "舵盘角度")
         require_range_or_skip(1, -360.0, 360.0, "夹爪角度")
         require_range(2, 1.0, 1000.0, "速度")
     elif command == "SERVO":
@@ -332,17 +349,41 @@ class FieldCanvas(tk.Canvas):
         super().__init__(master, background="#eef1f4", highlightthickness=0)
         self.current_pose = START_POSES["启停区2"]
         self.target_pose = Pose(600.0, 600.0, 0.0)
+        self.arm_pose = ArmPose(0.0, 0.0, 0.0, 0.0)
         self.target_visible = False
         self.scale = 1.0
         self.field_left = 0.0
         self.field_top = 0.0
+        self.hover_canvas: tuple[float, float] | None = None
         self.bind("<Configure>", self._on_resize)
+        self.bind("<Motion>", self._on_pointer_motion)
+        self.bind("<Leave>", self._on_pointer_leave)
 
     def _on_resize(self, _event: tk.Event) -> None:
         self.redraw()
 
+    def _on_pointer_motion(self, event: tk.Event) -> None:
+        side = FIELD_SIZE_MM * self.scale
+        inside_field = (
+            self.field_left <= event.x <= self.field_left + side
+            and self.field_top <= event.y <= self.field_top + side
+        )
+        self.hover_canvas = (
+            (float(event.x), float(event.y)) if inside_field else None
+        )
+        self._draw_hover_overlay()
+
+    def _on_pointer_leave(self, _event: tk.Event) -> None:
+        self.hover_canvas = None
+        self.delete("hover_overlay")
+
     def set_current_pose(self, pose: Pose) -> None:
         self.current_pose = pose
+        self.redraw()
+
+    def set_arm_pose(self, pose: ArmPose) -> None:
+        """更新地图中当前小车携带的机械机构姿态。"""
+        self.arm_pose = pose
         self.redraw()
 
     def set_start_pose(self, pose: Pose) -> None:
@@ -371,6 +412,13 @@ class FieldCanvas(tk.Canvas):
             self.field_top + v * FIELD_SIZE_MM * self.scale,
         )
 
+    def canvas_to_world(self, canvas_x: float, canvas_y: float) -> tuple[float, float]:
+        """将有效场地区域内的画布位置转换为场地毫米坐标。"""
+        side = FIELD_SIZE_MM * self.scale
+        u = (canvas_x - self.field_left) / side
+        v = (canvas_y - self.field_top) / side
+        return normalized_to_world(u, v)
+
     def _world_rect(self, x_min: float, x_max: float, y_min: float,
                     y_max: float) -> tuple[float, float, float, float]:
         points = (
@@ -398,6 +446,150 @@ class FieldCanvas(tk.Canvas):
         left, top = self.world_to_canvas(x + inner, y + inner)
         right, bottom = self.world_to_canvas(x - inner, y - inner)
         self.create_oval(left, top, right, bottom, outline="#60666d")
+
+    def _robot_local_to_canvas(
+        self, pose: Pose, forward: float, lateral: float
+    ) -> tuple[float, float]:
+        """把车体局部坐标转换到画布；前为 +forward，左为 +lateral。"""
+        angle = math.radians(pose.theta)
+        world_x = pose.x + forward * math.cos(angle) - lateral * math.sin(angle)
+        world_y = pose.y + forward * math.sin(angle) + lateral * math.cos(angle)
+        return self.world_to_canvas(world_x, world_y)
+
+    def _draw_arm_overlay(self, pose: Pose) -> None:
+        """在当前小车上绘制由四个机械参数驱动的俯视简图。"""
+        arm = self.arm_pose
+        turret_angle = math.radians(arm.turret_angle)
+        travel_ratio = max(0.0, min(arm.length / ARM_TRAVEL_LIMIT_MM, 1.0))
+        pivot_forward = ARM_TURRET_FORWARD_MM
+
+        def arm_point(along: float, across: float = 0.0) -> tuple[float, float]:
+            forward = (
+                pivot_forward
+                + along * math.cos(turret_angle)
+                - across * math.sin(turret_angle)
+            )
+            lateral = along * math.sin(turret_angle) + across * math.cos(
+                turret_angle
+            )
+            return self._robot_local_to_canvas(pose, forward, lateral)
+
+        pivot = self._robot_local_to_canvas(pose, pivot_forward, 0.0)
+
+        # 灰色总弧代表大臂限高；橙色从弧线中点向两侧按高度占比填充。
+        arc_radius = 84.0
+        arc_center_deg = 180.0
+        arc_half_span_deg = 64.0
+
+        def height_arc(start_deg: float, end_deg: float) -> list[float]:
+            span = end_deg - start_deg
+            steps = max(2, int(abs(span) / 5.0))
+            points: list[float] = []
+            for index in range(steps + 1):
+                angle = math.radians(start_deg + span * index / steps)
+                px, py = self._robot_local_to_canvas(
+                    pose,
+                    pivot_forward + arc_radius * math.cos(angle),
+                    arc_radius * math.sin(angle),
+                )
+                points.extend((px, py))
+            return points
+
+        arc_width = max(4, int(round(27.0 * self.scale)))
+        self.create_line(
+            *height_arc(
+                arc_center_deg - arc_half_span_deg,
+                arc_center_deg + arc_half_span_deg,
+            ),
+            fill="#747a80",
+            width=arc_width,
+            capstyle=tk.ROUND,
+            joinstyle=tk.ROUND,
+        )
+        height_ratio = max(0.0, min(arm.high / ARM_HEIGHT_LIMIT_MM, 1.0))
+        if height_ratio > 0.0:
+            filled_half_span = arc_half_span_deg * height_ratio
+            self.create_line(
+                *height_arc(
+                    arc_center_deg - filled_half_span,
+                    arc_center_deg + filled_half_span,
+                ),
+                fill="#f5a45d",
+                width=arc_width,
+                capstyle=tk.ROUND,
+                joinstyle=tk.ROUND,
+            )
+
+        # 舵盘固定在车头中线上，伸缩臂绕其圆心旋转。
+        turret_radius_px = ARM_TURRET_RADIUS_MM * self.scale
+        self.create_oval(
+            pivot[0] - turret_radius_px,
+            pivot[1] - turret_radius_px,
+            pivot[0] + turret_radius_px,
+            pivot[1] + turret_radius_px,
+            outline="#ef2525",
+            width=max(4, int(round(18.0 * self.scale))),
+        )
+
+        # 黄色矩形长度恒定，length 参数只负责沿其长中轴线平移。
+        slider_center = (
+            ARM_SLIDER_HOME_OFFSET_MM
+            + travel_ratio * ARM_SLIDER_CENTER_TRAVEL_MM
+        )
+        half_length = ARM_SLIDER_FIXED_LENGTH_MM / 2.0
+        half_width = ARM_SLIDER_WIDTH_MM / 2.0
+        slider_points: list[float] = []
+        for along, across in (
+            (slider_center + half_length, half_width),
+            (slider_center + half_length, -half_width),
+            (slider_center - half_length, -half_width),
+            (slider_center - half_length, half_width),
+        ):
+            slider_points.extend(arm_point(along, across))
+        self.create_polygon(
+            *slider_points,
+            fill="#ffe000",
+            outline="#d7b900",
+            width=max(1, int(round(5.0 * self.scale))),
+        )
+
+        # 两个半圆形夹爪共用黄色矩形前端中点。每爪相对中轴线转动
+        # pawl_angle，因此两爪轴线夹角为 |pawl_angle| * 2。
+        jaw_base_along = slider_center + half_length
+        jaw_angle = math.radians(max(-80.0, min(arm.pawl_angle, 80.0)))
+        jaw_width = max(4, int(round(19.0 * self.scale)))
+        jaw_steps = 18
+        for side_sign in (-1.0, 1.0):
+            jaw_axis = turret_angle + side_sign * jaw_angle
+            axis_forward = math.cos(jaw_axis)
+            axis_lateral = math.sin(jaw_axis)
+            normal_forward = -axis_lateral
+            normal_lateral = axis_forward
+            jaw_points: list[float] = []
+            for index in range(jaw_steps + 1):
+                parameter = math.pi * (1.0 - index / jaw_steps)
+                along_axis = ARM_JAW_RADIUS_MM * (1.0 + math.cos(parameter))
+                outward = side_sign * ARM_JAW_RADIUS_MM * math.sin(parameter)
+                forward = (
+                    pivot_forward
+                    + jaw_base_along * math.cos(turret_angle)
+                    + along_axis * axis_forward
+                    + outward * normal_forward
+                )
+                lateral = (
+                    jaw_base_along * math.sin(turret_angle)
+                    + along_axis * axis_lateral
+                    + outward * normal_lateral
+                )
+                jaw_points.extend(self._robot_local_to_canvas(pose, forward, lateral))
+            self.create_line(
+                *jaw_points,
+                fill="#111111",
+                width=jaw_width,
+                capstyle=tk.ROUND,
+                joinstyle=tk.ROUND,
+                smooth=True,
+            )
 
     def _draw_robot(self, pose: Pose, *, target: bool) -> None:
         canvas_points: list[float] = []
@@ -438,13 +630,20 @@ class FieldCanvas(tk.Canvas):
             arrow=tk.LAST,
             arrowshape=(12, 14, 5),
         )
+        label_px = (
+            center_px
+            if target
+            else self._robot_local_to_canvas(pose, -62.0, 0.0)
+        )
         self.create_text(
-            center_px[0],
-            center_px[1],
+            label_px[0],
+            label_px[1],
             text=label,
             fill="#ffffff" if not target else color,
             font=("Microsoft YaHei UI", 9, "bold"),
         )
+        if not target:
+            self._draw_arm_overlay(pose)
 
     def _draw_rulers(self, field_right: float, field_bottom: float) -> None:
         """按右下角原点绘制 X/Y 毫米刻度。"""
@@ -512,6 +711,76 @@ class FieldCanvas(tk.Canvas):
             fill="#343a40",
             font=("Microsoft YaHei UI", 9, "bold"),
         )
+
+    def _draw_hover_overlay(self) -> None:
+        """绘制贯穿场地边界的鼠标十字准线与当前位置标签。"""
+        self.delete("hover_overlay")
+        if self.hover_canvas is None:
+            return
+
+        cursor_x, cursor_y = self.hover_canvas
+        world_x, world_y = self.canvas_to_world(cursor_x, cursor_y)
+        field_right = self.field_left + FIELD_SIZE_MM * self.scale
+        field_bottom = self.field_top + FIELD_SIZE_MM * self.scale
+        crosshair_color = "#d9342b"
+        overlay_tag = "hover_overlay"
+
+        self.create_line(
+            cursor_x,
+            self.field_top,
+            cursor_x,
+            field_bottom,
+            fill=crosshair_color,
+            width=1,
+            dash=(6, 4),
+            tags=(overlay_tag,),
+        )
+        self.create_line(
+            self.field_left,
+            cursor_y,
+            field_right,
+            cursor_y,
+            fill=crosshair_color,
+            width=1,
+            dash=(6, 4),
+            tags=(overlay_tag,),
+        )
+
+        place_left = cursor_x + 190.0 > field_right
+        place_above = cursor_y + 42.0 > field_bottom
+        text_x = cursor_x - 12.0 if place_left else cursor_x + 12.0
+        text_y = cursor_y - 12.0 if place_above else cursor_y + 12.0
+        anchor = (
+            "se"
+            if place_left and place_above
+            else "ne"
+            if place_left
+            else "sw"
+            if place_above
+            else "nw"
+        )
+        text_item = self.create_text(
+            text_x,
+            text_y,
+            text=f"X {world_x:.0f} mm   Y {world_y:.0f} mm",
+            anchor=anchor,
+            fill="#17232d",
+            font=("Microsoft YaHei UI", 9, "bold"),
+            tags=(overlay_tag,),
+        )
+        text_box = self.bbox(text_item)
+        if text_box is not None:
+            background = self.create_rectangle(
+                text_box[0] - 6,
+                text_box[1] - 4,
+                text_box[2] + 6,
+                text_box[3] + 4,
+                fill="#fffdf2",
+                outline="#a76b24",
+                width=1,
+                tags=(overlay_tag,),
+            )
+            self.tag_lower(background, text_item)
 
     def redraw(self) -> None:
         width = max(self.winfo_width(), 300)
@@ -599,10 +868,11 @@ class FieldCanvas(tk.Canvas):
         if self.target_visible:
             self._draw_robot(self.target_pose, target=True)
         self._draw_robot(self.current_pose, target=False)
+        self._draw_hover_overlay()
 
 
 class ArmCanvas(tk.Canvas):
-    """机械臂轻量示意图：侧视升降/伸出，俯视转台/夹爪。"""
+    """机械臂轻量示意图：侧视升降/伸出，俯视舵盘/夹爪。"""
 
     # 独立 Canvas 重绘结构参考 MIT 项目：
     # https://github.com/NuclearVenom/Robot-Arm-Simulator-2D
@@ -632,11 +902,11 @@ class ArmCanvas(tk.Canvas):
         mast_x = width * 0.24
         mast_top = 31.0
         mast_bottom = split_y - 18.0
-        carriage_y = mast_bottom - self._ratio(self.pose.high, 200.0) * (
+        carriage_y = mast_bottom - self._ratio(self.pose.high, ARM_HEIGHT_LIMIT_MM) * (
             mast_bottom - mast_top
         )
         boom_start = mast_x + 14.0
-        boom_length = 38.0 + self._ratio(self.pose.length, 170.0) * max(
+        boom_length = 38.0 + self._ratio(self.pose.length, ARM_TRAVEL_LIMIT_MM) * max(
             width - boom_start - 48.0, 30.0
         )
         boom_end = boom_start + boom_length
@@ -700,7 +970,7 @@ class ArmCanvas(tk.Canvas):
     def _draw_top_view(self, width: float, height: float, split_y: float) -> None:
         center_x = width / 2.0
         center_y = split_y + (height - split_y) * 0.56
-        reach = 28.0 + self._ratio(self.pose.length, 170.0) * min(
+        reach = 28.0 + self._ratio(self.pose.length, ARM_TRAVEL_LIMIT_MM) * min(
             width * 0.22, (height - split_y) * 0.28
         )
         turret_angle = math.radians(self.pose.turret_angle)
@@ -711,7 +981,7 @@ class ArmCanvas(tk.Canvas):
         self.create_text(
             10,
             split_y + 7,
-            text="俯视：转台 / 夹爪",
+            text="俯视：舵盘 / 夹爪",
             anchor="nw",
             fill="#263746",
             font=("Microsoft YaHei UI", 9, "bold"),
@@ -751,7 +1021,7 @@ class ArmCanvas(tk.Canvas):
         self.create_text(
             width - 10,
             split_y + 7,
-            text=f"转台 {self.pose.turret_angle:.0f}°   夹爪 {self.pose.pawl_angle:.0f}°",
+            text=f"舵盘 {self.pose.turret_angle:.0f}°   夹爪 {self.pose.pawl_angle:.0f}°",
             anchor="ne",
             fill="#44515c",
             font=("Microsoft YaHei UI", 8),
@@ -911,9 +1181,9 @@ class UpperComputerApp:
         )
         arm_controls.pack(fill=tk.X)
         arm_fields = (
-            ("high", "高度", "-1", "mm"),
-            ("length", "伸出长度", "-1", "mm"),
-            ("turret_angle", "转台角度", "-1", "°"),
+            ("high", "大臂高度", "-1", "mm"),
+            ("length", "伸缩距离", "-1", "mm"),
+            ("turret_angle", "舵盘角度", "-1", "°"),
             ("pawl_angle", "夹爪角度", "-1", "°"),
             ("speed", "速度", "80", "mm/s"),
         )
@@ -937,7 +1207,7 @@ class UpperComputerApp:
         ).grid(row=5, column=0, columnspan=3, sticky="ew", pady=(7, 3))
         ttk.Button(
             arm_controls,
-            text="发送转台 / 夹爪（MoveArm_2）",
+            text="发送舵盘 / 夹爪（MoveArm_2）",
             command=lambda: self.send_arm_command("MoveArm_2"),
         ).grid(row=6, column=0, columnspan=3, sticky="ew", pady=3)
 
@@ -1179,9 +1449,10 @@ class UpperComputerApp:
             return
         preview = merge_arm_pose(self.arm_estimate, requested)
         self.arm_preview.set_pose(preview)
+        self.field.set_arm_pose(preview)
         self.arm_status_var.set(
             f"输入预览：H={preview.high:g} mm，L={preview.length:g} mm，"
-            f"转台={preview.turret_angle:g}°，夹爪={preview.pawl_angle:g}°"
+            f"舵盘={preview.turret_angle:g}°，夹爪={preview.pawl_angle:g}°"
         )
 
     def send_arm_command(self, command: str) -> None:
@@ -1201,7 +1472,7 @@ class UpperComputerApp:
                 self.arm_vars["speed"].get(),
             ]
             request_values = ["-1", "-1", raw_values[0], raw_values[1]]
-            description = "转台 / 夹爪"
+            description = "舵盘 / 夹爪"
         else:
             raise ValueError(f"不支持的机械臂命令：{command}")
 
@@ -1273,6 +1544,11 @@ class UpperComputerApp:
 def run_self_test() -> None:
     assert world_to_normalized(0.0, 0.0) == (1.0, 1.0)
     assert world_to_normalized(2400.0, 2400.0) == (0.0, 0.0)
+    assert normalized_to_world(1.0, 1.0) == (0.0, 0.0)
+    assert normalized_to_world(0.0, 0.0) == (2400.0, 2400.0)
+    round_trip = normalized_to_world(*world_to_normalized(725.0, 1330.0))
+    assert math.isclose(round_trip[0], 725.0, abs_tol=1e-9)
+    assert math.isclose(round_trip[1], 1330.0, abs_tol=1e-9)
     assert START_POSES["启停区1"] == Pose(2250.0, 150.0, 180.0)
     assert START_POSES["启停区2"] == Pose(150.0, 150.0, 0.0)
     assert next_start_zone("启停区1") == "启停区2"
@@ -1285,6 +1561,14 @@ def run_self_test() -> None:
     assert ArmCanvas._ratio(-10.0, 200.0) == 0.0
     assert ArmCanvas._ratio(100.0, 200.0) == 0.5
     assert ArmCanvas._ratio(250.0, 200.0) == 1.0
+    full_slider_center = ARM_SLIDER_HOME_OFFSET_MM + ARM_SLIDER_CENTER_TRAVEL_MM
+    assert full_slider_center - ARM_SLIDER_FIXED_LENGTH_MM / 2.0 <= 0.0
+    full_arm_reach = (
+        full_slider_center
+        + ARM_SLIDER_FIXED_LENGTH_MM / 2.0
+        + 2.0 * ARM_JAW_RADIUS_MM
+    )
+    assert full_arm_reach <= ROBOT_SIZE_MM
     assert pose_fits_field(Pose(150.0, 150.0, 0.0))
     assert not pose_fits_field(Pose(100.0, 150.0, 0.0))
     corners = robot_corners(Pose(1200.0, 1200.0, 0.0))
