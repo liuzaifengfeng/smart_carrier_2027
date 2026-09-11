@@ -350,7 +350,7 @@ class FieldCanvas(tk.Canvas):
                 width=3,
             )
             color = "#0b3c5d"
-            label = "估计位置"
+            label = "理想位置"
 
         angle = math.radians(pose.theta)
         arrow_x = pose.x + ROBOT_SIZE_MM * 0.68 * math.cos(angle)
@@ -524,8 +524,8 @@ class UpperComputerApp:
             justify=tk.LEFT,
         ).pack(anchor="w", pady=(0, 14))
 
-        self.current_vars = self._pose_editor(pose_tab, "当前估计姿态", (150.0, 150.0, 0.0))
-        ttk.Button(pose_tab, text="更新估计位置", command=self.update_current).pack(
+        self.current_vars = self._pose_editor(pose_tab, "当前理想姿态", (150.0, 150.0, 0.0))
+        ttk.Button(pose_tab, text="手动校准理想位置", command=self.update_current).pack(
             fill=tk.X, pady=(5, 14)
         )
 
