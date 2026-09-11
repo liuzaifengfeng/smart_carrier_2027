@@ -1,4 +1,4 @@
-"""智能搬运车上位机（第 1 步：离线地图与姿态预览）。
+"""智能搬运车调试上位机：有线串口、场地地图与机械臂姿态预览。
 
 坐标系采用比赛场地图示：右下角为原点，X 轴向上，Y 轴向左，单位 mm。
 角度暂定为 0 度朝 X 正方向，正角由 X 正方向转向 Y 正方向。
@@ -26,6 +26,7 @@ FIELD_SIZE_MM = 2400.0
 ROBOT_SIZE_MM = 300.0
 ROBOT_HALF_MM = ROBOT_SIZE_MM / 2.0
 MAX_RELATIVE_MOVE_MM = FIELD_SIZE_MM * math.sqrt(2.0)
+FIELD_EDGE_EPSILON_MM = 1e-6
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,68 @@ class Pose:
     x: float
     y: float
     theta: float
+
+
+@dataclass(frozen=True)
+class ArmPose:
+    """机械臂四个可控轴的估计姿态。"""
+
+    high: float
+    length: float
+    turret_angle: float
+    pawl_angle: float
+
+
+START_POSES = {
+    "启停区1": Pose(2250.0, 150.0, 180.0),
+    "启停区2": Pose(150.0, 150.0, 0.0),
+}
+
+
+def next_start_zone(current: str) -> str:
+    """返回另一个启停区名称。"""
+    if current == "启停区1":
+        return "启停区2"
+    return "启停区1"
+
+
+def merge_arm_pose(current: ArmPose, requested: ArmPose) -> ArmPose:
+    """按固件约定合并机械臂命令，-1 表示保留当前轴。"""
+    return ArmPose(
+        high=current.high if requested.high == -1.0 else requested.high,
+        length=current.length if requested.length == -1.0 else requested.length,
+        turret_angle=(
+            current.turret_angle
+            if requested.turret_angle == -1.0
+            else requested.turret_angle
+        ),
+        pawl_angle=(
+            current.pawl_angle if requested.pawl_angle == -1.0 else requested.pawl_angle
+        ),
+    )
+
+
+def parse_arm_request(raw_values: list[str]) -> ArmPose:
+    """解析四个机械臂轴输入；-1 沿用固件的“不操作该轴”语义。"""
+    if len(raw_values) != 4:
+        raise ValueError("机械臂姿态参数数量错误")
+    try:
+        values = [float(value.strip()) for value in raw_values]
+    except ValueError as exc:
+        raise ValueError("机械臂姿态参数必须填写数字") from exc
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("机械臂姿态参数不能包含无穷大或 NaN")
+
+    limits = (
+        (0.0, 200.0, "高度"),
+        (0.0, 170.0, "伸出长度"),
+        (-360.0, 360.0, "转台角度"),
+        (-360.0, 360.0, "夹爪角度"),
+    )
+    for value, (minimum, maximum, label) in zip(values, limits):
+        if value != -1.0 and not minimum <= value <= maximum:
+            raise ValueError(f"{label}必须在 {minimum:g}~{maximum:g} 之间，或填 -1")
+    return ArmPose(*values)
 
 
 def world_to_normalized(x: float, y: float) -> tuple[float, float]:
@@ -62,8 +125,11 @@ def robot_corners(pose: Pose) -> list[tuple[float, float]]:
 
 def pose_fits_field(pose: Pose) -> bool:
     """仅检查完整车体是否仍位于 2400×2400 mm 场地内。"""
-    return all(0.0 <= x <= FIELD_SIZE_MM and 0.0 <= y <= FIELD_SIZE_MM
-               for x, y in robot_corners(pose))
+    return all(
+        -FIELD_EDGE_EPSILON_MM <= x <= FIELD_SIZE_MM + FIELD_EDGE_EPSILON_MM
+        and -FIELD_EDGE_EPSILON_MM <= y <= FIELD_SIZE_MM + FIELD_EDGE_EPSILON_MM
+        for x, y in robot_corners(pose)
+    )
 
 
 def shortest_angle_delta(current_deg: float, target_deg: float) -> float:
@@ -120,8 +186,8 @@ COMMAND_FIELDS = {
     "GOTOpose": (("X 增量", "0"), ("Y 增量", "0"), ("θ 增量", "0")),
     "Movepose": (("前进 0/1", "1"), ("速度", "80"), ("停止 0/1", "0")),
     "En_C": (("使能 0/1", "1"),),
-    "MoveArm_1": (("高度", "0"), ("伸出长度", "0"), ("速度", "80")),
-    "MoveArm_2": (("转台角度", "0"), ("夹爪角度", "0"), ("速度", "80")),
+    "MoveArm_1": (("高度", "-1"), ("伸出长度", "-1"), ("速度", "80")),
+    "MoveArm_2": (("转台角度", "-1"), ("夹爪角度", "-1"), ("速度", "80")),
     "SERVO": (("舵机 ID", "1"), ("角度", "0")),
 }
 
@@ -264,7 +330,7 @@ class FieldCanvas(tk.Canvas):
 
     def __init__(self, master: tk.Misc) -> None:
         super().__init__(master, background="#eef1f4", highlightthickness=0)
-        self.current_pose = Pose(150.0, 150.0, 0.0)
+        self.current_pose = START_POSES["启停区2"]
         self.target_pose = Pose(600.0, 600.0, 0.0)
         self.target_visible = False
         self.scale = 1.0
@@ -277,6 +343,13 @@ class FieldCanvas(tk.Canvas):
 
     def set_current_pose(self, pose: Pose) -> None:
         self.current_pose = pose
+        self.redraw()
+
+    def set_start_pose(self, pose: Pose) -> None:
+        """切换启停区时重置当前估计，并清除旧目标轮廓。"""
+        self.current_pose = pose
+        self.target_pose = pose
+        self.target_visible = False
         self.redraw()
 
     def set_target_pose(self, pose: Pose) -> None:
@@ -373,10 +446,77 @@ class FieldCanvas(tk.Canvas):
             font=("Microsoft YaHei UI", 9, "bold"),
         )
 
+    def _draw_rulers(self, field_right: float, field_bottom: float) -> None:
+        """按右下角原点绘制 X/Y 毫米刻度。"""
+        for value in range(0, int(FIELD_SIZE_MM) + 1, 300):
+            major = value % 600 == 0
+            tick_length = 8 if major else 5
+
+            tick_x, _ = self.world_to_canvas(0.0, float(value))
+            self.create_line(
+                tick_x,
+                field_bottom,
+                tick_x,
+                field_bottom + tick_length,
+                fill="#384047",
+            )
+            if major:
+                self.create_text(
+                    tick_x,
+                    field_bottom + 17,
+                    text=str(value),
+                    fill="#343a40",
+                    font=("Microsoft YaHei UI", 8),
+                )
+
+            _, tick_y = self.world_to_canvas(float(value), 0.0)
+            self.create_line(
+                field_right,
+                tick_y,
+                field_right + tick_length,
+                tick_y,
+                fill="#384047",
+            )
+            if major:
+                self.create_text(
+                    field_right + 12,
+                    tick_y,
+                    text=str(value),
+                    anchor="w",
+                    fill="#343a40",
+                    font=("Microsoft YaHei UI", 8),
+                )
+
+        field_bottom_center = (self.field_left + field_right) / 2.0
+        field_right_center = (self.field_top + field_bottom) / 2.0
+        self.create_text(
+            field_bottom_center,
+            field_bottom + 40,
+            text="Y 坐标 / mm（向左增大）",
+            fill="#343a40",
+            font=("Microsoft YaHei UI", 9),
+        )
+        self.create_text(
+            field_right + 54,
+            field_right_center,
+            text="X 坐标 / mm（向上增大）",
+            angle=90,
+            fill="#343a40",
+            font=("Microsoft YaHei UI", 9),
+        )
+        self.create_text(
+            self.field_left,
+            self.field_top - 28,
+            text="场地总尺寸：2400 × 2400 mm    小车：300 × 300 mm",
+            anchor="w",
+            fill="#343a40",
+            font=("Microsoft YaHei UI", 9, "bold"),
+        )
+
     def redraw(self) -> None:
         width = max(self.winfo_width(), 300)
         height = max(self.winfo_height(), 300)
-        margin = 54.0
+        margin = 72.0
         self.scale = max(min((width - 2 * margin) / FIELD_SIZE_MM,
                              (height - 2 * margin) / FIELD_SIZE_MM), 0.05)
         side = FIELD_SIZE_MM * self.scale
@@ -452,18 +592,186 @@ class FieldCanvas(tk.Canvas):
                          fill="#d9342b", width=3, arrow=tk.LAST)
         self.create_line(field_right, field_bottom, field_right - axis_length, field_bottom,
                          fill="#d9342b", width=3, arrow=tk.LAST)
-        self.create_text(field_right + 14, field_bottom - axis_length, text="+X", fill="#d9342b")
-        self.create_text(field_right - axis_length, field_bottom + 14, text="+Y", fill="#d9342b")
-        self.create_text(
-            (self.field_left + field_right) / 2.0,
-            field_bottom + 24,
-            text="2400 mm",
-            fill="#343a40",
-        )
+        self.create_text(field_right - 18, field_bottom - axis_length, text="+X", fill="#d9342b")
+        self.create_text(field_right - axis_length, field_bottom - 14, text="+Y", fill="#d9342b")
+        self._draw_rulers(field_right, field_bottom)
 
         if self.target_visible:
             self._draw_robot(self.target_pose, target=True)
         self._draw_robot(self.current_pose, target=False)
+
+
+class ArmCanvas(tk.Canvas):
+    """机械臂轻量示意图：侧视升降/伸出，俯视转台/夹爪。"""
+
+    # 独立 Canvas 重绘结构参考 MIT 项目：
+    # https://github.com/NuclearVenom/Robot-Arm-Simulator-2D
+    def __init__(self, master: tk.Misc) -> None:
+        super().__init__(
+            master,
+            height=270,
+            background="#f7f8fa",
+            highlightthickness=1,
+            highlightbackground="#b8bec5",
+        )
+        self.pose = ArmPose(0.0, 0.0, 0.0, 0.0)
+        self.bind("<Configure>", self._on_resize)
+
+    def _on_resize(self, _event: tk.Event) -> None:
+        self.redraw()
+
+    def set_pose(self, pose: ArmPose) -> None:
+        self.pose = pose
+        self.redraw()
+
+    @staticmethod
+    def _ratio(value: float, maximum: float) -> float:
+        return max(0.0, min(value / maximum, 1.0))
+
+    def _draw_side_view(self, width: float, split_y: float) -> None:
+        mast_x = width * 0.24
+        mast_top = 31.0
+        mast_bottom = split_y - 18.0
+        carriage_y = mast_bottom - self._ratio(self.pose.high, 200.0) * (
+            mast_bottom - mast_top
+        )
+        boom_start = mast_x + 14.0
+        boom_length = 38.0 + self._ratio(self.pose.length, 170.0) * max(
+            width - boom_start - 48.0, 30.0
+        )
+        boom_end = boom_start + boom_length
+
+        self.create_text(
+            10,
+            9,
+            text="侧视：升降 / 伸出",
+            anchor="nw",
+            fill="#263746",
+            font=("Microsoft YaHei UI", 9, "bold"),
+        )
+        self.create_line(18, mast_bottom + 10, width - 18, mast_bottom + 10, fill="#7b858e")
+        self.create_rectangle(
+            mast_x - 10,
+            mast_top,
+            mast_x + 10,
+            mast_bottom + 10,
+            fill="#c7ccd1",
+            outline="#56616b",
+            width=2,
+        )
+        self.create_rectangle(
+            mast_x - 15,
+            carriage_y - 10,
+            mast_x + 18,
+            carriage_y + 10,
+            fill="#4f9dd9",
+            outline="#145a86",
+            width=2,
+        )
+        self.create_rectangle(
+            boom_start,
+            carriage_y - 6,
+            boom_end,
+            carriage_y + 6,
+            fill="#99a3ad",
+            outline="#4c5862",
+        )
+        pawl_angle = math.radians(self.pose.pawl_angle)
+        pawl_length = 18.0
+        pawl_dx = pawl_length * math.cos(pawl_angle)
+        pawl_dy = pawl_length * math.sin(pawl_angle)
+        self.create_line(
+            boom_end,
+            carriage_y,
+            boom_end + pawl_dx,
+            carriage_y - pawl_dy,
+            fill="#d3543c",
+            width=5,
+        )
+        self.create_text(
+            width - 10,
+            9,
+            text=f"H {self.pose.high:.0f} mm   L {self.pose.length:.0f} mm",
+            anchor="ne",
+            fill="#44515c",
+            font=("Microsoft YaHei UI", 8),
+        )
+
+    def _draw_top_view(self, width: float, height: float, split_y: float) -> None:
+        center_x = width / 2.0
+        center_y = split_y + (height - split_y) * 0.56
+        reach = 28.0 + self._ratio(self.pose.length, 170.0) * min(
+            width * 0.22, (height - split_y) * 0.28
+        )
+        turret_angle = math.radians(self.pose.turret_angle)
+        end_x = center_x + reach * math.cos(turret_angle)
+        end_y = center_y - reach * math.sin(turret_angle)
+
+        self.create_line(8, split_y, width - 8, split_y, fill="#c4c9ce", dash=(5, 4))
+        self.create_text(
+            10,
+            split_y + 7,
+            text="俯视：转台 / 夹爪",
+            anchor="nw",
+            fill="#263746",
+            font=("Microsoft YaHei UI", 9, "bold"),
+        )
+        self.create_line(center_x - 58, center_y, center_x + 58, center_y,
+                         fill="#d7dbe0", dash=(3, 4))
+        self.create_line(center_x, center_y - 43, center_x, center_y + 43,
+                         fill="#d7dbe0", dash=(3, 4))
+        self.create_rectangle(
+            center_x - 17,
+            center_y - 17,
+            center_x + 17,
+            center_y + 17,
+            fill="#c7ccd1",
+            outline="#56616b",
+            width=2,
+        )
+        self.create_line(
+            center_x,
+            center_y,
+            end_x,
+            end_y,
+            fill="#4f9dd9",
+            width=12,
+        )
+        gripper_angle = turret_angle + math.radians(self.pose.pawl_angle)
+        jaw_dx = 14.0 * math.cos(gripper_angle)
+        jaw_dy = 14.0 * math.sin(gripper_angle)
+        self.create_line(
+            end_x - jaw_dx,
+            end_y + jaw_dy,
+            end_x + jaw_dx,
+            end_y - jaw_dy,
+            fill="#d3543c",
+            width=5,
+        )
+        self.create_text(
+            width - 10,
+            split_y + 7,
+            text=f"转台 {self.pose.turret_angle:.0f}°   夹爪 {self.pose.pawl_angle:.0f}°",
+            anchor="ne",
+            fill="#44515c",
+            font=("Microsoft YaHei UI", 8),
+        )
+
+    def redraw(self) -> None:
+        width = float(max(self.winfo_width(), 280))
+        height = float(max(self.winfo_height(), 250))
+        split_y = height * 0.55
+        self.delete("all")
+        self._draw_side_view(width, split_y)
+        self._draw_top_view(width, height, split_y)
+        self.create_text(
+            width - 9,
+            height - 7,
+            text="姿态示意 · 暂不等比例",
+            anchor="se",
+            fill="#7a838b",
+            font=("Microsoft YaHei UI", 8),
+        )
 
 
 class UpperComputerApp:
@@ -475,6 +783,8 @@ class UpperComputerApp:
         self.serial_events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.serial_link = SerialLink(self.serial_events)
         self.command_vars: dict[str, list[tk.StringVar]] = {}
+        self.arm_estimate = ArmPose(0.0, 0.0, 0.0, 0.0)
+        self.arm_vars: dict[str, tk.StringVar] = {}
         self.pending_target: Pose | None = None
         self.pending_relative_move: Pose | None = None
 
@@ -522,7 +832,19 @@ class UpperComputerApp:
             pose_tab,
             text="原点：右下角\n+X：向上    +Y：向左\n单位：mm / °",
             justify=tk.LEFT,
-        ).pack(anchor="w", pady=(0, 14))
+        ).pack(anchor="w", pady=(0, 8))
+
+        start_group = ttk.LabelFrame(pose_tab, text="启动位置", padding=8)
+        start_group.pack(fill=tk.X, pady=(0, 10))
+        self.start_zone_name = "启停区2"
+        self.start_zone_var = tk.StringVar(value="当前选择：启停区2")
+        ttk.Label(start_group, textvariable=self.start_zone_var).pack(anchor="w")
+        self.start_zone_button = ttk.Button(
+            start_group,
+            text="切换到启停区1",
+            command=self.switch_start_zone,
+        )
+        self.start_zone_button.pack(fill=tk.X, pady=(6, 0))
 
         self.current_vars = self._pose_editor(pose_tab, "当前理想姿态", (150.0, 150.0, 0.0))
         ttk.Button(pose_tab, text="手动校准理想位置", command=self.update_current).pack(
@@ -574,8 +896,64 @@ class UpperComputerApp:
             wraplength=285,
         ).pack(anchor="w", pady=5)
 
-        for command in ("MoveArm_1", "MoveArm_2", "SERVO"):
-            self._command_group(arm_tab, command)
+        ttk.Label(
+            arm_tab,
+            text="机械臂姿态预览",
+            font=("Microsoft YaHei UI", 12, "bold"),
+        ).pack(anchor="w", pady=(0, 5))
+        self.arm_preview = ArmCanvas(arm_tab)
+        self.arm_preview.pack(fill=tk.X, pady=(0, 8))
+
+        arm_controls = ttk.LabelFrame(
+            arm_tab,
+            text="机械臂参数（-1 表示不操作该轴）",
+            padding=7,
+        )
+        arm_controls.pack(fill=tk.X)
+        arm_fields = (
+            ("high", "高度", "-1", "mm"),
+            ("length", "伸出长度", "-1", "mm"),
+            ("turret_angle", "转台角度", "-1", "°"),
+            ("pawl_angle", "夹爪角度", "-1", "°"),
+            ("speed", "速度", "80", "mm/s"),
+        )
+        for row, (key, label, default, unit) in enumerate(arm_fields):
+            variable = tk.StringVar(value=default)
+            self.arm_vars[key] = variable
+            ttk.Label(arm_controls, text=f"{label}：").grid(
+                row=row, column=0, sticky="w", pady=2
+            )
+            ttk.Entry(arm_controls, textvariable=variable, width=13).grid(
+                row=row, column=1, sticky="ew", pady=2
+            )
+            ttk.Label(arm_controls, text=unit).grid(
+                row=row, column=2, sticky="w", padx=(5, 0)
+            )
+        arm_controls.columnconfigure(1, weight=1)
+        ttk.Button(
+            arm_controls,
+            text="发送升降 / 伸出（MoveArm_1）",
+            command=lambda: self.send_arm_command("MoveArm_1"),
+        ).grid(row=5, column=0, columnspan=3, sticky="ew", pady=(7, 3))
+        ttk.Button(
+            arm_controls,
+            text="发送转台 / 夹爪（MoveArm_2）",
+            command=lambda: self.send_arm_command("MoveArm_2"),
+        ).grid(row=6, column=0, columnspan=3, sticky="ew", pady=3)
+
+        self.arm_status_var = tk.StringVar(
+            value="输入参数会实时预览；-1 保留上次已发送的估计值。"
+        )
+        ttk.Label(
+            arm_tab,
+            textvariable=self.arm_status_var,
+            foreground="#59636e",
+            justify=tk.LEFT,
+            wraplength=285,
+        ).pack(anchor="w", pady=(7, 0))
+        for variable in self.arm_vars.values():
+            variable.trace_add("write", self.preview_arm_pose)
+        self.preview_arm_pose()
 
         log_tab.rowconfigure(0, weight=1)
         log_tab.columnconfigure(0, weight=1)
@@ -642,6 +1020,23 @@ class UpperComputerApp:
         if not pose_fits_field(pose):
             raise ValueError("该姿态会使 300×300 mm 车体超出场地边界")
         return pose
+
+    def switch_start_zone(self) -> None:
+        zone_name = next_start_zone(self.start_zone_name)
+        pose = START_POSES[zone_name]
+        if self.pending_target is not None:
+            self.append_log("WARN", "切换启停区，已取消等待中的目标回显")
+            self._clear_pending_target()
+        self.start_zone_name = zone_name
+        self.start_zone_var.set(f"当前选择：{zone_name}")
+        self.start_zone_button.configure(text=f"切换到{next_start_zone(zone_name)}")
+        for variable, value in zip(self.current_vars, (pose.x, pose.y, pose.theta)):
+            variable.set(f"{value:g}")
+        self.field.set_start_pose(pose)
+        self.status_var.set(
+            f"已切换到{zone_name}：X={pose.x:.0f} mm，Y={pose.y:.0f} mm，"
+            f"θ={pose.theta:.0f}°"
+        )
 
     def update_current(self) -> None:
         try:
@@ -765,6 +1160,65 @@ class UpperComputerApp:
             return
         self.append_log("TX", line)
 
+    def _arm_request(self) -> ArmPose:
+        return parse_arm_request(
+            [
+                self.arm_vars["high"].get(),
+                self.arm_vars["length"].get(),
+                self.arm_vars["turret_angle"].get(),
+                self.arm_vars["pawl_angle"].get(),
+            ]
+        )
+
+    def preview_arm_pose(self, *_trace_args: str) -> None:
+        """使用全部四轴输入预览；尚未发送的值不会写入开环估计。"""
+        try:
+            requested = self._arm_request()
+        except ValueError as exc:
+            self.arm_status_var.set(f"预览暂停：{exc}")
+            return
+        preview = merge_arm_pose(self.arm_estimate, requested)
+        self.arm_preview.set_pose(preview)
+        self.arm_status_var.set(
+            f"输入预览：H={preview.high:g} mm，L={preview.length:g} mm，"
+            f"转台={preview.turret_angle:g}°，夹爪={preview.pawl_angle:g}°"
+        )
+
+    def send_arm_command(self, command: str) -> None:
+        """分别发送固件当前能解析的两条三参数机械臂命令。"""
+        if command == "MoveArm_1":
+            raw_values = [
+                self.arm_vars["high"].get(),
+                self.arm_vars["length"].get(),
+                self.arm_vars["speed"].get(),
+            ]
+            request_values = [raw_values[0], raw_values[1], "-1", "-1"]
+            description = "升降 / 伸出"
+        elif command == "MoveArm_2":
+            raw_values = [
+                self.arm_vars["turret_angle"].get(),
+                self.arm_vars["pawl_angle"].get(),
+                self.arm_vars["speed"].get(),
+            ]
+            request_values = ["-1", "-1", raw_values[0], raw_values[1]]
+            description = "转台 / 夹爪"
+        else:
+            raise ValueError(f"不支持的机械臂命令：{command}")
+
+        try:
+            requested = parse_arm_request(request_values)
+            line = build_debug_command(command, raw_values)
+            self.serial_link.send_line(line)
+        except (ValueError, RuntimeError, OSError) as exc:
+            messagebox.showerror("命令未发送", str(exc), parent=self.root)
+            return
+        self.arm_estimate = merge_arm_pose(self.arm_estimate, requested)
+        self.append_log("TX", line)
+        self.preview_arm_pose()
+        self.arm_status_var.set(
+            f"{description}命令已发送；图中是开环估计，不表示机械臂已经到位。"
+        )
+
     def send_raw_command(self) -> None:
         line = self.raw_command_var.get().strip()
         if not line:
@@ -819,6 +1273,18 @@ class UpperComputerApp:
 def run_self_test() -> None:
     assert world_to_normalized(0.0, 0.0) == (1.0, 1.0)
     assert world_to_normalized(2400.0, 2400.0) == (0.0, 0.0)
+    assert START_POSES["启停区1"] == Pose(2250.0, 150.0, 180.0)
+    assert START_POSES["启停区2"] == Pose(150.0, 150.0, 0.0)
+    assert next_start_zone("启停区1") == "启停区2"
+    assert next_start_zone("启停区2") == "启停区1"
+    assert all(pose_fits_field(pose) for pose in START_POSES.values())
+    arm = ArmPose(50.0, 80.0, 30.0, 20.0)
+    request = ArmPose(-1.0, 120.0, -1.0, 45.0)
+    assert merge_arm_pose(arm, request) == ArmPose(50.0, 120.0, 30.0, 45.0)
+    assert parse_arm_request(["-1", "120", "-1", "45"]) == request
+    assert ArmCanvas._ratio(-10.0, 200.0) == 0.0
+    assert ArmCanvas._ratio(100.0, 200.0) == 0.5
+    assert ArmCanvas._ratio(250.0, 200.0) == 1.0
     assert pose_fits_field(Pose(150.0, 150.0, 0.0))
     assert not pose_fits_field(Pose(100.0, 150.0, 0.0))
     corners = robot_corners(Pose(1200.0, 1200.0, 0.0))
@@ -845,6 +1311,7 @@ def run_self_test() -> None:
     assert build_debug_command("GOTOpose", ["100", "-20.5", "90"]) == "GOTOpose 100 -20.5 90"
     assert build_debug_command("Movepose", ["1", "80", "0"]) == "Movepose 1 80 0"
     assert build_debug_command("MoveArm_1", ["-1", "100", "80"]) == "MoveArm_1 -1 100 80"
+    assert build_debug_command("MoveArm_2", ["30", "-1", "80"]) == "MoveArm_2 30 -1 80"
     assert build_debug_command("SERVO", ["2", "-45"]) == "SERVO 2 -45"
     assert build_debug_command("help", []) == "help"
     try:
@@ -853,6 +1320,12 @@ def run_self_test() -> None:
         pass
     else:
         raise AssertionError("En_C 非法参数未被拒绝")
+    try:
+        parse_arm_request(["201", "0", "0", "0"])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("机械臂高度非法参数未被拒绝")
     print("self-test passed")
 
 
