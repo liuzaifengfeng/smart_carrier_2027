@@ -219,12 +219,44 @@ def gotopose_echo_matches(text: str, expected: Pose) -> bool:
 
 COMMAND_FIELDS = {
     "GOTOpose": (("X 增量", "0"), ("Y 增量", "0"), ("θ 增量", "0")),
-    "Movepose": (("前进 0/1", "1"), ("速度", "80"), ("停止 0/1", "0")),
+    "Movepose": (
+        ("方向 0前 1后 2左 3右", "0"),
+        ("速度", "80"),
+        ("停止 0/1", "0"),
+    ),
     "En_C": (("使能 0/1", "1"),),
     "MoveArm_1": (("大臂高度", "-1"), ("伸缩距离", "-1"), ("速度", "80")),
     "MoveArm_2": (("舵盘角度", "-1"), ("夹爪角度", "-1"), ("速度", "80")),
     "SERVO": (("舵机 ID", "1"), ("角度", "0")),
 }
+
+# WASD 键与 Movepose 方向参数的对应关系。
+# 元组内容依次为：方向编号、中文动作名称。
+KEYBOARD_DRIVE_DIRECTIONS = {
+    "w": (0, "前进"),
+    "s": (1, "后退"),
+    "a": (2, "向左"),
+    "d": (3, "向右"),
+}
+KEYBOARD_ROTATION_ANGLES = {
+    "q": (90.0, "向左旋转 90°"),
+    "e": (-90.0, "向右旋转 90°"),
+}
+KEYBOARD_SPEED_STEP = 10.0
+KEYBOARD_MIN_SPEED = 10.0
+KEYBOARD_MAX_SPEED = 300.0
+
+
+def adjust_keyboard_speed(raw_speed: str, increase: bool) -> float:
+    """按一个速度档调整 WASD 控制速度，并限制在允许范围内。"""
+    try:
+        speed = float(raw_speed.strip())
+    except ValueError as exc:
+        raise ValueError("当前速度不是有效数字") from exc
+    if not math.isfinite(speed):
+        raise ValueError("当前速度不能是无穷大或 NaN")
+    change = KEYBOARD_SPEED_STEP if increase else -KEYBOARD_SPEED_STEP
+    return min(max(speed + change, KEYBOARD_MIN_SPEED), KEYBOARD_MAX_SPEED)
 
 
 def build_debug_command(command: str, raw_values: list[str]) -> str:
@@ -259,7 +291,8 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
         require_range(1, -MAX_RELATIVE_MOVE_MM, MAX_RELATIVE_MOVE_MM, "Y 增量")
         require_range(2, -360.0, 360.0, "θ 增量")
     elif command == "Movepose":
-        require_binary(0, "前进参数")
+        if values[0] not in (0.0, 1.0, 2.0, 3.0):
+            raise ValueError("方向只能填写 0、1、2、3（前、后、左、右）")
         require_range(1, 0.0, 1000.0, "速度")
         require_binary(2, "停止参数")
         integer_indexes = {0, 2}
@@ -922,7 +955,7 @@ class FieldCanvas(tk.Canvas):
             (150.0, 150.0, "启停区2"),
             (2350.0, 1500.0, "原料区"),
             (1200.0, 2180.0, "暂存区"),
-            (210.0, 1200.0, "粗加工区"),
+            (210.0, 1100.0, "粗加工区"),
             (1200.0, 80.0, "二维码板"),
         )
         for x, y, text in labels:
@@ -1136,6 +1169,9 @@ class UpperComputerApp:
         self.arm_vars: dict[str, tk.StringVar] = {}
         self.pending_target: Pose | None = None
         self.pending_relative_move: Pose | None = None
+        self.pressed_drive_keys: list[str] = []
+        self.active_drive_key: str | None = None
+        self.pressed_rotation_keys: set[str] = set()
 
         container = ttk.Frame(root, padding=10)
         container.pack(fill=tk.BOTH, expand=True)
@@ -1168,10 +1204,13 @@ class UpperComputerApp:
         pose_tab = ttk.Frame(notebook, padding=12)
         chassis_tab = ttk.Frame(notebook, padding=8)
         arm_tab = ttk.Frame(notebook, padding=8)
+        keyboard_tab = ttk.Frame(notebook, padding=12, takefocus=True)
+        self.keyboard_tab = keyboard_tab
         log_tab = ttk.Frame(notebook, padding=8)
         notebook.add(pose_tab, text="姿态")
         notebook.add(chassis_tab, text="底盘")
         notebook.add(arm_tab, text="机械臂")
+        notebook.add(keyboard_tab, text="键盘控制")
         notebook.add(log_tab, text="日志")
 
         ttk.Label(pose_tab, text="姿态调试", font=("Microsoft YaHei UI", 16, "bold")).pack(
@@ -1244,6 +1283,67 @@ class UpperComputerApp:
             foreground="#b03a2e",
             wraplength=285,
         ).pack(anchor="w", pady=5)
+
+        ttk.Label(
+            keyboard_tab,
+            text="键盘遥控",
+            font=("Microsoft YaHei UI", 16, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
+        keyboard_help = ttk.LabelFrame(keyboard_tab, text="按键说明", padding=10)
+        keyboard_help.pack(fill=tk.X, pady=(0, 12))
+        ttk.Label(
+            keyboard_help,
+            text=(
+                "Q：左转 90°     W：前进     E：右转 90°\n\n"
+                "A：向左移动     S：后退     D：向右移动\n\n"
+                "左 Shift：加速 10\n"
+                "右 Shift：减速 10"
+            ),
+            justify=tk.LEFT,
+            font=("Microsoft YaHei UI", 10),
+        ).pack(anchor="w")
+
+        speed_group = ttk.LabelFrame(keyboard_tab, text="当前速度", padding=12)
+        speed_group.pack(fill=tk.X, pady=(0, 12))
+        self.keyboard_speed_var = tk.StringVar()
+        ttk.Label(
+            speed_group,
+            textvariable=self.keyboard_speed_var,
+            foreground="#145a86",
+            font=("Microsoft YaHei UI", 18, "bold"),
+        ).pack(anchor="center")
+        ttk.Label(
+            speed_group,
+            text="范围 10～300，与“底盘 → Movepose → 速度”输入框同步",
+            foreground="#59636e",
+            wraplength=275,
+        ).pack(anchor="center", pady=(6, 0))
+
+        self.keyboard_drive_status_var = tk.StringVar(
+            value="已就绪：点击非输入框区域后即可使用键盘"
+        )
+        ttk.Label(
+            keyboard_tab,
+            textvariable=self.keyboard_drive_status_var,
+            foreground="#145a86",
+            justify=tk.LEFT,
+            wraplength=285,
+        ).pack(anchor="w", pady=(4, 8))
+        ttk.Label(
+            keyboard_tab,
+            text=(
+                "W/A/S/D 按下时运动、松开时停止；Q/E 每次按下旋转一次。"
+                "输入框获得焦点时不会触发键盘遥控。"
+            ),
+            foreground="#59636e",
+            justify=tk.LEFT,
+            wraplength=285,
+        ).pack(anchor="w")
+
+        self.command_vars["Movepose"][1].trace_add(
+            "write", self._update_keyboard_speed_display
+        )
+        self._update_keyboard_speed_display()
 
         ttk.Label(
             arm_tab,
@@ -1320,6 +1420,10 @@ class UpperComputerApp:
 
         self.refresh_ports()
         self.root.after(60, self.poll_serial_events)
+        self.root.bind("<KeyPress>", self._on_keyboard_key_press, add="+")
+        self.root.bind("<KeyRelease>", self._on_keyboard_key_release, add="+")
+        self.root.bind("<FocusOut>", self._on_window_focus_out, add="+")
+        notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed, add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     @staticmethod
@@ -1470,6 +1574,8 @@ class UpperComputerApp:
 
     def toggle_connection(self) -> None:
         if self.serial_link.is_open:
+            self._stop_keyboard_drive()
+            self.pressed_rotation_keys.clear()
             self.serial_link.disconnect()
             if self.pending_target is not None:
                 self._clear_pending_target()
@@ -1508,6 +1614,179 @@ class UpperComputerApp:
             messagebox.showerror("命令未发送", str(exc), parent=self.root)
             return
         self.append_log("TX", line)
+
+    @staticmethod
+    def _is_text_input(widget: tk.Misc) -> bool:
+        """输入框获得焦点时不响应 WASD，避免影响命令和参数录入。"""
+        return isinstance(widget, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Text))
+
+    def _send_keyboard_drive(self, key: str, *, stop: bool) -> bool:
+        """根据一个 WASD 键发送 Movepose 启动或停止命令。"""
+        direction, action = KEYBOARD_DRIVE_DIRECTIONS[key]
+        speed = self.command_vars["Movepose"][1].get()
+        try:
+            line = build_debug_command(
+                "Movepose",
+                [str(direction), speed, "1" if stop else "0"],
+            )
+            self.serial_link.send_line(line)
+        except (ValueError, RuntimeError, OSError) as exc:
+            self.keyboard_drive_status_var.set(f"WASD 命令未发送：{exc}")
+            self.append_log("WARN", f"WASD 命令未发送：{exc}")
+            return False
+
+        self.append_log("TX", f"{line}  # WASD {action}{'停止' if stop else '启动'}")
+        self.keyboard_drive_status_var.set(
+            "WASD：车辆已停止"
+            if stop
+            else f"WASD：{key.upper()} 键按下，车辆{action}"
+        )
+        return True
+
+    def _update_keyboard_speed_display(self, *_trace_args: str) -> None:
+        """把 Movepose 速度实时显示到键盘控制页。"""
+        raw_speed = self.command_vars["Movepose"][1].get().strip()
+        try:
+            speed = float(raw_speed)
+        except ValueError:
+            self.keyboard_speed_var.set("速度无效")
+            return
+        if not math.isfinite(speed):
+            self.keyboard_speed_var.set("速度无效")
+            return
+        self.keyboard_speed_var.set(f"{speed:g}")
+
+    def _change_keyboard_speed(self, *, increase: bool) -> bool:
+        """左 Shift 加速、右 Shift 减速，并在运动中立即应用新速度。"""
+        speed_variable = self.command_vars["Movepose"][1]
+        try:
+            speed = adjust_keyboard_speed(speed_variable.get(), increase)
+        except ValueError as exc:
+            self.keyboard_drive_status_var.set(f"速度调整失败：{exc}")
+            return False
+
+        speed_variable.set(f"{speed:g}")
+        action = "加速" if increase else "减速"
+        self.keyboard_drive_status_var.set(
+            f"{action}：当前速度 {speed:g}"
+        )
+
+        # 如果车辆正在运动，重新发送当前方向，使新速度立即生效。
+        if self.active_drive_key is not None:
+            self._send_keyboard_drive(self.active_drive_key, stop=False)
+        return True
+
+    def _send_keyboard_rotation(self, key: str) -> bool:
+        """按 Q/E 调用相对 GOTOpose，原地向左或向右旋转 90 度。"""
+        angle, action = KEYBOARD_ROTATION_ANGLES[key]
+        if self.pending_target is not None:
+            self.keyboard_drive_status_var.set(
+                "Q/E 未执行：姿态页仍有等待回显的 GOTOpose"
+            )
+            return False
+
+        # 转向前停止 WASD 速度模式，避免两类底盘命令同时执行。
+        self._stop_keyboard_drive()
+        try:
+            line = build_debug_command("GOTOpose", ["0", "0", str(angle)])
+            self.serial_link.send_line(line)
+        except (ValueError, RuntimeError, OSError) as exc:
+            self.keyboard_drive_status_var.set(f"Q/E 命令未发送：{exc}")
+            self.append_log("WARN", f"Q/E 命令未发送：{exc}")
+            return False
+
+        self.append_log("TX", f"{line}  # {key.upper()} {action}")
+        self.keyboard_drive_status_var.set(f"{key.upper()}：{action}")
+        return True
+
+    def _on_keyboard_key_press(self, event: tk.Event) -> str | None:
+        """统一处理 WASD、Q/E 和左右 Shift 的按下事件。"""
+        key = str(event.keysym).lower()
+        if self._is_text_input(event.widget):
+            return None
+
+        if key in KEYBOARD_DRIVE_DIRECTIONS:
+            # 过滤系统键盘连发产生的重复 KeyPress。
+            if key in self.pressed_drive_keys:
+                return "break"
+            self.pressed_drive_keys.append(key)
+
+            # 按住一个方向时再按另一个方向：先停止旧方向，再启动新方向。
+            if self.active_drive_key is not None:
+                self._send_keyboard_drive(self.active_drive_key, stop=True)
+
+            if self._send_keyboard_drive(key, stop=False):
+                self.active_drive_key = key
+            else:
+                self.pressed_drive_keys.remove(key)
+                self.active_drive_key = None
+            return "break"
+
+        if key in KEYBOARD_ROTATION_ANGLES:
+            if key in self.pressed_rotation_keys:
+                return "break"
+            self.pressed_rotation_keys.add(key)
+            self._send_keyboard_rotation(key)
+            return "break"
+
+        if key in ("shift_l", "shift_r"):
+            # 不依赖 Shift 的 KeyRelease 状态；部分 Windows/Tk 环境无法稳定
+            # 区分右 Shift 的抬起事件，导致它只能生效一次。
+            self._change_keyboard_speed(increase=(key == "shift_l"))
+            return "break"
+
+        return None
+
+    def _on_keyboard_key_release(self, event: tk.Event) -> str | None:
+        """处理方向键停止，并清除 Q/E 的防连发状态。"""
+        key = str(event.keysym).lower()
+
+        if key in KEYBOARD_ROTATION_ANGLES:
+            self.pressed_rotation_keys.discard(key)
+            return "break"
+        if key in ("shift_l", "shift_r"):
+            return "break"
+        if key not in KEYBOARD_DRIVE_DIRECTIONS:
+            return None
+        if key not in self.pressed_drive_keys:
+            return None
+
+        self.pressed_drive_keys.remove(key)
+        if key != self.active_drive_key:
+            return "break"
+
+        self._send_keyboard_drive(key, stop=True)
+        self.active_drive_key = None
+
+        # 例如先按住 W，再按住 D，松开 D 后自动恢复 W 前进。
+        if self.pressed_drive_keys:
+            next_key = self.pressed_drive_keys[-1]
+            if self._send_keyboard_drive(next_key, stop=False):
+                self.active_drive_key = next_key
+        return "break"
+
+    def _stop_keyboard_drive(self) -> None:
+        """停止键盘控制，并清除所有按键状态。"""
+        active_key = self.active_drive_key
+        self.active_drive_key = None
+        self.pressed_drive_keys.clear()
+        if active_key is not None and self.serial_link.is_open:
+            self._send_keyboard_drive(active_key, stop=True)
+
+    def _on_window_focus_out(self, _event: tk.Event) -> None:
+        """窗口失去焦点时补发停止命令，防止遗漏 KeyRelease 事件。"""
+        self.root.after(10, self._stop_keyboard_drive_if_unfocused)
+
+    def _stop_keyboard_drive_if_unfocused(self) -> None:
+        if self.root.focus_displayof() is None:
+            self._stop_keyboard_drive()
+            self.pressed_rotation_keys.clear()
+
+    def _on_notebook_tab_changed(self, event: tk.Event) -> None:
+        """进入键盘控制页时自动取得焦点，打开页面后可直接按控制键。"""
+        notebook = event.widget
+        if notebook.select() == str(self.keyboard_tab):
+            self.keyboard_tab.focus_set()
 
     def _arm_request(self) -> ArmPose:
         return parse_arm_request(
@@ -1608,6 +1887,9 @@ class UpperComputerApp:
                 self._accept_target_echo(text)
             if kind == "ERROR":
                 self.serial_link.disconnect()
+                self.active_drive_key = None
+                self.pressed_drive_keys.clear()
+                self.pressed_rotation_keys.clear()
                 if self.pending_target is not None:
                     self._clear_pending_target()
                     self.status_var.set("串口异常；等待中的目标估计未更新。")
@@ -1616,6 +1898,8 @@ class UpperComputerApp:
         self.root.after(60, self.poll_serial_events)
 
     def on_close(self) -> None:
+        self._stop_keyboard_drive()
+        self.pressed_rotation_keys.clear()
         self.serial_link.disconnect()
         self.root.destroy()
 
@@ -1682,7 +1966,22 @@ def run_self_test() -> None:
     assert gotopose_echo_matches("GOTOpose 450, 250, 90", Pose(450.4, 249.6, 90.0))
     assert not gotopose_echo_matches("GOTOpose 451, 250, 90", Pose(450.4, 249.6, 90.0))
     assert build_debug_command("GOTOpose", ["100", "-20.5", "90"]) == "GOTOpose 100 -20.5 90"
-    assert build_debug_command("Movepose", ["1", "80", "0"]) == "Movepose 1 80 0"
+    assert build_debug_command("Movepose", ["0", "80", "0"]) == "Movepose 0 80 0"
+    assert build_debug_command("Movepose", ["3", "80", "0"]) == "Movepose 3 80 0"
+    assert KEYBOARD_DRIVE_DIRECTIONS == {
+        "w": (0, "前进"),
+        "s": (1, "后退"),
+        "a": (2, "向左"),
+        "d": (3, "向右"),
+    }
+    assert KEYBOARD_ROTATION_ANGLES == {
+        "q": (90.0, "向左旋转 90°"),
+        "e": (-90.0, "向右旋转 90°"),
+    }
+    assert adjust_keyboard_speed("80", True) == 90.0
+    assert adjust_keyboard_speed("80", False) == 70.0
+    assert adjust_keyboard_speed("300", True) == KEYBOARD_MAX_SPEED
+    assert adjust_keyboard_speed("10", False) == KEYBOARD_MIN_SPEED
     assert build_debug_command("MoveArm_1", ["-1", "100", "80"]) == "MoveArm_1 -1 100 80"
     assert build_debug_command("MoveArm_2", ["30", "-1", "80"]) == "MoveArm_2 30 -1 80"
     assert build_debug_command("SERVO", ["2", "-45"]) == "SERVO 2 -45"

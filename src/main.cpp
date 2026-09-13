@@ -196,8 +196,23 @@ void Task_MainStateMachine(void *pvParameters) {
 
         case STATE_WAIT_START:
             InitArm();// 初始化机械臂
+            updateDisplay("WAIT start_zone");
+            while (currentStartZone == START_ZONE_UNKNOWN) vTaskDelay(100 / portTICK_PERIOD_MS);
+            switch (currentStartZone)
+            {
+            case START_ZONE_1:
+                updateDisplay("start_zone: 1");
+                currentPose = {2250, 150, 0};
+                break;
+            case START_ZONE_2:
+                updateDisplay("start_zone: 2");
+                currentPose = {150, 150, 0};
+                break;
             
-            // 等一键启动信号(物理按键 / 机载电脑 "ready" 后人工按键)
+            default:
+                updateDisplay("ERR:start_zone: unknown");
+                break;
+            }
             updateDisplay("WAIT START");
             while (!enableRun) vTaskDelay(100 / portTICK_PERIOD_MS);
             // 启动总超时兜底(如 300s 内未回启停区)
@@ -208,7 +223,14 @@ void Task_MainStateMachine(void *pvParameters) {
         case STATE_READ_TASK:
             updateDisplay("READ TASK");
             // 方案: 机器人走到二维码板,扫码枪读二维码/条码, 从扫码消息队列取任务码
-            // [TODO] 移动到二维码板位姿
+
+            if (currentStartZone == START_ZONE_1)
+            {
+                // 向左移动到二维码板位姿
+                MovePose(2, 100, false);
+            }
+            
+            
             while (!taskReceived) {
                 // 非阻塞检查扫码消息队列(伪函数)
                 char scanCode[SCANNER_BUF_LEN];
