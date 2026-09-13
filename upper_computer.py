@@ -1,6 +1,7 @@
 """智能搬运车调试上位机：有线串口、场地地图与机械臂姿态预览。
 
-坐标系采用比赛场地图示：右下角为原点，X 轴向上，Y 轴向左，单位 mm。
+坐标系采用比赛场地图示，并在界面中顺时针旋转 90 度显示：
+左下角为原点，X 轴向右，Y 轴向上，单位 mm。
 角度暂定为 0 度朝 X 正方向，正角由 X 正方向转向 Y 正方向。
 """
 
@@ -39,6 +40,9 @@ ARM_SLIDER_WIDTH_MM = 34.0
 ARM_SLIDER_HOME_OFFSET_MM = 35.0
 ARM_SLIDER_CENTER_TRAVEL_MM = 65.0
 ARM_JAW_RADIUS_MM = 35.0
+ROBOT_DISPLAY_ZERO_OFFSET_DEG = 90.0
+WHEEL_LENGTH_MM = 76.0
+WHEEL_WIDTH_MM = 26.0
 
 
 @dataclass(frozen=True)
@@ -113,13 +117,13 @@ def parse_arm_request(raw_values: list[str]) -> ArmPose:
 
 
 def world_to_normalized(x: float, y: float) -> tuple[float, float]:
-    """将场地坐标转换为左上原点的 0~1 画布坐标。"""
-    return 1.0 - y / FIELD_SIZE_MM, 1.0 - x / FIELD_SIZE_MM
+    """将场地坐标顺时针旋转 90 度后映射到左上原点画布。"""
+    return x / FIELD_SIZE_MM, 1.0 - y / FIELD_SIZE_MM
 
 
 def normalized_to_world(u: float, v: float) -> tuple[float, float]:
     """将左上原点的归一化画布坐标转换为场地 X/Y 坐标。"""
-    return FIELD_SIZE_MM * (1.0 - v), FIELD_SIZE_MM * (1.0 - u)
+    return FIELD_SIZE_MM * u, FIELD_SIZE_MM * (1.0 - v)
 
 
 def robot_corners(pose: Pose) -> list[tuple[float, float]]:
@@ -450,11 +454,35 @@ class FieldCanvas(tk.Canvas):
     def _robot_local_to_canvas(
         self, pose: Pose, forward: float, lateral: float
     ) -> tuple[float, float]:
-        """把车体局部坐标转换到画布；前为 +forward，左为 +lateral。"""
-        angle = math.radians(pose.theta)
+        """把车体局部坐标转换到画布；0 度车头朝上。"""
+        angle = math.radians(pose.theta + ROBOT_DISPLAY_ZERO_OFFSET_DEG)
         world_x = pose.x + forward * math.cos(angle) - lateral * math.sin(angle)
         world_y = pose.y + forward * math.sin(angle) + lateral * math.cos(angle)
         return self.world_to_canvas(world_x, world_y)
+
+    def _draw_wheels(self, pose: Pose) -> None:
+        """在车体两侧绘制四个随车体方向旋转的矩形车轮。"""
+        half_length = WHEEL_LENGTH_MM / 2.0
+        half_width = WHEEL_WIDTH_MM / 2.0
+        wheel_forward_offset = ROBOT_HALF_MM * 0.55
+        wheel_lateral_offset = ROBOT_HALF_MM
+
+        for forward_center in (-wheel_forward_offset, wheel_forward_offset):
+            for lateral_center in (-wheel_lateral_offset, wheel_lateral_offset):
+                points: list[float] = []
+                for forward, lateral in (
+                    (forward_center + half_length, lateral_center + half_width),
+                    (forward_center + half_length, lateral_center - half_width),
+                    (forward_center - half_length, lateral_center - half_width),
+                    (forward_center - half_length, lateral_center + half_width),
+                ):
+                    points.extend(self._robot_local_to_canvas(pose, forward, lateral))
+                self.create_polygon(
+                    *points,
+                    fill="#111111",
+                    outline="#050505",
+                    width=max(1, int(round(3.0 * self.scale))),
+                )
 
     def _draw_arm_overlay(self, pose: Pose) -> None:
         """在当前小车上绘制由四个机械参数驱动的俯视简图。"""
@@ -614,22 +642,26 @@ class FieldCanvas(tk.Canvas):
                 outline="#145a86",
                 width=3,
             )
-            color = "#0b3c5d"
+            self._draw_wheels(pose)
+            color = "#111111"
             label = "理想位置"
 
-        angle = math.radians(pose.theta)
-        arrow_x = pose.x + ROBOT_SIZE_MM * 0.68 * math.cos(angle)
-        arrow_y = pose.y + ROBOT_SIZE_MM * 0.68 * math.sin(angle)
-        center_px = self.world_to_canvas(pose.x, pose.y)
-        arrow_px = self.world_to_canvas(arrow_x, arrow_y)
+        arrow_lateral = 0.0 if target else 58.0
+        arrow_start = self._robot_local_to_canvas(
+            pose, 0.0 if target else -52.0, arrow_lateral
+        )
+        arrow_end = self._robot_local_to_canvas(
+            pose, ROBOT_SIZE_MM * (0.68 if target else 0.34), arrow_lateral
+        )
         self.create_line(
-            *center_px,
-            *arrow_px,
+            *arrow_start,
+            *arrow_end,
             fill=color,
             width=4,
             arrow=tk.LAST,
             arrowshape=(12, 14, 5),
         )
+        center_px = self.world_to_canvas(pose.x, pose.y)
         label_px = (
             center_px
             if target
@@ -646,12 +678,12 @@ class FieldCanvas(tk.Canvas):
             self._draw_arm_overlay(pose)
 
     def _draw_rulers(self, field_right: float, field_bottom: float) -> None:
-        """按右下角原点绘制 X/Y 毫米刻度。"""
+        """按左下角原点绘制 X/Y 毫米刻度。"""
         for value in range(0, int(FIELD_SIZE_MM) + 1, 300):
             major = value % 600 == 0
             tick_length = 8 if major else 5
 
-            tick_x, _ = self.world_to_canvas(0.0, float(value))
+            tick_x, _ = self.world_to_canvas(float(value), 0.0)
             self.create_line(
                 tick_x,
                 field_bottom,
@@ -668,20 +700,20 @@ class FieldCanvas(tk.Canvas):
                     font=("Microsoft YaHei UI", 8),
                 )
 
-            _, tick_y = self.world_to_canvas(float(value), 0.0)
+            _, tick_y = self.world_to_canvas(0.0, float(value))
             self.create_line(
-                field_right,
+                self.field_left,
                 tick_y,
-                field_right + tick_length,
+                self.field_left - tick_length,
                 tick_y,
                 fill="#384047",
             )
             if major:
                 self.create_text(
-                    field_right + 12,
+                    self.field_left - 12,
                     tick_y,
                     text=str(value),
-                    anchor="w",
+                    anchor="e",
                     fill="#343a40",
                     font=("Microsoft YaHei UI", 8),
                 )
@@ -691,14 +723,14 @@ class FieldCanvas(tk.Canvas):
         self.create_text(
             field_bottom_center,
             field_bottom + 40,
-            text="Y 坐标 / mm（向左增大）",
+            text="X 坐标 / mm（向右增大）",
             fill="#343a40",
             font=("Microsoft YaHei UI", 9),
         )
         self.create_text(
-            field_right + 54,
+            self.field_left - 54,
             field_right_center,
-            text="X 坐标 / mm（向上增大）",
+            text="Y 坐标 / mm（向上增大）",
             angle=90,
             fill="#343a40",
             font=("Microsoft YaHei UI", 9),
@@ -855,14 +887,18 @@ class FieldCanvas(tk.Canvas):
             px, py = self.world_to_canvas(x, y)
             self.create_text(px, py, text=text, font=("Microsoft YaHei UI", 10, "bold"))
 
-        # 在右下角画出用户指定的坐标轴。
+        # 地图顺时针旋转后，在左下角画出跟随旋转的坐标轴。
         axis_length = min(92.0, side * 0.16)
-        self.create_line(field_right, field_bottom, field_right, field_bottom - axis_length,
+        self.create_line(self.field_left, field_bottom,
+                         self.field_left + axis_length, field_bottom,
                          fill="#d9342b", width=3, arrow=tk.LAST)
-        self.create_line(field_right, field_bottom, field_right - axis_length, field_bottom,
+        self.create_line(self.field_left, field_bottom,
+                         self.field_left, field_bottom - axis_length,
                          fill="#d9342b", width=3, arrow=tk.LAST)
-        self.create_text(field_right - 18, field_bottom - axis_length, text="+X", fill="#d9342b")
-        self.create_text(field_right - axis_length, field_bottom - 14, text="+Y", fill="#d9342b")
+        self.create_text(self.field_left + axis_length, field_bottom - 14,
+                         text="+X", fill="#d9342b")
+        self.create_text(self.field_left + 18, field_bottom - axis_length,
+                         text="+Y", fill="#d9342b")
         self._draw_rulers(field_right, field_bottom)
 
         if self.target_visible:
@@ -1542,10 +1578,12 @@ class UpperComputerApp:
 
 
 def run_self_test() -> None:
-    assert world_to_normalized(0.0, 0.0) == (1.0, 1.0)
-    assert world_to_normalized(2400.0, 2400.0) == (0.0, 0.0)
-    assert normalized_to_world(1.0, 1.0) == (0.0, 0.0)
-    assert normalized_to_world(0.0, 0.0) == (2400.0, 2400.0)
+    assert world_to_normalized(0.0, 0.0) == (0.0, 1.0)
+    assert world_to_normalized(2400.0, 0.0) == (1.0, 1.0)
+    assert world_to_normalized(0.0, 2400.0) == (0.0, 0.0)
+    assert world_to_normalized(2400.0, 2400.0) == (1.0, 0.0)
+    assert normalized_to_world(0.0, 1.0) == (0.0, 0.0)
+    assert normalized_to_world(1.0, 0.0) == (2400.0, 2400.0)
     round_trip = normalized_to_world(*world_to_normalized(725.0, 1330.0))
     assert math.isclose(round_trip[0], 725.0, abs_tol=1e-9)
     assert math.isclose(round_trip[1], 1330.0, abs_tol=1e-9)

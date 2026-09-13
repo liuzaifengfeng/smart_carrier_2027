@@ -49,7 +49,7 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
             if( turret_angle < -360 || turret_angle > 360){//行程保护
                 Serial.println("turret_angle out of range");
             } else {
-                Servo_SetAngleMTurn(2, turret_angle, speed, 0);
+                Servo_SetAngleMTurn(2, turret_angle, speed, 1000);
                 currentArm.turret_angle = turret_angle;
             }
         }
@@ -58,7 +58,7 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
             if( pawl_angle < -360 || pawl_angle > 360){//行程保护
                 Serial.println("pawl_angle out of range");
             } else {
-                Servo_SetAngleMTurn(1, pawl_angle, speed, 0);
+                Servo_SetAngleMTurn(1, pawl_angle, speed, 1000);
                 currentArm.pawl_angle = pawl_angle;
             }
         }
