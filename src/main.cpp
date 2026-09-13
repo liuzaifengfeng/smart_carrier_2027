@@ -100,6 +100,7 @@ TaskCode parseTaskCode(const char* code) {
 // ================= 机载电脑通信(串口)协议 =================
 // 机载电脑 -> ESP32 (通过 Serial0)
 //   "ready"                  : 机载电脑就绪
+//   "start_zone:<1|2>"       : 告知车辆当前所在启停区
 //   "color:<编号>"           : 识别到指定颜色物料,请求抓取
 //   "target:<x,y,theta>"     : 下发目标坐标(视觉定位引导)
 //   "ok"                     : 视觉确认到位
@@ -122,8 +123,15 @@ enum RobotState {
 };
 RobotState currentState = STATE_WAIT_START;
 
+enum StartZone {
+    START_ZONE_UNKNOWN = 0,
+    START_ZONE_1 = 1,
+    START_ZONE_2 = 2
+};
+
 // 共享业务变量(由机载电脑指令/任务更新)
 volatile bool nano_ready = false;       // 机载电脑就绪
+volatile StartZone currentStartZone = START_ZONE_UNKNOWN; // 当前启停区,由机载电脑告知
 volatile bool taskReceived = false;// 已拿到任务码
 volatile int  roundProgress = 0;   // 当前轮次已抓/放物料数 0-3
 volatile bool enableRun = false;   // 一键启动触发
@@ -300,11 +308,20 @@ void Task_Serial_CMD(void *pvParameters) {
                     else if (strcmp(rxBuffer, "start") == 0) {
                         enableRun = true;
                         Serial.println("start->");
-                    }   
-                    else if (strncmp(rxBuffer, "task:", 5) == 0) {
-                        currentTask = parseTaskCode(rxBuffer + 5);
-                        taskReceived = currentTask.valid;
-                        Serial.printf("task-> %s\n", currentTask.valid ? "OK" : "ERR");
+                    }
+                    else if (strncmp(rxBuffer, "start_zone:", 11) == 0) {
+                        const char *zone = rxBuffer + 11;
+                        if (strcmp(zone, "1") == 0) {
+                            currentStartZone = START_ZONE_1;
+                            Serial.println("start_zone-> 1");
+                        }
+                        else if (strcmp(zone, "2") == 0) {
+                            currentStartZone = START_ZONE_2;
+                            Serial.println("start_zone-> 2");
+                        }
+                        else {
+                            Serial.println("start_zone-> ERR");
+                        }
                     }
                     else if (strncmp(rxBuffer, "color:", 6) == 0) {
                         // 视觉识别到目标颜色, 请求主控抓取
