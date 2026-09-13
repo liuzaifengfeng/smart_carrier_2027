@@ -30,16 +30,30 @@ MAX_RELATIVE_MOVE_MM = FIELD_SIZE_MM * math.sqrt(2.0)
 FIELD_EDGE_EPSILON_MM = 1e-6
 ARM_HEIGHT_LIMIT_MM = 200.0
 ARM_TRAVEL_LIMIT_MM = 170.0
+FIELD_NODE_RADIUS_MM = 105.0
+FIELD_NODES = tuple(
+    (row_index * 3 + column_index + 1, x, y)
+    for row_index, y in enumerate((450.0, 1200.0, 2100.0))
+    for column_index, x in enumerate((300.0, 1200.0, 2100.0))
+)
 
 # 地图中机械机构的简化俯视尺寸。黄色伸缩臂自身长度保持不变，
 # ``ArmPose.length`` 只改变它沿舵盘中轴线的位置。
-ARM_TURRET_FORWARD_MM = 108.0
+# 舵盘安装点：以车体中心为原点，前方为正，左侧为正。
+# 当前位置对应示意图标注的车体右侧中部。
+ARM_TURRET_FORWARD_MM = 20.0
+ARM_TURRET_LATERAL_MM = -135.0
 ARM_TURRET_RADIUS_MM = 43.0
-ARM_SLIDER_FIXED_LENGTH_MM = 210.0
-ARM_SLIDER_WIDTH_MM = 34.0
-ARM_SLIDER_HOME_OFFSET_MM = 35.0
-ARM_SLIDER_CENTER_TRAVEL_MM = 65.0
 ARM_JAW_RADIUS_MM = 35.0
+ARM_SLIDER_BASE_LENGTH_MM = 210.0
+ARM_SLIDER_FIXED_LENGTH_MM = (
+    ARM_SLIDER_BASE_LENGTH_MM + 2.0 * ARM_JAW_RADIUS_MM
+)
+ARM_SLIDER_WIDTH_MM = 34.0
+ARM_SLIDER_BASE_HOME_OFFSET_MM = 35.0
+# 增加的一个夹爪圆环直径全部放在舵盘圆心的后侧，前端位置保持不变。
+ARM_SLIDER_HOME_OFFSET_MM = ARM_SLIDER_BASE_HOME_OFFSET_MM - ARM_JAW_RADIUS_MM
+ARM_SLIDER_CENTER_TRAVEL_MM = 65.0
 ROBOT_DISPLAY_ZERO_OFFSET_DEG = 90.0
 WHEEL_LENGTH_MM = 76.0
 WHEEL_WIDTH_MM = 26.0
@@ -451,6 +465,27 @@ class FieldCanvas(tk.Canvas):
         right, bottom = self.world_to_canvas(x - inner, y - inner)
         self.create_oval(left, top, right, bottom, outline="#60666d")
 
+    def _draw_field_nodes(self) -> None:
+        """绘制赛场中的 1~9 号浅灰色导航节点。"""
+        radius_px = FIELD_NODE_RADIUS_MM * self.scale
+        for number, x, y in FIELD_NODES:
+            center_x, center_y = self.world_to_canvas(x, y)
+            self.create_oval(
+                center_x - radius_px,
+                center_y - radius_px,
+                center_x + radius_px,
+                center_y + radius_px,
+                outline="#aeb4ba",
+                width=max(2, int(round(8.0 * self.scale))),
+            )
+            self.create_text(
+                center_x,
+                center_y,
+                text=str(number),
+                fill="#9ca3aa",
+                font=("Microsoft YaHei UI", 16, "bold"),
+            )
+
     def _robot_local_to_canvas(
         self, pose: Pose, forward: float, lateral: float
     ) -> tuple[float, float]:
@@ -487,9 +522,11 @@ class FieldCanvas(tk.Canvas):
     def _draw_arm_overlay(self, pose: Pose) -> None:
         """在当前小车上绘制由四个机械参数驱动的俯视简图。"""
         arm = self.arm_pose
-        turret_angle = math.radians(arm.turret_angle)
+        # 界面约定舵盘角度沿顺时针方向增大。
+        turret_angle = math.radians(-arm.turret_angle)
         travel_ratio = max(0.0, min(arm.length / ARM_TRAVEL_LIMIT_MM, 1.0))
         pivot_forward = ARM_TURRET_FORWARD_MM
+        pivot_lateral = ARM_TURRET_LATERAL_MM
 
         def arm_point(along: float, across: float = 0.0) -> tuple[float, float]:
             forward = (
@@ -497,12 +534,14 @@ class FieldCanvas(tk.Canvas):
                 + along * math.cos(turret_angle)
                 - across * math.sin(turret_angle)
             )
-            lateral = along * math.sin(turret_angle) + across * math.cos(
-                turret_angle
+            lateral = (
+                pivot_lateral
+                + along * math.sin(turret_angle)
+                + across * math.cos(turret_angle)
             )
             return self._robot_local_to_canvas(pose, forward, lateral)
 
-        pivot = self._robot_local_to_canvas(pose, pivot_forward, 0.0)
+        pivot = self._robot_local_to_canvas(pose, pivot_forward, pivot_lateral)
 
         # 灰色总弧代表大臂限高；橙色从弧线中点向两侧按高度占比填充。
         arc_radius = 84.0
@@ -518,7 +557,7 @@ class FieldCanvas(tk.Canvas):
                 px, py = self._robot_local_to_canvas(
                     pose,
                     pivot_forward + arc_radius * math.cos(angle),
-                    arc_radius * math.sin(angle),
+                    pivot_lateral + arc_radius * math.sin(angle),
                 )
                 points.extend((px, py))
             return points
@@ -548,7 +587,7 @@ class FieldCanvas(tk.Canvas):
                 joinstyle=tk.ROUND,
             )
 
-        # 舵盘固定在车头中线上，伸缩臂绕其圆心旋转。
+        # 舵盘固定在车体右侧安装点，伸缩臂绕其圆心旋转。
         turret_radius_px = ARM_TURRET_RADIUS_MM * self.scale
         self.create_oval(
             pivot[0] - turret_radius_px,
@@ -559,7 +598,7 @@ class FieldCanvas(tk.Canvas):
             width=max(4, int(round(18.0 * self.scale))),
         )
 
-        # 黄色矩形长度恒定，length 参数只负责沿其长中轴线平移。
+        # 黄色矩形的新增长度位于圆心后侧；length 参数只负责沿中轴线平移。
         slider_center = (
             ARM_SLIDER_HOME_OFFSET_MM
             + travel_ratio * ARM_SLIDER_CENTER_TRAVEL_MM
@@ -605,7 +644,8 @@ class FieldCanvas(tk.Canvas):
                     + outward * normal_forward
                 )
                 lateral = (
-                    jaw_base_along * math.sin(turret_angle)
+                    pivot_lateral
+                    + jaw_base_along * math.sin(turret_angle)
                     + along_axis * axis_lateral
                     + outward * normal_lateral
                 )
@@ -875,6 +915,8 @@ class FieldCanvas(tk.Canvas):
         qr_bottom = self.world_to_canvas(1100.0, 0.0)
         self.create_line(*qr_top, *qr_bottom, fill="#1f252a", width=6)
 
+        self._draw_field_nodes()
+
         labels = (
             (2250.0, 150.0, "启停区1"),
             (150.0, 150.0, "启停区2"),
@@ -1009,9 +1051,10 @@ class ArmCanvas(tk.Canvas):
         reach = 28.0 + self._ratio(self.pose.length, ARM_TRAVEL_LIMIT_MM) * min(
             width * 0.22, (height - split_y) * 0.28
         )
+        # 与地图示意一致：0 度朝上，正角沿顺时针方向旋转。
         turret_angle = math.radians(self.pose.turret_angle)
-        end_x = center_x + reach * math.cos(turret_angle)
-        end_y = center_y - reach * math.sin(turret_angle)
+        end_x = center_x + reach * math.sin(turret_angle)
+        end_y = center_y - reach * math.cos(turret_angle)
 
         self.create_line(8, split_y, width - 8, split_y, fill="#c4c9ce", dash=(5, 4))
         self.create_text(
@@ -1044,8 +1087,8 @@ class ArmCanvas(tk.Canvas):
             width=12,
         )
         gripper_angle = turret_angle + math.radians(self.pose.pawl_angle)
-        jaw_dx = 14.0 * math.cos(gripper_angle)
-        jaw_dy = 14.0 * math.sin(gripper_angle)
+        jaw_dx = 14.0 * math.sin(gripper_angle)
+        jaw_dy = 14.0 * math.cos(gripper_angle)
         self.create_line(
             end_x - jaw_dx,
             end_y + jaw_dy,
@@ -1601,12 +1644,20 @@ def run_self_test() -> None:
     assert ArmCanvas._ratio(250.0, 200.0) == 1.0
     full_slider_center = ARM_SLIDER_HOME_OFFSET_MM + ARM_SLIDER_CENTER_TRAVEL_MM
     assert full_slider_center - ARM_SLIDER_FIXED_LENGTH_MM / 2.0 <= 0.0
+    assert ARM_SLIDER_FIXED_LENGTH_MM == (
+        ARM_SLIDER_BASE_LENGTH_MM + 2.0 * ARM_JAW_RADIUS_MM
+    )
+    assert (
+        ARM_SLIDER_HOME_OFFSET_MM + ARM_SLIDER_FIXED_LENGTH_MM / 2.0
+        == ARM_SLIDER_BASE_HOME_OFFSET_MM + ARM_SLIDER_BASE_LENGTH_MM / 2.0
+    )
+    assert [number for number, _, _ in FIELD_NODES] == list(range(1, 10))
     full_arm_reach = (
         full_slider_center
         + ARM_SLIDER_FIXED_LENGTH_MM / 2.0
         + 2.0 * ARM_JAW_RADIUS_MM
     )
-    assert full_arm_reach <= ROBOT_SIZE_MM
+    assert full_arm_reach <= ROBOT_SIZE_MM + ARM_JAW_RADIUS_MM
     assert pose_fits_field(Pose(150.0, 150.0, 0.0))
     assert not pose_fits_field(Pose(100.0, 150.0, 0.0))
     corners = robot_corners(Pose(1200.0, 1200.0, 0.0))
