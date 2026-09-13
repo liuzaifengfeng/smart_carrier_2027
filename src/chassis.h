@@ -40,4 +40,7 @@ void GotoPose(float x, float y, float theta, bool isRelative);
 // @brief 机械臂移动到位.
 void MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
 
+// @brief 机械臂初始化归零位
+void InitArm();
+
 #endif // CHASSIS_H

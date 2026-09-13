@@ -187,6 +187,8 @@ void Task_MainStateMachine(void *pvParameters) {
         switch (currentState) {
 
         case STATE_WAIT_START:
+            InitArm();// 初始化机械臂
+            
             // 等一键启动信号(物理按键 / 机载电脑 "ready" 后人工按键)
             updateDisplay("WAIT START");
             while (!enableRun) vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -386,8 +388,8 @@ void setup() {
     currentArm = {0, 0};        // [TODO] 初始臂位姿按实际
 
     // 注意: 原 initLidar() 已移除, 雷达/定位方案待定
-    // init_ota_service("null", "1234567899", OTA_HOSTNAME);//调试使用，正式比赛时注释掉
-            init_ota_service("longggg", "asdfghjkl", OTA_HOSTNAME);//调试使用，正式比赛时注释掉
+     init_ota_service("null", "1234567899", OTA_HOSTNAME);//调试使用，正式比赛时注释掉
+    //init_ota_service("longggg", "asdfghjkl", OTA_HOSTNAME);//调试使用，正式比赛时注释掉
     leds[0] = CRGB::Red; FastLED.show();
 
     // 一键启动: 物理按键(长按)进入 Release 运行模式

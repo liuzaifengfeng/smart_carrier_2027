@@ -19,13 +19,15 @@ ArmPose currentArm = {0, 0, 0, 0};//high,length,turret_angle,pawl_angle
  */
 void MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
 
+    int acc = 50;
+
         if (currentArm.high - high != 0 && high != -1) {
             if( high < 0 || high > 200){//行程保护
                 Serial.println("high out of range");
             } else {
                 uint8_t dir = (currentArm.high - high > 0) ? 0 : 1;
                 uint32_t pulses = (uint32_t)(fabsf(currentArm.high - high) * HEIGHT_PULSE);
-                Emm_V5_Pos_Control(5, dir, speed, 50, pulses, 0, 0);
+                Emm_V5_Pos_Control(5, dir, speed, acc, pulses, 0, 0);
                 vTaskDelay(pdMS_TO_TICKS(100));
                 currentArm.high = high;
             }
@@ -37,26 +39,26 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
             } else {
                 uint8_t dir = (currentArm.length - length > 0) ? 0 : 1;
                 uint32_t pulses = (uint32_t)(fabsf(currentArm.length - length) * LENGTH_PULSE);
-                Emm_V5_Pos_Control(6, dir, speed, 50, pulses, 0, 0);
+                Emm_V5_Pos_Control(6, dir, speed, acc, pulses, 0, 0);
                 vTaskDelay(pdMS_TO_TICKS(100));
                 currentArm.length = length;
             }
         }
         
-        if(currentArm.turret_angle - turret_angle != 0 && turret_angle != -1) {
+        if(turret_angle != -1) {
             if( turret_angle < -360 || turret_angle > 360){//行程保护
                 Serial.println("turret_angle out of range");
             } else {
-                Servo_SetAngleMTurn(1, turret_angle, speed, 0);
+                Servo_SetAngleMTurn(2, turret_angle, speed, 0);
                 currentArm.turret_angle = turret_angle;
             }
         }
 
-        if(currentArm.pawl_angle - pawl_angle != 0 && pawl_angle != -1) {
+        if(pawl_angle != -1) {
             if( pawl_angle < -360 || pawl_angle > 360){//行程保护
                 Serial.println("pawl_angle out of range");
             } else {
-                Servo_SetAngleMTurn(2, pawl_angle, speed, 0);
+                Servo_SetAngleMTurn(1, pawl_angle, speed, 0);
                 currentArm.pawl_angle = pawl_angle;
             }
         }
@@ -166,4 +168,14 @@ void GotoPose(float x, float y, float theta, bool isRelative) {
         //   GotoPose(x - p.x, y - p.y, theta - p.theta, true, false);
         Serial.println("[TODO] GotoPose absolute needs localization");
     }
+}
+
+/**
+ * @brief 机械臂初始化归零位
+ */
+void InitArm() {
+    MoveArm(200,-1,-1,0,150);
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    MoveArm(150,40,-55,0,100);
+    vTaskDelay(pdMS_TO_TICKS(100));
 }
