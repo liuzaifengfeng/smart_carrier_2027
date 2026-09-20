@@ -187,11 +187,11 @@ def target_to_relative_move(current: Pose, target: Pose) -> Pose:
 
 
 def parse_gotopose_echo(text: str) -> Pose | None:
-    """解析固件 ``GOTOpose %.0f, %.0f, %.0f`` 格式的接令回显。"""
-    prefix = "GOTOpose "
-    if not text.startswith(prefix):
+    """解析固件 ``{GOTOpose:ACK,x,y,theta}`` 格式的接令回显。"""
+    prefix = "{GOTOpose:ACK,"
+    if not text.startswith(prefix) or not text.endswith("}"):
         return None
-    parts = text[len(prefix):].replace(",", " ").split()
+    parts = text[len(prefix):-1].split(",")
     if len(parts) != 3:
         return None
     try:
@@ -262,7 +262,7 @@ def adjust_keyboard_speed(raw_speed: str, increase: bool) -> float:
 def build_debug_command(command: str, raw_values: list[str]) -> str:
     """校验界面参数并生成 ESP32 当前支持的调试命令。"""
     if command == "help":
-        return "help"
+        return "{help}"
     fields = COMMAND_FIELDS.get(command)
     if fields is None or len(raw_values) != len(fields):
         raise ValueError("未知命令或参数数量错误")
@@ -316,7 +316,50 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
 
     tokens = [str(int(value)) if index in integer_indexes else f"{value:g}"
               for index, value in enumerate(values)]
-    return " ".join((command, *tokens))
+    return "{" + command + ":" + ",".join(tokens) + "}"
+
+
+def build_node_path_command(raw_path: str) -> str:
+    """校验 3×3 节点图路径，并生成固件使用的 ``{way:1-2-5}`` 指令。"""
+    text = raw_path.strip()
+    if text.startswith("{") or text.endswith("}"):
+        if not (text.startswith("{") and text.endswith("}")):
+            raise ValueError("路径花括号必须成对出现")
+        text = text[1:-1].strip()
+    if text.startswith("way:"):
+        text = text[len("way:"):].strip()
+
+    parts = [part.strip() for part in text.split("-")]
+    if len(parts) < 2 or len(parts) > 16:
+        raise ValueError("节点路径必须包含 2～16 个节点")
+    if any(not part.isdigit() for part in parts):
+        raise ValueError("节点路径格式应为 1-2-5")
+
+    nodes = [int(part) for part in parts]
+    if any(node < 1 or node > 9 for node in nodes):
+        raise ValueError("节点编号只能是 1～9")
+    for start, end in zip(nodes, nodes[1:]):
+        start_row, start_column = divmod(start - 1, 3)
+        end_row, end_column = divmod(end - 1, 3)
+        if abs(start_row - end_row) + abs(start_column - end_column) != 1:
+            raise ValueError(f"节点 {start} 与节点 {end} 不相邻")
+    return "{way:" + "-".join(str(node) for node in nodes) + "}"
+
+
+def build_start_zone_command(zone_name: str) -> str:
+    """生成 Debug 固件的启停区切换命令。"""
+    if zone_name not in START_POSES:
+        raise ValueError("未知启停区")
+    return f"{{StartZone:{1 if zone_name == '启停区1' else 2}}}"
+
+
+def build_pose_calibration_command(pose: Pose) -> str:
+    """生成将上位机理想位姿同步到 Debug 固件的命令。"""
+    if not all(math.isfinite(value) for value in (pose.x, pose.y, pose.theta)):
+        raise ValueError("姿态不能包含无穷大或 NaN")
+    if not pose_fits_field(pose):
+        raise ValueError("该姿态会使 300×300 mm 车体超出场地边界")
+    return f"{{SetPose:{pose.x:g},{pose.y:g},{pose.theta:g}}}"
 
 
 class SerialLink:
@@ -1274,6 +1317,27 @@ class UpperComputerApp:
 
         for command in ("GOTOpose", "Movepose", "En_C"):
             self._command_group(chassis_tab, command)
+
+        node_path_group = ttk.LabelFrame(chassis_tab, text="节点路径", padding=7)
+        node_path_group.pack(fill=tk.X, pady=(0, 6))
+        self.node_path_var = tk.StringVar(value="1-2-5")
+        ttk.Label(node_path_group, text="路径：").grid(row=0, column=0, sticky="w", pady=2)
+        node_path_entry = ttk.Entry(
+            node_path_group, textvariable=self.node_path_var, width=20
+        )
+        node_path_entry.grid(row=0, column=1, sticky="ew", pady=2)
+        node_path_entry.bind("<Return>", lambda _event: self.send_node_path())
+        ttk.Button(
+            node_path_group, text="发送节点路径", command=self.send_node_path
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+        node_path_group.columnconfigure(1, weight=1)
+        ttk.Label(
+            node_path_group,
+            text="输入示例：1-2-5（仅允许上下或左右相邻节点）",
+            foreground="#59636e",
+            wraplength=280,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(5, 0))
+
         ttk.Button(chassis_tab, text="向 ESP32 请求 help", command=lambda: self.send_command("help")).pack(
             fill=tk.X, pady=6
         )
@@ -1477,6 +1541,12 @@ class UpperComputerApp:
     def switch_start_zone(self) -> None:
         zone_name = next_start_zone(self.start_zone_name)
         pose = START_POSES[zone_name]
+        try:
+            line = build_start_zone_command(zone_name)
+            self.serial_link.send_line(line)
+        except (ValueError, RuntimeError, OSError) as exc:
+            messagebox.showerror("启停区未切换", str(exc), parent=self.root)
+            return
         if self.pending_target is not None:
             self.append_log("WARN", "切换启停区，已取消等待中的目标回显")
             self._clear_pending_target()
@@ -1486,23 +1556,31 @@ class UpperComputerApp:
         for variable, value in zip(self.current_vars, (pose.x, pose.y, pose.theta)):
             variable.set(f"{value:g}")
         self.field.set_start_pose(pose)
+        self.append_log("TX", line)
         self.status_var.set(
-            f"已切换到{zone_name}：X={pose.x:.0f} mm，Y={pose.y:.0f} mm，"
-            f"θ={pose.theta:.0f}°"
+            f"已向 ESP32 切换到{zone_name}：X={pose.x:.0f} mm，Y={pose.y:.0f} mm，"
+            f"θ={pose.theta:.0f}°；当前为接令后的开环估计。"
         )
 
     def update_current(self) -> None:
         try:
             pose = self._read_pose(self.current_vars)
+            line = build_pose_calibration_command(pose)
+            self.serial_link.send_line(line)
         except ValueError as exc:
             messagebox.showerror("姿态无效", str(exc), parent=self.root)
+            return
+        except (RuntimeError, OSError) as exc:
+            messagebox.showerror("理想位置未校准", str(exc), parent=self.root)
             return
         if self.pending_target is not None:
             self.append_log("WARN", "手动更新估计位置，已取消等待中的目标回显")
             self._clear_pending_target()
         self.field.set_current_pose(pose)
+        self.append_log("TX", line)
         self.status_var.set(
-            f"估计位置：X={pose.x:.1f} mm，Y={pose.y:.1f} mm，θ={pose.theta % 360:.1f}°"
+            f"已同步 ESP32 理想位置：X={pose.x:.1f} mm，Y={pose.y:.1f} mm，"
+            f"θ={pose.theta % 360:.1f}°"
         )
 
     def preview_target(self) -> None:
@@ -1614,6 +1692,17 @@ class UpperComputerApp:
             messagebox.showerror("命令未发送", str(exc), parent=self.root)
             return
         self.append_log("TX", line)
+
+    def send_node_path(self) -> None:
+        """校验并发送 Debug/Release 模式共用的节点路径协议。"""
+        try:
+            line = build_node_path_command(self.node_path_var.get())
+            self.serial_link.send_line(line)
+        except (ValueError, RuntimeError, OSError) as exc:
+            messagebox.showerror("节点路径未发送", str(exc), parent=self.root)
+            return
+        self.append_log("TX", line)
+        self.status_var.set(f"节点路径已发送：{line}；等待 ESP32 执行结果。")
 
     @staticmethod
     def _is_text_input(widget: tk.Misc) -> bool:
@@ -1960,14 +2049,14 @@ def run_self_test() -> None:
     )
     assert build_debug_command(
         "GOTOpose", [str(diagonal.x), str(diagonal.y), str(diagonal.theta)]
-    ).startswith("GOTOpose 2545.58 ")
-    assert parse_gotopose_echo("GOTOpose 450, 250, 90") == Pose(450.0, 250.0, 90.0)
-    assert parse_gotopose_echo("other 450, 250, 90") is None
-    assert gotopose_echo_matches("GOTOpose 450, 250, 90", Pose(450.4, 249.6, 90.0))
-    assert not gotopose_echo_matches("GOTOpose 451, 250, 90", Pose(450.4, 249.6, 90.0))
-    assert build_debug_command("GOTOpose", ["100", "-20.5", "90"]) == "GOTOpose 100 -20.5 90"
-    assert build_debug_command("Movepose", ["0", "80", "0"]) == "Movepose 0 80 0"
-    assert build_debug_command("Movepose", ["3", "80", "0"]) == "Movepose 3 80 0"
+    ).startswith("{GOTOpose:2545.58,")
+    assert parse_gotopose_echo("{GOTOpose:ACK,450,250,90}") == Pose(450.0, 250.0, 90.0)
+    assert parse_gotopose_echo("{other:ACK,450,250,90}") is None
+    assert gotopose_echo_matches("{GOTOpose:ACK,450,250,90}", Pose(450.4, 249.6, 90.0))
+    assert not gotopose_echo_matches("{GOTOpose:ACK,451,250,90}", Pose(450.4, 249.6, 90.0))
+    assert build_debug_command("GOTOpose", ["100", "-20.5", "90"]) == "{GOTOpose:100,-20.5,90}"
+    assert build_debug_command("Movepose", ["0", "80", "0"]) == "{Movepose:0,80,0}"
+    assert build_debug_command("Movepose", ["3", "80", "0"]) == "{Movepose:3,80,0}"
     assert KEYBOARD_DRIVE_DIRECTIONS == {
         "w": (0, "前进"),
         "s": (1, "后退"),
@@ -1982,10 +2071,25 @@ def run_self_test() -> None:
     assert adjust_keyboard_speed("80", False) == 70.0
     assert adjust_keyboard_speed("300", True) == KEYBOARD_MAX_SPEED
     assert adjust_keyboard_speed("10", False) == KEYBOARD_MIN_SPEED
-    assert build_debug_command("MoveArm_1", ["-1", "100", "80"]) == "MoveArm_1 -1 100 80"
-    assert build_debug_command("MoveArm_2", ["30", "-1", "80"]) == "MoveArm_2 30 -1 80"
-    assert build_debug_command("SERVO", ["2", "-45"]) == "SERVO 2 -45"
-    assert build_debug_command("help", []) == "help"
+    assert build_debug_command("MoveArm_1", ["-1", "100", "80"]) == "{MoveArm_1:-1,100,80}"
+    assert build_debug_command("MoveArm_2", ["30", "-1", "80"]) == "{MoveArm_2:30,-1,80}"
+    assert build_debug_command("SERVO", ["2", "-45"]) == "{SERVO:2,-45}"
+    assert build_debug_command("help", []) == "{help}"
+    assert build_node_path_command("1-2-5") == "{way:1-2-5}"
+    assert build_node_path_command(" {way:9-8-5-2} ") == "{way:9-8-5-2}"
+    assert build_start_zone_command("启停区1") == "{StartZone:1}"
+    assert build_start_zone_command("启停区2") == "{StartZone:2}"
+    assert (
+        build_pose_calibration_command(Pose(150.0, 150.0, 0.0))
+        == "{SetPose:150,150,0}"
+    )
+    for invalid_path in ("1", "1-5", "0-1", "1-2-", "{1-2"):
+        try:
+            build_node_path_command(invalid_path)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"非法节点路径未被拒绝：{invalid_path}")
     try:
         build_debug_command("En_C", ["2"])
     except ValueError:

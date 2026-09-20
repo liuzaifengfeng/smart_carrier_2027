@@ -39,6 +39,18 @@ void MovePose(int direction, float speed, bool stop);
 //        isRelative=true 相对移动 / false 绝对移动(需定位)
 void GotoPose(float x, float y, float theta, bool isRelative);
 
+/**
+ * @brief 根据视觉给出的 2 号圆盘坐标与水平角，先旋转再平移对齐。
+ *
+ * @param targetX       2 号圆盘在旋转前车体系中的 X 坐标/误差 (mm)
+ * @param targetY       2 号圆盘在旋转前车体系中的 Y 坐标/误差 (mm)
+ * @param angleDeg      水平校正角 A (deg)，正负方向与 GotoPose 一致
+ * @param cameraOffset  相机原点到小车旋转中心沿车头 X 轴的距离 L (mm)
+ * @return true 参数有效且运动已执行；false 参数或标定值无效
+ */
+bool AlignToDisc(float targetX, float targetY, float angleDeg,
+                 float cameraOffset = 300.0f);
+
 // @brief 机械臂移动到位.
 void MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
 

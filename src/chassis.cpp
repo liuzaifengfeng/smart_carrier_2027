@@ -22,9 +22,9 @@ struct NodePosition {
 // 第一行是节点 1、2、3，第二行是节点 4、5、6，第三行是节点 7、8、9。
 // 节点顺序与 Python 上位机地图完全一致。
 constexpr NodePosition NODE_POSITIONS[9] = {
-    {300.0f,  450.0f}, {1200.0f,  450.0f}, {2100.0f,  450.0f},
-    {300.0f, 1200.0f}, {1200.0f, 1200.0f}, {2100.0f, 1200.0f},
-    {300.0f, 2100.0f}, {1200.0f, 2100.0f}, {2100.0f, 2100.0f},
+    {400.0f,  400.0f}, {1200.0f,  400.0f}, {2000.0f,  400.0f},
+    {400.0f, 1200.0f}, {1200.0f, 1200.0f}, {2000.0f, 1200.0f},
+    {400.0f, 2000.0f}, {1200.0f, 2000.0f}, {2000.0f, 2000.0f},
 };
 
 constexpr uint32_t MOTOR_PULSES_PER_REVOLUTION = 3200; // 16 细分时，电机转一圈的脉冲数
@@ -142,7 +142,7 @@ void waitForPhysicalMotion(uint32_t pulses, uint16_t speedRpm,
                            uint8_t acceleration) {
     uint32_t delayMs = estimateMotionTimeMs(pulses, speedRpm, acceleration);
     if (delayMs > 0) {
-        Serial.printf("[路径] 等待运动完成：%lu ms\n",
+        Serial.printf("[Route] Waiting for motion to complete: %lu ms\n",
                       static_cast<unsigned long>(delayMs));
         vTaskDelay(pdMS_TO_TICKS(delayMs));
     }
@@ -210,19 +210,19 @@ bool executeNodeSegment(uint8_t startNode, uint8_t endNode,
     float turn = shortestTurn(currentPose.theta, targetHeading);
 
     Serial.printf(
-        "[路径] 节点 %u -> %u，距离 %.0f mm，目标航向 %.0f 度\n",
+        "[Route] Node %u -> %u, distance %.0f mm, target heading %.0f deg\n",
         startNode, endNode, distance, targetHeading
     );
 
     // 第一步：车辆原地转到目标方向，并等待转向完全结束。
     if (fabsf(turn) > ROUTE_ANGLE_EPSILON_DEG) {
-        Serial.printf("[路径] 原地转向 %.1f 度\n", turn);
+        Serial.printf("[Route] Rotating in place %.1f deg\n", turn);
         commandSynchronizedRotation(turn, speedRpm, acceleration);
     }
     currentPose.theta = targetHeading;
 
     // 第二步：车头沿目标方向向前移动，不使用麦克纳姆轮横向平移。
-    Serial.printf("[路径] 向前移动 %.0f mm\n", distance);
+    Serial.printf("[Route] Moving forward %.0f mm\n", distance);
     commandSynchronizedForward(distance, speedRpm, acceleration);
     // 当前没有外部定位反馈，因此运动结束后更新的是“理想位姿”。
     currentPose.x = end.x;
@@ -273,7 +273,7 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
             if( turret_angle < -360 || turret_angle > 360){//行程保护
                 Serial.println("turret_angle out of range");
             } else {
-                Servo_SetAngleMTurn(2, turret_angle, speed, 1000);
+                Servo_SetAngleMTurn(2, turret_angle, speed, 3000);
                 currentArm.turret_angle = turret_angle;
             }
         }
@@ -282,7 +282,7 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
             if( pawl_angle < -360 || pawl_angle > 360){//行程保护
                 Serial.println("pawl_angle out of range");
             } else {
-                Servo_SetAngleMTurn(1, pawl_angle, speed, 1000);
+                Servo_SetAngleMTurn(1, pawl_angle, speed, 3000);
                 currentArm.pawl_angle = pawl_angle;
             }
         }
@@ -303,16 +303,15 @@ void MovePose(int direction, float speed, bool stop) {
         if (isMoving) {
             //Emm_V5_Stop_Now(0, 0);
             Emm_V5_Vel_Control(1, 0, 0, 230, 1);
-            vTaskDelay(pdMS_TO_TICKS(10));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Vel_Control(2, 0, 0, 230, 1);
-            vTaskDelay(pdMS_TO_TICKS(10));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Vel_Control(3, 0, 0, 230, 1);
-            vTaskDelay(pdMS_TO_TICKS(10));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Vel_Control(4, 0, 0, 230, 1);
-            vTaskDelay(pdMS_TO_TICKS(10));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Synchronous_motion(0);
-            vTaskDelay(pdMS_TO_TICKS(10));
-            vTaskDelay(pdMS_TO_TICKS(5));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             // [TODO] 停止后按实际反馈更新位姿(如编码器/里程计/视觉)
             isMoving = false;
             Serial.println("move stopped");
@@ -321,58 +320,58 @@ void MovePose(int direction, float speed, bool stop) {
     }
 
     if (direction < 0 || direction > 3) {
-        Serial.println("MovePose 方向错误，应为 0前、1后、2左、3右");
+        Serial.println("MovePose direction error, should be 0=fwd, 1=back, 2=left, 3=right");
         return;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(5));
+    vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
 
     if (direction == 0) { // 前进
         Emm_V5_Vel_Control(1, 1, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(2, 0, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(3, 1, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(4, 0, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Synchronous_motion(0);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
     } else if (direction == 1) {       // 后退
         Emm_V5_Vel_Control(1, 0, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(2, 1, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(3, 0, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(4, 1, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Synchronous_motion(0);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
     } else if (direction == 2) { // 左
         Emm_V5_Vel_Control(1, 1, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(2, 1, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(3, 0, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(4, 0, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Synchronous_motion(0);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
     } else if (direction == 3) { // 右
         Emm_V5_Vel_Control(1, 0, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(2, 0, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(3, 1, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(4, 1, speed, 50, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Synchronous_motion(0);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
     }
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
     isMoving = true;
 }
 
@@ -391,11 +390,11 @@ void GotoPose(float x, float y, float theta, bool isRelative) {
             uint8_t dir = (x > 0) ? 0 : 1;
             uint32_t pulses = (uint32_t)(fabsf(x) * X_PULSE);
             Emm_V5_Pos_Control(1, dir, speed, 50, pulses, 0, 0);
-            vTaskDelay(pdMS_TO_TICKS(8));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Pos_Control(2, dir, speed, 50, pulses, 0, 0);
-            vTaskDelay(pdMS_TO_TICKS(8));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Pos_Control(3, !dir, speed, 50, pulses, 0, 0);
-            vTaskDelay(pdMS_TO_TICKS(8));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Pos_Control(4, !dir, speed, 50, pulses, 0, 0);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
@@ -404,11 +403,11 @@ void GotoPose(float x, float y, float theta, bool isRelative) {
             uint8_t dir = (y > 0) ? 0 : 1;
             uint32_t pulses = (uint32_t)(fabsf(y) * Y_PULSE);
             Emm_V5_Pos_Control(1, !dir, speed, 50, pulses, 0, 0);
-            vTaskDelay(pdMS_TO_TICKS(8));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Pos_Control(2,  dir, speed, 50, pulses, 0, 0);
-            vTaskDelay(pdMS_TO_TICKS(8));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Pos_Control(3, !dir, speed, 50, pulses, 0, 0);
-            vTaskDelay(pdMS_TO_TICKS(8));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Pos_Control(4,  dir, speed, 50, pulses, 0, 0);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
@@ -417,11 +416,11 @@ void GotoPose(float x, float y, float theta, bool isRelative) {
             uint8_t dir = (theta < 0) ? 0 : 1;
             uint32_t pulses = (uint32_t)(fabsf(theta) * THETA_PULSE);
             Emm_V5_Pos_Control(1, dir, speed, 50, pulses, 0, 0);
-            vTaskDelay(pdMS_TO_TICKS(8));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Pos_Control(2, dir, speed, 50, pulses, 0, 0);
-            vTaskDelay(pdMS_TO_TICKS(8));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Pos_Control(3, dir, speed, 50, pulses, 0, 0);
-            vTaskDelay(pdMS_TO_TICKS(8));
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Pos_Control(4, dir, speed, 50, pulses, 0, 0);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
@@ -436,21 +435,97 @@ void GotoPose(float x, float y, float theta, bool isRelative) {
 }
 
 /**
+ * @brief 视觉圆盘对齐：先原地旋转 A，再在旋转后的车体系中平移。
+ */
+bool AlignToDisc(float targetX, float targetY, float angleDeg,
+                 float cameraOffset) {
+    constexpr float MAX_TRANSLATION_MM = 2000.0f;// 最大平移距离
+    constexpr float MAX_ALIGNMENT_ANGLE_DEG = 180.0f;// 最大对齐角度
+    constexpr float MOVEMENT_EPSILON = 0.01f;// 对齐角度阈值
+    constexpr uint16_t ALIGN_SPEED_RPM = 80;// 对齐速度
+    constexpr uint8_t ALIGN_ACCELERATION = 50;// 对齐加速度
+
+    if (!isfinite(targetX) || !isfinite(targetY) || !isfinite(angleDeg)
+            || !isfinite(cameraOffset) || cameraOffset < 0.0f
+            || fabsf(targetX) > MAX_TRANSLATION_MM
+            || fabsf(targetY) > MAX_TRANSLATION_MM
+            || fabsf(angleDeg) > MAX_ALIGNMENT_ANGLE_DEG
+            || X_PULSE <= 0.0f || Y_PULSE <= 0.0f || THETA_PULSE <= 0.0f) {
+        Serial.println("[Align] ERR: invalid coordinate, angle, offset, or calibration");
+        return false;
+    }
+
+    const float angleRad = angleDeg * PI / 180.0f;
+    const float cosAngle = cosf(angleRad);
+    const float sinAngle = sinf(angleRad);
+    const float moveX = targetX * cosAngle + targetY * sinAngle
+                        - cameraOffset * (1.0f - cosAngle);
+    const float moveY = -targetX * sinAngle + targetY * cosAngle
+                        + cameraOffset * sinAngle;
+
+    if (fabsf(moveX) > MAX_TRANSLATION_MM
+            || fabsf(moveY) > MAX_TRANSLATION_MM) {
+        Serial.println("[Align] ERR: transformed translation exceeds safety limit");
+        return false;
+    }
+
+    Serial.printf(
+        "[Align] input x=%.1f mm, y=%.1f mm, angle=%.2f deg, L=%.1f mm\n",
+        targetX, targetY, angleDeg, cameraOffset
+    );
+
+    // 必须等旋转结束后再平移，否则这里的坐标变换所基于的车体系尚未建立。
+    if (fabsf(angleDeg) > MOVEMENT_EPSILON) {
+        GotoPose(0.0f, 0.0f, angleDeg, true);
+        const uint32_t rotationPulses = static_cast<uint32_t>(
+            lroundf(fabsf(angleDeg) * THETA_PULSE)
+        );
+        waitForPhysicalMotion(
+            rotationPulses, ALIGN_SPEED_RPM, ALIGN_ACCELERATION
+        );
+    }
+
+    Serial.printf("[Align] translated command x=%.1f mm, y=%.1f mm\n", moveX, moveY);
+
+    // X/Y 均交给 GotoPose，由其使用 X_PULSE/Y_PULSE 完成毫米到脉冲的换算。
+    // 两轴分开调用并等待，防止后一轴命令覆盖尚未完成的前一轴运动。
+    if (fabsf(moveX) > MOVEMENT_EPSILON) {
+        const uint32_t pulses = static_cast<uint32_t>(
+            lroundf(fabsf(moveX) * X_PULSE)
+        );
+        GotoPose(moveX, 0.0f, 0.0f, true);
+        waitForPhysicalMotion(pulses, ALIGN_SPEED_RPM, ALIGN_ACCELERATION);
+    }
+
+    if (fabsf(moveY) > MOVEMENT_EPSILON) {
+        const uint32_t pulses = static_cast<uint32_t>(
+            lroundf(fabsf(moveY) * Y_PULSE)
+        );
+        GotoPose(0.0f, moveY, 0.0f, true);
+        waitForPhysicalMotion(pulses, ALIGN_SPEED_RPM, ALIGN_ACCELERATION);
+    }
+
+    currentPose.theta = normalizeHeading(currentPose.theta + angleDeg);
+    Serial.println("[Align] OK");
+    return true;
+}
+
+/**
  * @brief 按节点序号路径移动，只原地转向和向前直行。
  */
 bool MoveNodePath(const uint8_t *path, size_t pathLength,
                   uint16_t speedRpm, uint8_t acceleration) {
     // 第 1 步：检查调用参数。
     if (path == nullptr || pathLength < 2) {
-        Serial.println("[路径] 错误：路径至少需要两个节点");
+        Serial.println("[Route] Error: path requires at least two nodes");
         return false;
     }
     if (speedRpm == 0 || speedRpm > 5000) {
-        Serial.println("[路径] 错误：速度必须在 1~5000 RPM 范围内");
+        Serial.println("[Route] Error: speed must be in 1~5000 RPM range");
         return false;
     }
     if (X_PULSE <= 0.0f || THETA_PULSE <= 0.0f) {
-        Serial.println("[路径] 错误：直行和旋转脉冲标定系数必须大于 0");
+        Serial.println("[Route] Error: forward and rotation pulse calibration coefficients must be > 0");
         return false;
     }
 
@@ -458,12 +533,12 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
     for (size_t index = 0; index < pathLength; ++index) {
         NodePosition ignored;
         if (!getNodePosition(path[index], ignored)) {
-            Serial.printf("[路径] 错误：节点 %u 不存在\n", path[index]);
+            Serial.printf("[Route] Error: node %u does not exist\n", path[index]);
             return false;
         }
         if (index > 0 && !areAdjacentNodes(path[index - 1], path[index])) {
             Serial.printf(
-                "[路径] 错误：节点 %u 与节点 %u 不相邻\n",
+                "[Route] Error: node %u and node %u are not adjacent\n",
                 path[index - 1], path[index]
             );
             return false;
@@ -493,7 +568,7 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
 
         if (continuesStraight(start, middle, end)) {
             Serial.printf(
-                "[路径] 节点 %u 共线，合并为节点 %u -> %u\n",
+                "[Route] Node %u collinear, merged to node %u -> %u\n",
                 segmentEnd, segmentStart, path[index]
             );
             segmentEnd = path[index];
@@ -515,7 +590,7 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
         return false;
     }
 
-    Serial.println("[路径] 全部移动完成");
+    Serial.println("[Route] All moves completed");
     return true;
 }
 
@@ -525,6 +600,8 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
 void InitArm() {
     MoveArm(200,-1,-1,0,150);
     vTaskDelay(pdMS_TO_TICKS(3000));
-    MoveArm(150,40,-55,0,100);
+    Servo_SetAngleMTurn(2, -55, 0, 0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    MoveArm(150,40,-1,0,150);
     vTaskDelay(pdMS_TO_TICKS(100));
 }
