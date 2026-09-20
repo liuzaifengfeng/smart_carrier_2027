@@ -35,11 +35,11 @@ constexpr float ROUTE_ANGLE_EPSILON_DEG = 0.01f;       // 小于该角度时不�
 // ================= 连续视觉对齐 PID 参数 =================
 // 输出均为 -1~1 的归一化车身速度权重，实际轮速由调用方传入的 speedRpm 决定。
 constexpr float ALIGN_POSITION_TOLERANCE = 3.0f;// 位置误差单位为视觉输出值
-constexpr float ALIGN_ANGLE_TOLERANCE_DEG = 0.5f;// 角度误差单位为度
+constexpr float ALIGN_ANGLE_TOLERANCE_DEG = 0.2f;// 角度误差单位为度
 constexpr float ALIGN_DT_MIN_SECONDS = 0.02f;// 时间步长单位为秒
 constexpr float ALIGN_DT_MAX_SECONDS = 0.30f;// 时间步长单位为秒
-constexpr uint16_t OMNI_MIN_MOVING_RPM = 10;// 最小移动速度单位为转/分
-constexpr uint8_t OMNI_ACCELERATION = 200;// 加速度单位为转/分^2
+constexpr uint16_t OMNI_MIN_MOVING_RPM = 1;// 最小移动速度单位为转/分
+constexpr uint8_t OMNI_ACCELERATION = 0;// 加速度单位为转/分^2
 
 struct PidController {
     float kp;
@@ -53,13 +53,13 @@ struct PidController {
 
 // 位置误差单位为视觉输出值；角度误差单位为度。
 PidController s_alignVisualXPid = {
-    3.0f, 0.0004f, 0.15f, 200.0f, 0.0f, 0.0f, false
+    0.03f, 0.0005f, 0.0f, 200.0f, 0.0f, 0.0f, false
 };
 PidController s_alignVisualYPid = {
-    3.0f, 0.0004f, 0.15f, 200.0f, 0.0f, 0.0f, false
+    0.03f, 0.0005f, 0.0f, 200.0f, 0.0f, 0.0f, false
 };
 PidController s_alignAnglePid = {
-    3.0f, 0.002f, 0.5f, 20.0f, 0.0f, 0.0f, false
+    0.05f, 0.0005f, 0.0f, 20.0f, 0.0f, 0.0f, false
 };
 
 float clampFloat(float value, float minimum, float maximum) {
@@ -582,13 +582,13 @@ bool AlignToDiscContinuous(float angleErrorDeg, float visualXError,
         dtSeconds, ALIGN_DT_MIN_SECONDS, ALIGN_DT_MAX_SECONDS
     );
 
-    //const bool angleAligned = fabsf(angleErrorDeg) < ALIGN_ANGLE_TOLERANCE_DEG;// 角度误差是否小于阈值
+    const bool angleAligned = fabsf(angleErrorDeg) < ALIGN_ANGLE_TOLERANCE_DEG;// 角度误差是否小于阈值
     const bool xAligned = fabsf(visualXError) < ALIGN_POSITION_TOLERANCE;// 视觉 X 误差是否小于阈值
-    //const bool yAligned = fabsf(visualYError) < ALIGN_POSITION_TOLERANCE;// 视觉 Y 误差是否小于阈值
+    const bool yAligned = fabsf(visualYError) < ALIGN_POSITION_TOLERANCE;// 视觉 Y 误差是否小于阈值
 
-    bool angleAligned = 1;// 测试用，直接对齐角度
+    //bool angleAligned = 1;// 测试用，直接对齐角度
     //bool xAligned = 1;// 测试用，直接对齐视觉 X
-    bool yAligned = 1;// 测试用，直接对齐视觉 Y
+    //bool yAligned = 1;// 测试用，直接对齐视觉 Y
 
     if (angleAligned && xAligned && yAligned) {// 对齐成功
         OmniMove(0.0f, 0.0f, 0.0f, 0);

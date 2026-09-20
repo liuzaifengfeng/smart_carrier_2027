@@ -43,7 +43,7 @@
 #define OTA_HOSTNAME "smartcarrier_ESP32S3"
 #define VERSION "0.1.4-framework"
 
-constexpr uint16_t ALIGN_PID_MAX_SPEED_RPM = 80;
+constexpr uint16_t ALIGN_PID_MAX_SPEED_RPM = 20;  // 移动速度单位为转/分
 constexpr uint32_t ALIGN_FEEDBACK_TIMEOUT_MS = 300;
 constexpr uint32_t ALIGN_LOG_INTERVAL_MS = 500;
 
@@ -143,8 +143,7 @@ size_t nodePathLen = 0;
  * 仅接受 1~9 号节点、短横线分隔和完整花括号，避免 atoi 将非法内容
  * 静默转换成 0。节点是否相邻由 MoveNodePath 在运动前统一检查。
  */
-bool parseNodePathCommand(const char *command, uint8_t *path,
-                          size_t capacity, size_t &pathLength) {
+bool parseNodePathCommand(const char *command, uint8_t *path, size_t capacity, size_t &pathLength) {
     pathLength = 0;
     constexpr char WAY_PREFIX[] = "{way:";
     if (command == nullptr || path == nullptr || capacity < 2
@@ -182,8 +181,7 @@ bool parseNodePathCommand(const char *command, uint8_t *path,
  * 三个字段依次为水平校正角（deg）和 2 号圆盘 X/Y 视觉误差。
  * 必须恰好包含三个完整的有限浮点数，不接受缺字段或尾随字符。
  */
-int parseVisualAlignmentFrame(const char *frame, float &angleDeg,
-                              float &x, float &y) {
+int parseVisualAlignmentFrame(const char *frame, float &angleDeg, float &x, float &y) {
     if (frame == nullptr) {
         return 0;
     }
@@ -645,7 +643,7 @@ void Task_Debug_CMD(void *pvParameters) {
     char buffer[100];
     int bufferIndex = 0;
     for (;;) {
-        if (Serial.available() > 0) {
+        while (Serial.available() > 0) {
             char c = Serial.read();
             if (c == '\n' || c == '\r') {
                 if (bufferIndex > 0) {
@@ -784,6 +782,9 @@ void setup() {
     if (bootKeyPressed) {
         Serial.println("Debug mode");
         leds[0] = CRGB::Yellow; FastLED.show();
+        // Debug 模式默认直接启用视觉闭环对齐，仍可通过
+        // {ALIGN:STOP}/{ALIGN:START} 在运行时停止或重新启动。
+        handleAlignmentControlFrame("{ALIGN:START}");
         xTaskCreate(Task_Debug_CMD, "Task_Debug_CMD", 16384, NULL, 5, NULL);
     } else {
         Serial.println("Release mode");
