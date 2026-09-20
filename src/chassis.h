@@ -40,16 +40,38 @@ void MovePose(int direction, float speed, bool stop);
 void GotoPose(float x, float y, float theta, bool isRelative);
 
 /**
- * @brief 根据视觉给出的 2 号圆盘坐标与水平角，先旋转再平移对齐。
+ * @brief 麦克纳姆轮全向速度控制。
  *
- * @param targetX       2 号圆盘在旋转前车体系中的 X 坐标/误差 (mm)
- * @param targetY       2 号圆盘在旋转前车体系中的 Y 坐标/误差 (mm)
- * @param angleDeg      水平校正角 A (deg)，正负方向与 GotoPose 一致
- * @param cameraOffset  相机原点到小车旋转中心沿车头 X 轴的距离 L (mm)
- * @return true 参数有效且运动已执行；false 参数或标定值无效
+ * 三个速度参数是车身坐标系中的归一化权重，范围 -1~1；函数进行四轮
+ * 速度混合，并在组合量超过 1 时等比例归一化，保持运动方向不变。
+ *
+ * @param xVelocity        车身 X 方向速度权重，正值与 GotoPose X 正方向一致
+ * @param yVelocity        车身 Y 方向速度权重，正值与 GotoPose Y 正方向一致
+ * @param rotationVelocity 旋转速度权重，正值与 GotoPose theta 正方向一致
+ * @param speedRpm         最大轮速，范围 0~5000 RPM；0 表示停车
  */
-bool AlignToDisc(float targetX, float targetY, float angleDeg,
-                 float cameraOffset = 300.0f);
+void OmniMove(float xVelocity, float yVelocity, float rotationVelocity,
+              uint16_t speedRpm);
+
+/**
+ * @brief 使用一帧视觉误差更新连续 PID 对齐速度。
+ *
+ * 摄像头与车身约呈 90°，因此视觉 Y 映射到底盘 X，视觉 X 映射到底盘 Y；
+ * 三个 PID 输出会在同一周期合成为全向运动速度。
+ *
+ * @param angleErrorDeg 视觉角度偏差 (deg)
+ * @param visualXError  视觉 X 偏差
+ * @param visualYError  视觉 Y 偏差
+ * @param dtSeconds     与上一视觉帧的时间间隔 (s)
+ * @param speedRpm      PID 满输出时的最大轮速 (RPM)
+ * @return true 三个误差均进入允许范围；false 仍在对齐
+ */
+bool AlignToDiscContinuous(float angleErrorDeg, float visualXError,
+                           float visualYError, float dtSeconds,
+                           uint16_t speedRpm = 80);
+
+// 清除连续对齐 PID 的积分/微分历史；不会自行发送停车命令。
+void ResetDiscAlignmentPid();
 
 // @brief 机械臂移动到位.
 void MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);

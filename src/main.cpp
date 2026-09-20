@@ -26,6 +26,7 @@
 #include <FreeRTOS.h>
 #include <task.h>
 #include <queue.h>
+#include <semphr.h>
 #include <FastLED.h>
 #include "ota_service.h"
 #include <ArduinoJson.h>
@@ -42,15 +43,9 @@
 #define OTA_HOSTNAME "smartcarrier_ESP32S3"
 #define VERSION "0.1.4-framework"
 
-// 摄像头与车身约呈 90 度，视觉轴与 GotoPose 轴需要交换并取反。
-// 实测 GotoPose X +20 mm 使视觉 Y 增加约 50；
-//      GotoPose Y +10 mm 使视觉 X 增加约 23。
-constexpr float VISUAL_Y_TO_CHASSIS_X_MM = 20.0f / 50.0f;
-constexpr float VISUAL_X_TO_CHASSIS_Y_MM = 10.0f / 23.0f;
-// 上位机角度正方向与底盘 GotoPose 的角度正方向相反。
-constexpr float VISION_ANGLE_SIGN = -1.0f;
-constexpr float ALIGN_ANGLE_TOLERANCE_DEG = 0.5f;
-constexpr float ALIGN_POSITION_TOLERANCE = 3.0f;
+constexpr uint16_t ALIGN_PID_MAX_SPEED_RPM = 80;
+constexpr uint32_t ALIGN_FEEDBACK_TIMEOUT_MS = 300;
+constexpr uint32_t ALIGN_LOG_INTERVAL_MS = 500;
 
 CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 
@@ -66,8 +61,8 @@ CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 float X_PULSE     = 13.3f;    // X向 每毫米脉冲
 float Y_PULSE     = 13.6f;    // Y向 每毫米脉冲
 float THETA_PULSE = 51.8f;    // 旋转 每度脉冲
-float HEIGHT_PULSE = 46.5f;  // 升降机械臂 每毫米脉冲 
-float LENGTH_PULSE = 28.6f;  // 伸缩机械臂 每毫米脉冲 
+float HEIGHT_PULSE = 80.0f;  // 升降机械臂 每毫米脉冲
+float LENGTH_PULSE = 30.2f;  // 伸缩机械臂 每毫米脉冲
 
 
 // ================= 任务码 =================
@@ -221,6 +216,32 @@ typedef struct {
 } VisualAlignmentFrame_t;
 
 QueueHandle_t xAlignmentQueue = NULL;
+SemaphoreHandle_t xAlignmentMotionMutex = NULL;
+volatile bool alignmentEnabled = false;
+
+static bool handleAlignmentControlFrame(const char *frame) {
+    bool enable = false;
+    if (strcmp(frame, "{ALIGN:START}") == 0) {
+        enable = true;
+    } else if (strcmp(frame, "{ALIGN:STOP}") != 0) {
+        return false;
+    }
+
+    alignmentEnabled = false;
+    if (xAlignmentQueue != NULL) {
+        xQueueReset(xAlignmentQueue);
+    }
+    if (xAlignmentMotionMutex != NULL
+            && xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
+        OmniMove(0.0f, 0.0f, 0.0f, 0);
+        ResetDiscAlignmentPid();
+        xSemaphoreGive(xAlignmentMotionMutex);
+    }
+
+    alignmentEnabled = enable;
+    Serial.println(enable ? "{ALIGN:STARTED}" : "{ALIGN:STOPPED}");
+    return true;
+}
 
 static bool handleVisualAlignmentFrame(const char *frame) {// 处理视觉对齐帧
     float visualX = 0.0f;
@@ -231,8 +252,8 @@ static bool handleVisualAlignmentFrame(const char *frame) {// 处理视觉对齐
     }
 
     VisualAlignmentFrame_t alignment = {angleDeg, visualX, visualY};
-    if (xAlignmentQueue != NULL) {
-        // 队列长度为 1；视觉以 5 Hz 连续发送时始终只保留最新一帧。
+    if (alignmentEnabled && xAlignmentQueue != NULL) {
+        // 队列长度为 1；视觉以 20 Hz 连续发送时始终只保留最新一帧。
         xQueueOverwrite(xAlignmentQueue, &alignment);
     }
     return true;
@@ -274,30 +295,74 @@ typedef struct {
 } VisualCmd_t;
 
 // ================= 函数声明 =================
-void Task_MainStateMachine(void *pvParameters);
-void Task_Serial_CMD(void *pvParameters);
-void Task_Debug_CMD(void *pvParameters);
-void Task_VisualAlignment(void *pvParameters);
-void vHomeTimerCallback(TimerHandle_t xTimer);
+void Task_MainStateMachine(void *pvParameters);// 主状态机任务
+void Task_Serial_CMD(void *pvParameters);// 串口指令任务
+void Task_Debug_CMD(void *pvParameters);// 调试指令任务
+void Task_VisualAlignment(void *pvParameters);// 视觉对齐任务
+void vHomeTimerCallback(TimerHandle_t xTimer);// 总超时兜底(回启停区)
 
 // ================= 视觉闭环对齐任务 =================
 void Task_VisualAlignment(void *pvParameters) {
     VisualAlignmentFrame_t alignment;
     bool alignedReported = false;
+    bool feedbackActive = false;
+    uint32_t lastFeedbackMs = 0;
+    uint32_t lastLogMs = 0;
 
     for (;;) {
-        if (xQueueReceive(xAlignmentQueue, &alignment, portMAX_DELAY) != pdTRUE) {
+        if (!alignmentEnabled) {
+            feedbackActive = false;
+            alignedReported = false;
+            lastFeedbackMs = 0;
+            vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
 
-        const bool angleAligned =
-            fabsf(alignment.angleDeg) < ALIGN_ANGLE_TOLERANCE_DEG;
-        const bool xAligned =
-            fabsf(alignment.visualX) < ALIGN_POSITION_TOLERANCE;
-        const bool yAligned =
-            fabsf(alignment.visualY) < ALIGN_POSITION_TOLERANCE;
+        if (xQueueReceive(
+                xAlignmentQueue, &alignment,
+                pdMS_TO_TICKS(ALIGN_FEEDBACK_TIMEOUT_MS)) != pdTRUE) {
+            if (!alignmentEnabled) {
+                continue;
+            }
+            if (feedbackActive
+                    && millis() - lastFeedbackMs >= ALIGN_FEEDBACK_TIMEOUT_MS) {
+                // 视觉断流时立即撤销所有速度，禁止沿最后一次命令继续运动。
+                if (xSemaphoreTake(
+                        xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
+                    OmniMove(0.0f, 0.0f, 0.0f, 0);
+                    ResetDiscAlignmentPid();
+                    xSemaphoreGive(xAlignmentMotionMutex);
+                }
+                Serial.println("{ALIGN:ERR,TIMEOUT}");
+                feedbackActive = false;
+                alignedReported = false;
+                lastFeedbackMs = 0;
+            }
+            continue;
+        }
 
-        if (angleAligned && xAligned && yAligned) {
+        const uint32_t nowMs = millis();
+        float dtSeconds = 0.05f;
+        if (lastFeedbackMs != 0) {
+            dtSeconds = static_cast<float>(nowMs - lastFeedbackMs) / 1000.0f;
+        }
+        lastFeedbackMs = nowMs;
+        feedbackActive = true;
+
+        bool aligned = false;
+        if (xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
+            if (alignmentEnabled) {
+                aligned = AlignToDiscContinuous(
+                    alignment.angleDeg, alignment.visualX, alignment.visualY,
+                    dtSeconds, ALIGN_PID_MAX_SPEED_RPM
+                );
+            }
+            xSemaphoreGive(xAlignmentMotionMutex);
+        }
+
+        if (aligned) {
+            // 已停车并完成 PID 复位；之后即使上位机停止发送也不报断流。
+            feedbackActive = false;
             if (!alignedReported) {
                 Serial.printf(
                     "[Align] OK: angle=%.2f deg, x=%.1f, y=%.1f\n",
@@ -310,30 +375,14 @@ void Task_VisualAlignment(void *pvParameters) {
         }
         alignedReported = false;
 
-        if (!angleAligned) {
-            // 第一阶段只校准角度，不使用本帧的 X/Y，避免旋转和平移耦合。
-            const float correctedAngleDeg =
-                alignment.angleDeg * VISION_ANGLE_SIGN;
+        if (nowMs - lastLogMs >= ALIGN_LOG_INTERVAL_MS) {
             Serial.printf(
-                "[Align] angle stage: visual=%.2f deg, chassis=%.2f deg\n",
-                alignment.angleDeg, correctedAngleDeg
+                "[Align PID] angle=%.2f deg, x=%.1f, y=%.1f, dt=%.3f s\n",
+                alignment.angleDeg, alignment.visualX,
+                alignment.visualY, dtSeconds
             );
-            AlignToDisc(0.0f, 0.0f, correctedAngleDeg, 0.0f);
-        } else {
-            // 第二阶段只校准坐标；摄像头与车身呈 90 度，轴交换并取反。
-            const float xMm =
-                -alignment.visualY * VISUAL_Y_TO_CHASSIS_X_MM;
-            const float yMm =
-                -alignment.visualX * VISUAL_X_TO_CHASSIS_Y_MM;
-            Serial.printf(
-                "[Align] position stage: visual x=%.1f, y=%.1f -> chassis x=%.1f mm, y=%.1f mm\n",
-                alignment.visualX, alignment.visualY, xMm, yMm
-            );
-            AlignToDisc(xMm, yMm, 0.0f, 0.0f);
+            lastLogMs = nowMs;
         }
-
-        // 运动期间收到的帧反映的是旧位姿，清除后等待下一帧新测量。
-        xQueueReset(xAlignmentQueue);
     }
 }
 
@@ -523,7 +572,10 @@ void Task_Serial_CMD(void *pvParameters) {
             if (c == '\n' || c == '\r') {
                 rxBuffer[rxIdx] = '\0';
                 if (rxIdx > 0) {
-                    if (handleVisualAlignmentFrame(rxBuffer)) {
+                    if (handleAlignmentControlFrame(rxBuffer)) {
+                        // 对齐任务已显式启动或停止。
+                    }
+                    else if (handleVisualAlignmentFrame(rxBuffer)) {
                         // 已接收视觉对齐帧，例如 {ALIGN:1,10,-26}
                     }
                     else if (strcmp(rxBuffer, "{ready}") == 0) { // 机载电脑就绪
@@ -598,6 +650,10 @@ void Task_Debug_CMD(void *pvParameters) {
             if (c == '\n' || c == '\r') {
                 if (bufferIndex > 0) {
                     buffer[bufferIndex] = '\0';
+                    if (handleAlignmentControlFrame(buffer)) {
+                        bufferIndex = 0;
+                        continue;
+                    }
                     if (handleVisualAlignmentFrame(buffer)) {
                         bufferIndex = 0;
                         continue;
@@ -670,7 +726,7 @@ void Task_Debug_CMD(void *pvParameters) {
                         else if (strcmp(cmd, "En_C") == 0) 
                             {  Serial.printf("{En_C:ACK,%.0f}\n", p1);  Emm_V5_En_Control_all(p1);}
                         else if (strcmp(cmd, "help") == 0)
-                            {    Serial.println("Cmds: {ALIGN:a,x,y} {way:1-2-5} {StartZone:1} {GOTOpose:x,y,theta} {SetPose:x,y,theta} {Movepose:dir,speed,stop} {MoveArm_1:h,l,speed} {MoveArm_2:turret,pawl,speed} {SERVO:id,angle} {En_C:enable} {help}");}
+                            {    Serial.println("Cmds: {ALIGN:START} {ALIGN:STOP} {ALIGN:a,x,y} {way:1-2-5} {StartZone:1} {GOTOpose:x,y,theta} {SetPose:x,y,theta} {Movepose:dir,speed,stop} {MoveArm_1:h,l,speed} {MoveArm_2:turret,pawl,speed} {SERVO:id,angle} {En_C:enable} {help}");}
                         else  {    Serial.println("{ERR:UNKNOWN_FRAME}");}
                     }
                     bufferIndex = 0;
@@ -713,15 +769,16 @@ void setup() {
 
     // 机载电脑指令队列(深度10)
     xVisualTaskQueue = xQueueCreate(10, sizeof(VisualCmd_t));
-    // 视觉对齐只保留最新帧，运动完成后重新等待 5 Hz 的新测量。
+    // 视觉 PID 对齐只保留 20 Hz 连续反馈中的最新一帧。
     xAlignmentQueue = xQueueCreate(1, sizeof(VisualAlignmentFrame_t));
-    if (xAlignmentQueue != NULL) {
+    xAlignmentMotionMutex = xSemaphoreCreateMutex();
+    if (xAlignmentQueue != NULL && xAlignmentMotionMutex != NULL) {
         xTaskCreate(
             Task_VisualAlignment, "Task_VisualAlignment",
             8192, NULL, 7, NULL
         );
     } else {
-        Serial.println("[Align] ERR: failed to create alignment queue");
+        Serial.println("[Align] ERR: failed to create alignment queue or mutex");
     }
 
     if (bootKeyPressed) {

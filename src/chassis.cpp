@@ -32,6 +32,64 @@ constexpr uint32_t MOTOR_COMMAND_GAP_MS = 5;           // 连续发送两条电�
 constexpr uint32_t ROUTE_SETTLE_TIME_MS = 250;         // 每次运动结束后的停车稳定时间
 constexpr float ROUTE_ANGLE_EPSILON_DEG = 0.01f;       // 小于该角度时不再执行转向
 
+// ================= 连续视觉对齐 PID 参数 =================
+// 输出均为 -1~1 的归一化车身速度权重，实际轮速由调用方传入的 speedRpm 决定。
+constexpr float ALIGN_POSITION_TOLERANCE = 3.0f;// 位置误差单位为视觉输出值
+constexpr float ALIGN_ANGLE_TOLERANCE_DEG = 0.5f;// 角度误差单位为度
+constexpr float ALIGN_DT_MIN_SECONDS = 0.02f;// 时间步长单位为秒
+constexpr float ALIGN_DT_MAX_SECONDS = 0.30f;// 时间步长单位为秒
+constexpr uint16_t OMNI_MIN_MOVING_RPM = 10;// 最小移动速度单位为转/分
+constexpr uint8_t OMNI_ACCELERATION = 200;// 加速度单位为转/分^2
+
+struct PidController {
+    float kp;
+    float ki;
+    float kd;
+    float integralLimit;      // 积分项上限
+    float integral;           // 积分项
+    float previousError;      // 上一次误差
+    bool hasPreviousError;    // 是否有上一次误差
+};
+
+// 位置误差单位为视觉输出值；角度误差单位为度。
+PidController s_alignVisualXPid = {
+    3.0f, 0.0004f, 0.15f, 200.0f, 0.0f, 0.0f, false
+};
+PidController s_alignVisualYPid = {
+    3.0f, 0.0004f, 0.15f, 200.0f, 0.0f, 0.0f, false
+};
+PidController s_alignAnglePid = {
+    3.0f, 0.002f, 0.5f, 20.0f, 0.0f, 0.0f, false
+};
+
+float clampFloat(float value, float minimum, float maximum) {
+    return fmaxf(minimum, fminf(value, maximum));
+}
+
+void resetPid(PidController &pid) {
+    pid.integral = 0.0f;
+    pid.previousError = 0.0f;
+    pid.hasPreviousError = false;
+}
+
+float updatePid(PidController &pid, float error, float dtSeconds) {
+    pid.integral = clampFloat(
+        pid.integral + error * dtSeconds,
+        -pid.integralLimit, pid.integralLimit
+    );
+    float derivative = 0.0f;
+    if (pid.hasPreviousError) {
+        derivative = (error - pid.previousError) / dtSeconds;
+    }
+    pid.previousError = error;
+    pid.hasPreviousError = true;
+
+    return clampFloat(
+        pid.kp * error + pid.ki * pid.integral + pid.kd * derivative,
+        -1.0f, 1.0f
+    );
+}
+
 // 根据节点序号读取坐标。序号只能是 1~9。
 bool getNodePosition(uint8_t node, NodePosition &position) {
     if (node < 1 || node > 9) {
@@ -246,7 +304,7 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
     int acc = 50;
 
         if (currentArm.high - high != 0 && high != -1) {
-            if( high < 0 || high > 200){//行程保护
+            if( high < 0 || high > 160){//行程保护
                 Serial.println("high out of range");
             } else {
                 uint8_t dir = (currentArm.high - high > 0) ? 0 : 1;
@@ -435,79 +493,143 @@ void GotoPose(float x, float y, float theta, bool isRelative) {
 }
 
 /**
- * @brief 视觉圆盘对齐：先原地旋转 A，再在旋转后的车体系中平移。
+ * @brief 麦克纳姆轮全向速度混合并同步下发四轮速度。
  */
-bool AlignToDisc(float targetX, float targetY, float angleDeg,
-                 float cameraOffset) {
-    constexpr float MAX_TRANSLATION_MM = 2000.0f;// 最大平移距离
-    constexpr float MAX_ALIGNMENT_ANGLE_DEG = 180.0f;// 最大对齐角度
-    constexpr float MOVEMENT_EPSILON = 0.01f;// 对齐角度阈值
-    constexpr uint16_t ALIGN_SPEED_RPM = 80;// 对齐速度
-    constexpr uint8_t ALIGN_ACCELERATION = 50;// 对齐加速度
+void OmniMove(float xVelocity, float yVelocity, float rotationVelocity,
+              uint16_t speedRpm) {
+    if (!isfinite(xVelocity) || !isfinite(yVelocity) || !isfinite(rotationVelocity) || speedRpm > 5000) {
+        Serial.println("[OmniMove] ERR: invalid velocity or speed");
+        xVelocity = 0.0f;
+        yVelocity = 0.0f;
+        rotationVelocity = 0.0f;
+        speedRpm = 0;
+    }
 
-    if (!isfinite(targetX) || !isfinite(targetY) || !isfinite(angleDeg)
-            || !isfinite(cameraOffset) || cameraOffset < 0.0f
-            || fabsf(targetX) > MAX_TRANSLATION_MM
-            || fabsf(targetY) > MAX_TRANSLATION_MM
-            || fabsf(angleDeg) > MAX_ALIGNMENT_ANGLE_DEG
-            || X_PULSE <= 0.0f || Y_PULSE <= 0.0f || THETA_PULSE <= 0.0f) {
-        Serial.println("[Align] ERR: invalid coordinate, angle, offset, or calibration");
+    xVelocity = clampFloat(xVelocity, -1.0f, 1.0f);
+    yVelocity = clampFloat(yVelocity, -1.0f, 1.0f);
+    rotationVelocity = clampFloat(rotationVelocity, -1.0f, 1.0f);
+
+    // 方向符号与现有 MovePose/GotoPose 的四轮接线约定保持一致。
+    float wheelVelocity[4] = {
+        -xVelocity + yVelocity + rotationVelocity,
+        -xVelocity - yVelocity + rotationVelocity,
+         xVelocity + yVelocity + rotationVelocity,
+         xVelocity - yVelocity + rotationVelocity,
+    };
+
+    float maximumMagnitude = 0.0f;
+    for (float value : wheelVelocity) {
+        maximumMagnitude = fmaxf(maximumMagnitude, fabsf(value));// 计算最大绝对值
+    }
+    if (maximumMagnitude > 1.0f) {
+        for (float &value : wheelVelocity) {
+            value /= maximumMagnitude;
+        }
+        maximumMagnitude = 1.0f;
+    }
+
+    // 小误差时整体抬高四轮速度比例，使最大轮达到可启动转速，同时保持轮间比例。
+    float rpmScale = static_cast<float>(speedRpm);
+    const uint16_t minimumMovingRpm =
+        (speedRpm < OMNI_MIN_MOVING_RPM) ? speedRpm : OMNI_MIN_MOVING_RPM;
+    if (maximumMagnitude > 0.0f
+            && maximumMagnitude * rpmScale < minimumMovingRpm) {
+        rpmScale = static_cast<float>(minimumMovingRpm) / maximumMagnitude;
+    }
+
+    for (uint8_t motor = 1; motor <= 4; ++motor) {
+        const float command = wheelVelocity[motor - 1];
+        uint16_t motorRpm = static_cast<uint16_t>(
+            lroundf(fabsf(command) * rpmScale)
+        );
+        const uint8_t direction = (command >= 0.0f) ? 1 : 0;
+        Emm_V5_Vel_Control(
+            motor, direction, motorRpm, OMNI_ACCELERATION, true
+        );
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
+    }
+    Emm_V5_Synchronous_motion(0);
+}
+
+void ResetDiscAlignmentPid() {
+    resetPid(s_alignVisualXPid);
+    resetPid(s_alignVisualYPid);
+    resetPid(s_alignAnglePid);
+}
+
+/**
+ * @brief 根据连续视觉误差计算三个 PID 速度权重并进行全向闭环对齐。
+ * @param angleErrorDeg 角度误差（度）
+ * @param visualXError 视觉 X 误差（视觉输出值）
+ * @param visualYError 视觉 Y 误差（视觉输出值）
+ * @param dtSeconds 时间间隔（秒）
+ * @param speedRpm 目标速度（RPM）
+ * @return 是否成功对齐
+ */
+bool AlignToDiscContinuous(float angleErrorDeg, float visualXError,
+                           float visualYError, float dtSeconds,
+                           uint16_t speedRpm) {
+    if (!isfinite(angleErrorDeg) || !isfinite(visualXError)
+            || !isfinite(visualYError) || !isfinite(dtSeconds)
+            || dtSeconds <= 0.0f || speedRpm == 0 || speedRpm > 5000) {
+        OmniMove(0.0f, 0.0f, 0.0f, 0);
+        ResetDiscAlignmentPid();
+        Serial.println("[Align PID] ERR: invalid feedback, dt, or speed");
         return false;
     }
 
-    const float angleRad = angleDeg * PI / 180.0f;
-    const float cosAngle = cosf(angleRad);
-    const float sinAngle = sinf(angleRad);
-    const float moveX = targetX * cosAngle + targetY * sinAngle
-                        - cameraOffset * (1.0f - cosAngle);
-    const float moveY = -targetX * sinAngle + targetY * cosAngle
-                        + cameraOffset * sinAngle;
-
-    if (fabsf(moveX) > MAX_TRANSLATION_MM
-            || fabsf(moveY) > MAX_TRANSLATION_MM) {
-        Serial.println("[Align] ERR: transformed translation exceeds safety limit");
-        return false;
-    }
-
-    Serial.printf(
-        "[Align] input x=%.1f mm, y=%.1f mm, angle=%.2f deg, L=%.1f mm\n",
-        targetX, targetY, angleDeg, cameraOffset
+    dtSeconds = clampFloat(
+        dtSeconds, ALIGN_DT_MIN_SECONDS, ALIGN_DT_MAX_SECONDS
     );
 
-    // 必须等旋转结束后再平移，否则这里的坐标变换所基于的车体系尚未建立。
-    if (fabsf(angleDeg) > MOVEMENT_EPSILON) {
-        GotoPose(0.0f, 0.0f, angleDeg, true);
-        const uint32_t rotationPulses = static_cast<uint32_t>(
-            lroundf(fabsf(angleDeg) * THETA_PULSE)
+    //const bool angleAligned = fabsf(angleErrorDeg) < ALIGN_ANGLE_TOLERANCE_DEG;// 角度误差是否小于阈值
+    const bool xAligned = fabsf(visualXError) < ALIGN_POSITION_TOLERANCE;// 视觉 X 误差是否小于阈值
+    //const bool yAligned = fabsf(visualYError) < ALIGN_POSITION_TOLERANCE;// 视觉 Y 误差是否小于阈值
+
+    bool angleAligned = 1;// 测试用，直接对齐角度
+    //bool xAligned = 1;// 测试用，直接对齐视觉 X
+    bool yAligned = 1;// 测试用，直接对齐视觉 Y
+
+    if (angleAligned && xAligned && yAligned) {// 对齐成功
+        OmniMove(0.0f, 0.0f, 0.0f, 0);
+        ResetDiscAlignmentPid();
+        return true;
+    }
+
+    float visualXOutput = 0.0f;
+    float visualYOutput = 0.0f;
+    float angleOutput = 0.0f;
+
+    if (xAligned) {
+        resetPid(s_alignVisualXPid);
+    } else {
+        visualXOutput = updatePid( s_alignVisualXPid, visualXError, dtSeconds
         );
-        waitForPhysicalMotion(
-            rotationPulses, ALIGN_SPEED_RPM, ALIGN_ACCELERATION
+    }
+    if (yAligned) {
+        resetPid(s_alignVisualYPid);
+    } else {
+        visualYOutput = updatePid( s_alignVisualYPid, visualYError, dtSeconds
+        );
+    }
+    if (angleAligned) {
+        resetPid(s_alignAnglePid);
+    } else {
+        angleOutput = updatePid( s_alignAnglePid, angleErrorDeg, dtSeconds
         );
     }
 
-    Serial.printf("[Align] translated command x=%.1f mm, y=%.1f mm\n", moveX, moveY);
+    // 摄像头相对车身约旋转 90°：视觉 Y -> 底盘 X，视觉 X -> 底盘 Y。
+    // 单轴实测表明两个映射均需取反；角度正方向也与底盘旋转方向相反。
+    const float chassisXVelocity = -visualYOutput;
+    const float chassisYVelocity = -visualXOutput;
+    const float chassisRotationVelocity = -angleOutput;
 
-    // X/Y 均交给 GotoPose，由其使用 X_PULSE/Y_PULSE 完成毫米到脉冲的换算。
-    // 两轴分开调用并等待，防止后一轴命令覆盖尚未完成的前一轴运动。
-    if (fabsf(moveX) > MOVEMENT_EPSILON) {
-        const uint32_t pulses = static_cast<uint32_t>(
-            lroundf(fabsf(moveX) * X_PULSE)
-        );
-        GotoPose(moveX, 0.0f, 0.0f, true);
-        waitForPhysicalMotion(pulses, ALIGN_SPEED_RPM, ALIGN_ACCELERATION);
-    }
-
-    if (fabsf(moveY) > MOVEMENT_EPSILON) {
-        const uint32_t pulses = static_cast<uint32_t>(
-            lroundf(fabsf(moveY) * Y_PULSE)
-        );
-        GotoPose(0.0f, moveY, 0.0f, true);
-        waitForPhysicalMotion(pulses, ALIGN_SPEED_RPM, ALIGN_ACCELERATION);
-    }
-
-    currentPose.theta = normalizeHeading(currentPose.theta + angleDeg);
-    Serial.println("[Align] OK");
-    return true;
+    OmniMove(
+        chassisXVelocity, chassisYVelocity,
+        chassisRotationVelocity, speedRpm
+    );
+    return false;
 }
 
 /**
@@ -598,7 +720,7 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
  * @brief 机械臂初始化归零位
  */
 void InitArm() {
-    MoveArm(200,-1,-1,0,150);
+    MoveArm(150,-1,-1,0,150);
     vTaskDelay(pdMS_TO_TICKS(3000));
     Servo_SetAngleMTurn(2, -55, 0, 0);
     vTaskDelay(pdMS_TO_TICKS(100));

@@ -353,6 +353,14 @@ def build_start_zone_command(zone_name: str) -> str:
     return f"{{StartZone:{1 if zone_name == '启停区1' else 2}}}"
 
 
+def build_alignment_control_command(action: str) -> str:
+    """生成连续视觉对齐任务的启停命令。"""
+    normalized = action.strip().upper()
+    if normalized not in {"START", "STOP"}:
+        raise ValueError("对齐任务动作只能是 START 或 STOP")
+    return f"{{ALIGN:{normalized}}}"
+
+
 def build_pose_calibration_command(pose: Pose) -> str:
     """生成将上位机理想位姿同步到 Debug 固件的命令。"""
     if not all(math.isfinite(value) for value in (pose.x, pose.y, pose.theta)):
@@ -1318,6 +1326,27 @@ class UpperComputerApp:
         for command in ("GOTOpose", "Movepose", "En_C"):
             self._command_group(chassis_tab, command)
 
+        align_group = ttk.LabelFrame(chassis_tab, text="视觉 PID 对齐", padding=7)
+        align_group.pack(fill=tk.X, pady=(0, 6))
+        ttk.Button(
+            align_group,
+            text="开启连续对齐",
+            command=lambda: self.send_alignment_control("START"),
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+        ttk.Button(
+            align_group,
+            text="停止并清零",
+            command=lambda: self.send_alignment_control("STOP"),
+        ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+        align_group.columnconfigure(0, weight=1)
+        align_group.columnconfigure(1, weight=1)
+        ttk.Label(
+            align_group,
+            text="开启后接收 20 Hz {ALIGN:angle,x,y}；停止会立即停车并清除 PID。",
+            foreground="#59636e",
+            wraplength=280,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
+
         node_path_group = ttk.LabelFrame(chassis_tab, text="节点路径", padding=7)
         node_path_group.pack(fill=tk.X, pady=(0, 6))
         self.node_path_var = tk.StringVar(value="1-2-5")
@@ -1692,6 +1721,21 @@ class UpperComputerApp:
             messagebox.showerror("命令未发送", str(exc), parent=self.root)
             return
         self.append_log("TX", line)
+
+    def send_alignment_control(self, action: str) -> None:
+        """从 Debug 上位机显式开启或停止连续视觉对齐任务。"""
+        try:
+            line = build_alignment_control_command(action)
+            self.serial_link.send_line(line)
+        except (ValueError, RuntimeError, OSError) as exc:
+            messagebox.showerror("对齐命令未发送", str(exc), parent=self.root)
+            return
+        self.append_log("TX", line)
+        self.status_var.set(
+            "连续视觉对齐已请求开启，等待 ESP32 确认。"
+            if action.upper() == "START"
+            else "连续视觉对齐已请求停止，等待 ESP32 确认。"
+        )
 
     def send_node_path(self) -> None:
         """校验并发送 Debug/Release 模式共用的节点路径协议。"""
@@ -2079,6 +2123,8 @@ def run_self_test() -> None:
     assert build_node_path_command(" {way:9-8-5-2} ") == "{way:9-8-5-2}"
     assert build_start_zone_command("启停区1") == "{StartZone:1}"
     assert build_start_zone_command("启停区2") == "{StartZone:2}"
+    assert build_alignment_control_command("start") == "{ALIGN:START}"
+    assert build_alignment_control_command("STOP") == "{ALIGN:STOP}"
     assert (
         build_pose_calibration_command(Pose(150.0, 150.0, 0.0))
         == "{SetPose:150,150,0}"
