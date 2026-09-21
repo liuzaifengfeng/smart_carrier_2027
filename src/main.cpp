@@ -35,6 +35,7 @@
 #include "chassis.h"
 #include "servo.h"
 #include "scanner.h"
+#include "material_transfer.h"
 
 // ================= 基础配置 =================
 #define MODE_key 0             // 开机按键(长按进调试模式)
@@ -494,8 +495,8 @@ void Task_MainStateMachine(void *pvParameters) {
             updateDisplay("GRAB R1");// 第一批
             //调取接口获取路径, 并移动到目标位置
             Serial.println("{way:2-6?}");
-            // [TODO] 抓取3个物料
-            // [TODO] 放置到载物台
+            // 到达圆盘并完成视觉对准后调用：
+            // LoadRoundFromDisc(currentTask.round1_colors);
 
             vTaskDelay(10000 / portTICK_PERIOD_MS);//暂时阻塞10s
 
@@ -505,33 +506,41 @@ void Task_MainStateMachine(void *pvParameters) {
         case STATE_PLACE_COARSE1:
             // 按 round1_pos 顺序放置到粗加工区对应圆环
             // 圆环评分: 1环15分 2环10分 3环7分 ... 越中心分越高
-            // [TODO] 移动到粗加工区 + 精确放置 + 视觉确认
+            // 到达粗加工区并完成停车定位后调用：
+            // PlaceRoundToWorkArea(currentTask.round1_pos);
             updateDisplay("PLACE C1");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_PLACE_TEMP1; }
             break;
 
         case STATE_PLACE_TEMP1:
             // 从粗加工区取回3个, 按 round1_pos 放到暂存区
-            // [TODO] 取回 + 放置暂存区
+            // 在粗加工区取回：
+            // RetrieveRoundToCargo(currentTask.round1_colors, currentTask.round1_pos);
+            // 到达暂存区后复用相同工位位姿：
+            // PlaceRoundToWorkArea(currentTask.round1_pos);
             updateDisplay("PLACE T1");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_GRAB_ROUND2; }
             break;
 
         case STATE_GRAB_ROUND2:
             // 同 round1, 抓第二批
+            // LoadRoundFromDisc(currentTask.round2_colors);
             updateDisplay("GRAB R2");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_PLACE_COARSE2; }
             break;
 
         case STATE_PLACE_COARSE2:
             // 第二批放粗加工区
+            // PlaceRoundToWorkArea(currentTask.round2_pos);
             updateDisplay("PLACE C2");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_STACK_TEMP2; }
             break;
 
         case STATE_STACK_TEMP2:
             // 第二批在暂存区码垛到第一批上方(颜色一致, 需平稳放置)
-            // [TODO] 精确高度控制 + 码垛
+            // 在粗加工区取回第二批后，到暂存区码放第二层：
+            // RetrieveRoundToCargo(currentTask.round2_colors, currentTask.round2_pos);
+            // StackRoundToWorkArea(currentTask.round2_pos);
             updateDisplay("STACK T2");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_RETURN_HOME; }
             break;
