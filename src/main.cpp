@@ -732,6 +732,12 @@ void Task_Debug_CMD(void *pvParameters) {
                             {  Serial.printf("{SERVO:ACK,%.0f,%.0f}\n", p1, p2);  Servo_SetAngle((uint8_t)p1, p2, 0, 0);}
                         else if (strcmp(cmd, "En_C") == 0) 
                             {  Serial.printf("{En_C:ACK,%.0f}\n", p1);  Emm_V5_En_Control_all(p1);}
+                        else if (strcmp(cmd, "MaterialDemo") == 0)
+                            {
+                                Serial.println("{MaterialDemo:ACK}");
+                                const bool ok = DemoCargoToRoughArea();
+                                Serial.println(ok ? "{MaterialDemo:OK}" : "{MaterialDemo:ERR}");
+                            }
                         else if (strcmp(cmd, "help") == 0)
                             {    Serial.println("Cmds: {ALIGN:START} {ALIGN:STOP} {ALIGN:a,x,y} {way:1-2-5} {StartZone:1} {GOTOpose:x,y,theta} {SetPose:x,y,theta} {Movepose:dir,speed,stop} {MoveArm_1:h,l,speed} {MoveArm_2:turret,pawl,speed} {SERVO:id,angle} {En_C:enable} {help}");}
                         else  {    Serial.println("{ERR:UNKNOWN_FRAME}");}

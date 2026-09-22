@@ -69,8 +69,13 @@ bool MaterialTransferPosesReady();
 bool MoveDiscToCargo(uint8_t materialCode, uint8_t cargoCode);
 
 // 从指定载物台抓取物料，然后放到粗加工区或暂存区的指定位置（第一层）。
-// cargoCode：载物台编号 1~3；workAreaCode：区域位置编号 1~3。
+// cargoCode：载物台编号 1 ~ 3；workAreaCode：区域位置编号 1 ~ 3。
 bool MoveCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode);
+
+// 调试示例：在三个载物台手动放好物料并将小车停在粗加工区后调用。
+// 每次调用依次完整搬运三次：载物台 1 -> 区域 3、2 -> 2、3 -> 1。
+// 临时 code 在函数内修改，也可在 Debug 模式发送 {MaterialDemo} 调用。
+bool DemoCargoToRoughArea();
 
 // 从粗加工区或暂存区的指定位置抓取物料，然后放到指定载物台。
 // materialCode 用于恢复载物台中的物料状态记录。

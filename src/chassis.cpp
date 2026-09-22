@@ -301,7 +301,7 @@ bool executeNodeSegment(uint8_t startNode, uint8_t endNode,
  */
 void MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
 
-    int acc = 50;
+    int acc = 200;
 
         if (currentArm.high - high != 0 && high != -1) {
             if( high < 0 || high > 160){//行程保护
@@ -309,7 +309,7 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
             } else {
                 uint8_t dir = (currentArm.high - high > 0) ? 0 : 1;
                 uint32_t pulses = (uint32_t)(fabsf(currentArm.high - high) * HEIGHT_PULSE);
-                Emm_V5_Pos_Control(5, dir, speed, acc, pulses, 0, 0);
+                Emm_V5_Pos_Control(5, dir, speed*2, acc, pulses, 0, 0);
                 vTaskDelay(pdMS_TO_TICKS(100));
                 currentArm.high = high;
             }

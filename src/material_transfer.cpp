@@ -7,22 +7,22 @@
 // NAN 表示“尚未标定”。请用实测值替换下面共 7 个位置中的 NAN。
 // 在全部位置填写完成前，MaterialTransferPosesReady() 返回 false，机械臂不会动作。
 MaterialTransferLayout materialTransferLayout = {
-    {NAN, NAN, NAN}, // 圆盘取料位置
+    {150, 50, 90}, // 圆盘取料位置
     {
-        {NAN, NAN, NAN}, // 1 号载物台
-        {NAN, NAN, NAN}, // 2 号载物台
-        {NAN, NAN, NAN}, // 3 号载物台
+        {102, 20, 242}, // 1 号载物台
+        {102, 20, 271}, // 2 号载物台
+        {102, 21, 300}, // 3 号载物台
     },
     {
-        {NAN, NAN, NAN}, // 粗加工区/暂存区的 1 号位置
-        {NAN, NAN, NAN}, // 粗加工区/暂存区的 2 号位置
-        {NAN, NAN, NAN}, // 粗加工区/暂存区的 3 号位置
+        {5, 65, 49}, // 粗加工区/暂存区的 1 号位置
+        {5, 0, 86}, // 粗加工区/暂存区的 2 号位置
+        {5, 43, 125}, // 粗加工区/暂存区的 3 号位置
     },
     150.0f, // approachHeight，按物料实际高度修改
-    30.0f,  // secondLayerOffset，按物料实际高度修改
-    100.0f, // moveSpeed
-    0.0f,   // clawOpenAngle
-    30.0f,  // clawClosedAngle
+    60.0f,  // secondLayerOffset，按物料实际高度修改
+    150.0f, // moveSpeed
+    60.0f,   // clawOpenAngle
+    -3.0f,  // clawClosedAngle
     1000,   // motionWaitMs
 };
 
@@ -69,13 +69,19 @@ void waitForArm() {
     vTaskDelay(pdMS_TO_TICKS(materialTransferLayout.motionWaitMs));
 }
 
+// 移动到目标上方
 void moveAbove(const MaterialStationPose &pose, float clawAngle) {
     // 先升到安全高度，再转向目标并伸出，防止横向移动时碰到物料或车体。
+    MoveArm(materialTransferLayout.approachHeight, pose.length,
+            -1, clawAngle, materialTransferLayout.moveSpeed);
+    waitForArm();    
+    waitForArm();
     MoveArm(materialTransferLayout.approachHeight, pose.length,
             pose.turretAngle, clawAngle, materialTransferLayout.moveSpeed);
     waitForArm();
 }
 
+// 抓取物料
 void pickAt(const MaterialStationPose &pose) {
     // 抓取顺序：张开夹爪到目标上方 -> 下降 -> 夹紧 -> 提升到安全高度。
     moveAbove(pose, materialTransferLayout.clawOpenAngle);
@@ -90,11 +96,13 @@ void pickAt(const MaterialStationPose &pose) {
     waitForArm();
 }
 
+// 放置物料
 void placeAt(const MaterialStationPose &pose, float targetHeight) {
     // 放置顺序：夹持物料到目标上方 -> 下降 -> 张开夹爪 -> 提升到安全高度。
     moveAbove(pose, materialTransferLayout.clawClosedAngle);
     MoveArm(targetHeight, -1, -1, materialTransferLayout.clawClosedAngle,
             materialTransferLayout.moveSpeed);
+    waitForArm();
     waitForArm();
     MoveArm(-1, -1, -1, materialTransferLayout.clawOpenAngle,
             materialTransferLayout.moveSpeed);
@@ -116,27 +124,21 @@ bool validateAction(const MaterialStationPose &source,
     return true;
 }
 
-bool validateCodeArrays(const int *first, const int *second,
-                        bool firstIsMaterial) {
+bool validateCodeArrays(const int *first, const int *second, bool firstIsMaterial) {
     // 整组动作开始前检查三个扫码值，防止执行到一半才发现任务码错误。
     if (first == nullptr) {
         Serial.println("[Material] ERR: null task code array");
         return false;
     }
     for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
-        if ((firstIsMaterial && !isMaterialCodeValid(first[i]))
-                || (!firstIsMaterial && !isStationCodeValid(first[i]))
-                || (second != nullptr && !isStationCodeValid(second[i]))) {
+        if ((firstIsMaterial && !isMaterialCodeValid(first[i])) || (!firstIsMaterial && !isStationCodeValid(first[i])) || (second != nullptr && !isStationCodeValid(second[i]))) {
             Serial.println("[Material] ERR: invalid task code");
             return false;
         }
     }
     const int *positions = firstIsMaterial ? second : first;
     // 三个物料必须去三个不同位置，避免把两个物料放到同一个第一层位置。
-    if (positions != nullptr
-            && (positions[0] == positions[1]
-                || positions[0] == positions[2]
-                || positions[1] == positions[2])) {
+    if (positions != nullptr && (positions[0] == positions[1] || positions[0] == positions[2] || positions[1] == positions[2])) {
         Serial.println("[Material] ERR: duplicate work-area position code");
         return false;
     }
@@ -151,8 +153,7 @@ bool MaterialTransferPosesReady() {
         return false;
     }
     for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
-        if (!isPoseValid(materialTransferLayout.cargo[i])
-                || !isPoseValid(materialTransferLayout.workArea[i])) {
+        if (!isPoseValid(materialTransferLayout.cargo[i]) || !isPoseValid(materialTransferLayout.workArea[i])) {
             return false;
         }
     }
@@ -170,12 +171,10 @@ bool MoveDiscToCargo(uint8_t materialCode, uint8_t cargoCode) {
         Serial.println("[Material] ERR: cargo platform is occupied");
         return false;
     }
-    const MaterialStationPose &destination =
-        materialTransferLayout.cargo[cargoCode - 1];
+    const MaterialStationPose &destination = materialTransferLayout.cargo[cargoCode - 1];
     if (!validateAction(materialTransferLayout.disc, destination)) return false;
 
-    Serial.printf("[Material] disc -> cargo %u, material %u\n",
-                  cargoCode, materialCode);
+    Serial.printf("[Material] disc -> cargo %u, material %u\n", cargoCode, materialCode);
     // 先从圆盘抓起，再放到指定载物台；完成后才更新载物台状态。
     pickAt(materialTransferLayout.disc);
     placeAt(destination, destination.high);
@@ -208,11 +207,31 @@ bool MoveCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
     return true;
 }
 
-bool MoveWorkAreaToCargo(uint8_t materialCode, uint8_t workAreaCode,
-                         uint8_t cargoCode) {
-    if (!isMaterialCodeValid(materialCode)
-            || !isStationCodeValid(workAreaCode)
-            || !isStationCodeValid(cargoCode)) {
+bool DemoCargoToRoughArea() {
+    // 依次完成三次搬运：载物台 1 -> 粗加工区 3、2 -> 2、3 -> 1（第一层）。
+    // 每次完整执行抓取、搬运、放置和抬升后，才开始下一次；本函数不负责底盘导航。
+    constexpr uint8_t materialCode = MATERIAL_RED; // 物料颜色码：1~6
+    static_assert(materialCode >= MATERIAL_RED && materialCode <= MATERIAL_LIGHT_BLUE,
+                  "Invalid demo material code");
+
+    for (uint8_t cargoCode = 1; cargoCode <= MATERIAL_STATION_COUNT; ++cargoCode) {
+        // 编号为 1~3，目标位置反向对应为 3~1；数组下标需要减 1。
+        const uint8_t workAreaCode = MATERIAL_STATION_COUNT + 1 - cargoCode;
+        // 沿用原示例：手动装料后临时登记为红色物料，复用完整搬运接口。
+        // 失败时恢复当前载物台记录并停止；已完成的载物台保持空载。
+        CargoPlatform &cargo = cargoPlatforms[cargoCode - 1];
+        const MaterialType previousMaterial = cargo.material;
+        cargo.material = static_cast<MaterialType>(materialCode);
+        if (!MoveCargoToWorkArea(cargoCode, workAreaCode)) {
+            cargo.material = previousMaterial;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool MoveWorkAreaToCargo(uint8_t materialCode, uint8_t workAreaCode, uint8_t cargoCode) {
+    if (!isMaterialCodeValid(materialCode) || !isStationCodeValid(workAreaCode) || !isStationCodeValid(cargoCode)) {
         Serial.println("[Material] ERR: invalid material/work-area/cargo code");
         return false;
     }
@@ -321,8 +340,7 @@ bool RetrieveRoundToCargo(
 
 bool StackRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]) {
     // 与第一层放置流程相同，但最终下降到第二层高度。
-    if (!validateCodeArrays(positionCodes, nullptr, false)
-            || !MaterialTransferPosesReady()) return false;
+    if (!validateCodeArrays(positionCodes, nullptr, false) || !MaterialTransferPosesReady()) return false;
     for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
         if (cargoPlatforms[i].material == MATERIAL_NONE) {
             Serial.println("[Material] ERR: cargo platform is empty");
