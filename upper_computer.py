@@ -14,6 +14,7 @@ import threading
 import tkinter as tk
 from dataclasses import dataclass
 from tkinter import messagebox, scrolledtext, ttk
+from parameter_panel import ParameterPanel
 
 try:
     import serial
@@ -28,7 +29,7 @@ ROBOT_SIZE_MM = 300.0
 ROBOT_HALF_MM = ROBOT_SIZE_MM / 2.0
 MAX_RELATIVE_MOVE_MM = FIELD_SIZE_MM * math.sqrt(2.0)
 FIELD_EDGE_EPSILON_MM = 1e-6
-ARM_HEIGHT_LIMIT_MM = 200.0
+ARM_HEIGHT_LIMIT_MM = 160.0
 ARM_TRAVEL_LIMIT_MM = 170.0
 FIELD_NODE_RADIUS_MM = 105.0
 FIELD_NODES = tuple(
@@ -1250,7 +1251,7 @@ class UpperComputerApp:
         self.field = FieldCanvas(container)
         self.field.grid(row=1, column=0, sticky="nsew", padx=(0, 12))
 
-        notebook = ttk.Notebook(container, width=330)
+        notebook = ttk.Notebook(container, width=460)
         notebook.grid(row=1, column=1, sticky="ns")
         pose_tab = ttk.Frame(notebook, padding=12)
         chassis_tab = ttk.Frame(notebook, padding=8)
@@ -1263,6 +1264,8 @@ class UpperComputerApp:
         notebook.add(arm_tab, text="机械臂")
         notebook.add(keyboard_tab, text="键盘控制")
         notebook.add(log_tab, text="日志")
+        self.parameter_panel = ParameterPanel(notebook, self.serial_link.send_line, self.append_log)
+        notebook.add(self.parameter_panel, text="参数")
 
         ttk.Label(pose_tab, text="姿态调试", font=("Microsoft YaHei UI", 16, "bold")).pack(
             anchor="w", pady=(0, 6)
@@ -1680,6 +1683,7 @@ class UpperComputerApp:
             self.connection_var.set("未安装 pyserial")
 
     def toggle_connection(self) -> None:
+        self.parameter_panel.disconnected()
         if self.serial_link.is_open:
             self._stop_keyboard_drive()
             self.pressed_rotation_keys.clear()
@@ -2017,8 +2021,20 @@ class UpperComputerApp:
                 break
             self.append_log(kind, text)
             if kind == "RX":
+                was_reading = self.parameter_panel.mode == "read"
+                self.parameter_panel.receive(text)
+                if was_reading and self.parameter_panel.ready:
+                    # 节点数组回读成功后同步地图，避免画面坐标与车上配置不一致。
+                    values = {p.name: float(p.value) for p in self.parameter_panel.parameters.values()}
+                    if all(f"地图/节点{i}/{axis}(mm)" in values for i in range(1, 10) for axis in ("X", "Y")):
+                        global FIELD_NODES
+                        FIELD_NODES = tuple((i, values[f"地图/节点{i}/X(mm)"], values[f"地图/节点{i}/Y(mm)"]) for i in range(1, 10))
+                        self.field.redraw()
+                if text.startswith("version:") or text in ("Debug mode", "Release mode"):
+                    self.parameter_panel.disconnected()
                 self._accept_target_echo(text)
             if kind == "ERROR":
+                self.parameter_panel.disconnected()
                 self.serial_link.disconnect()
                 self.active_drive_key = None
                 self.pressed_drive_keys.clear()

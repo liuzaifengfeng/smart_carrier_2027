@@ -36,6 +36,7 @@
 #include "servo.h"
 #include "scanner.h"
 #include "material_transfer.h"
+#include "runtime_parameters.h"
 
 // ================= 基础配置 =================
 #define MODE_key 0             // 开机按键(长按进调试模式)
@@ -44,7 +45,7 @@
 #define OTA_HOSTNAME "smartcarrier_ESP32S3"
 #define VERSION "0.1.4-framework"
 
-constexpr uint16_t ALIGN_PID_MAX_SPEED_RPM = 20;  // 移动速度单位为转/分
+uint32_t ALIGN_PID_MAX_SPEED_RPM = 20;  // 移动速度单位为转/分
 constexpr uint32_t ALIGN_FEEDBACK_TIMEOUT_MS = 300;
 constexpr uint32_t ALIGN_LOG_INTERVAL_MS = 500;
 
@@ -217,6 +218,26 @@ typedef struct {
 QueueHandle_t xAlignmentQueue = NULL;
 SemaphoreHandle_t xAlignmentMotionMutex = NULL;
 volatile bool alignmentEnabled = false;
+
+// 参数提交与 PID 更新共用锁，避免一个控制周期读取到半套参数。
+static bool handleParameterFrame(const char *frame, bool debugMode) {
+    if (strncmp(frame, "{CFG:", 5) != 0) return false;
+    // 完整目录的串口输出耗时较长；对齐期间拒绝读取，避免阻塞视觉反馈接收。
+    if (alignmentEnabled) {
+        const char *comma = strchr(frame, ',');
+        const unsigned long id = comma ? strtoul(comma + 1, nullptr, 10) : 0;
+        Serial.printf("{CFG:ERR,%lu,BUSY_OR_MODE}\n", id);
+        return true;
+    }
+    if (xAlignmentMotionMutex != NULL &&
+            xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
+        HandleRuntimeParameters(frame, debugMode && !alignmentEnabled);
+        xSemaphoreGive(xAlignmentMotionMutex);
+    } else {
+        Serial.println("{CFG:ERR,0,LOCK}");
+    }
+    return true;
+}
 
 static bool handleAlignmentControlFrame(const char *frame) {
     bool enable = false;
@@ -579,7 +600,10 @@ void Task_Serial_CMD(void *pvParameters) {
             if (c == '\n' || c == '\r') {
                 rxBuffer[rxIdx] = '\0';
                 if (rxIdx > 0) {
-                    if (handleAlignmentControlFrame(rxBuffer)) {
+                    if (handleParameterFrame(rxBuffer, false)) {
+                        // 正式运行模式只允许读取参数。
+                    }
+                    else if (handleAlignmentControlFrame(rxBuffer)) {
                         // 对齐任务已显式启动或停止。
                     }
                     else if (handleVisualAlignmentFrame(rxBuffer)) {
@@ -657,6 +681,10 @@ void Task_Debug_CMD(void *pvParameters) {
             if (c == '\n' || c == '\r') {
                 if (bufferIndex > 0) {
                     buffer[bufferIndex] = '\0';
+                    if (handleParameterFrame(buffer, true)) {
+                        bufferIndex = 0;
+                        continue;
+                    }
                     if (handleAlignmentControlFrame(buffer)) {
                         bufferIndex = 0;
                         continue;

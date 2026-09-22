@@ -1,6 +1,7 @@
 #include "chassis.h"
 #include "Emm_V5.h"
 #include "servo.h"
+#include "runtime_parameters.h"
 
 // 理想位姿(由主控维护; 真实位姿的获取方案待定)
 //车体位姿——X坐标、Y坐标、Theta角度
@@ -21,7 +22,7 @@ struct NodePosition {
 // 数组下标比节点序号小 1：
 // 第一行是节点 1、2、3，第二行是节点 4、5、6，第三行是节点 7、8、9。
 // 节点顺序与 Python 上位机地图完全一致。
-constexpr NodePosition NODE_POSITIONS[9] = {
+NodePosition NODE_POSITIONS[9] = {
     {400.0f,  400.0f}, {1200.0f,  400.0f}, {2000.0f,  400.0f},
     {400.0f, 1200.0f}, {1200.0f, 1200.0f}, {2000.0f, 1200.0f},
     {400.0f, 2000.0f}, {1200.0f, 2000.0f}, {2000.0f, 2000.0f},
@@ -29,13 +30,13 @@ constexpr NodePosition NODE_POSITIONS[9] = {
 
 constexpr uint32_t MOTOR_PULSES_PER_REVOLUTION = 3200; // 16 细分时，电机转一圈的脉冲数
 constexpr uint32_t MOTOR_COMMAND_GAP_MS = 5;           // 连续发送两条电机命令的间隔
-constexpr uint32_t ROUTE_SETTLE_TIME_MS = 250;         // 每次运动结束后的停车稳定时间
+uint32_t ROUTE_SETTLE_TIME_MS = 250;         // 每次运动结束后的停车稳定时间
 constexpr float ROUTE_ANGLE_EPSILON_DEG = 0.01f;       // 小于该角度时不再执行转向
 
 // ================= 连续视觉对齐 PID 参数 =================
 // 输出均为 -1~1 的归一化车身速度权重，实际轮速由调用方传入的 speedRpm 决定。
-constexpr float ALIGN_POSITION_TOLERANCE = 3.0f;// 位置误差单位为视觉输出值
-constexpr float ALIGN_ANGLE_TOLERANCE_DEG = 0.2f;// 角度误差单位为度
+float ALIGN_POSITION_TOLERANCE = 3.0f;// 位置误差单位为视觉输出值
+float ALIGN_ANGLE_TOLERANCE_DEG = 0.2f;// 角度误差单位为度
 constexpr float ALIGN_DT_MIN_SECONDS = 0.02f;// 时间步长单位为秒
 constexpr float ALIGN_DT_MAX_SECONDS = 0.30f;// 时间步长单位为秒
 constexpr uint16_t OMNI_MIN_MOVING_RPM = 1;// 最小移动速度单位为转/分
@@ -289,6 +290,37 @@ bool executeNodeSegment(uint8_t startNode, uint8_t endNode,
 }
 
 } // namespace
+
+// 注册原变量地址，上位机修改后由底盘和 PID 算法直接使用。
+void RegisterChassisParameters() {
+    PidController *controllers[] = {&s_alignVisualXPid, &s_alignVisualYPid, &s_alignAnglePid};
+    const char *axes[] = {"视觉X", "视觉Y", "角度"};
+    for (uint8_t i = 0; i < 3; ++i) {
+        char name[64];
+        float *values[] = {&controllers[i]->kp, &controllers[i]->ki,
+                           &controllers[i]->kd, &controllers[i]->integralLimit};
+        const char *fields[] = {"Kp", "Ki", "Kd", "积分限幅"};
+        for (uint8_t j = 0; j < 4; ++j) {
+            snprintf(name, sizeof(name), "PID/%s/%s", axes[i], fields[j]);
+            RegisterRuntimeFloat(name, *values[j], 0, j == 3 ? 100000 : 100);
+        }
+    }
+    RegisterRuntimeFloat("对齐/位置容差", ALIGN_POSITION_TOLERANCE, 0, 1000);
+    RegisterRuntimeFloat("对齐/角度容差(deg)", ALIGN_ANGLE_TOLERANCE_DEG, 0, 180);
+    RegisterRuntimeUInt("底盘/停车稳定时间(ms)", ROUTE_SETTLE_TIME_MS, 0, 10000);
+    float *pulses[] = {&X_PULSE, &Y_PULSE, &THETA_PULSE, &HEIGHT_PULSE, &LENGTH_PULSE};
+    const char *names[] = {"标定/X脉冲每毫米", "标定/Y脉冲每毫米", "标定/旋转脉冲每度",
+                           "标定/升降脉冲每毫米", "标定/伸缩脉冲每毫米"};
+    for (uint8_t i = 0; i < 5; ++i) RegisterRuntimeFloat(names[i], *pulses[i], 0.001f, 100000);
+    for (uint8_t i = 0; i < 9; ++i) {
+        char name[64];
+        snprintf(name, sizeof(name), "地图/节点%u/X(mm)", i + 1);
+        RegisterRuntimeFloat(name, NODE_POSITIONS[i].x, 0, 2400);
+        snprintf(name, sizeof(name), "地图/节点%u/Y(mm)", i + 1);
+        RegisterRuntimeFloat(name, NODE_POSITIONS[i].y, 0, 2400);
+    }
+}
+
 
 /**
  * @brief 机械臂移动到指定位姿
