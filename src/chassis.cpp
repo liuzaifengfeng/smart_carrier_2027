@@ -56,7 +56,7 @@ PidController s_alignVisualXPid = {
     0.03f, 0.0005f, 0.0f, 200.0f, 0.0f, 0.0f, false
 };
 PidController s_alignVisualYPid = {
-    0.03f, 0.0005f, 0.0f, 200.0f, 0.0f, 0.0f, false
+    0.02f, 0.0005f, 0.0f, 200.0f, 0.0f, 0.0f, false
 };
 PidController s_alignAnglePid = {
     0.05f, 0.0005f, 0.0f, 20.0f, 0.0f, 0.0f, false
@@ -301,7 +301,7 @@ bool executeNodeSegment(uint8_t startNode, uint8_t endNode,
  */
 void MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
 
-    int acc = 200;
+    int acc = 150;
 
         if (currentArm.high - high != 0 && high != -1) {
             if( high < 0 || high > 160){//行程保护
@@ -309,7 +309,7 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
             } else {
                 uint8_t dir = (currentArm.high - high > 0) ? 0 : 1;
                 uint32_t pulses = (uint32_t)(fabsf(currentArm.high - high) * HEIGHT_PULSE);
-                Emm_V5_Pos_Control(5, dir, speed*2, acc, pulses, 0, 0);
+                Emm_V5_Pos_Control(5, dir, speed*3, acc, pulses, 0, 0);
                 vTaskDelay(pdMS_TO_TICKS(100));
                 currentArm.high = high;
             }
@@ -331,7 +331,7 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
             if( turret_angle < -360 || turret_angle > 360){//行程保护
                 Serial.println("turret_angle out of range");
             } else {
-                Servo_SetAngleMTurn(2, turret_angle, speed, 3000);
+                Servo_SetAngleMTurn(2, turret_angle, (300-speed)*3, 3000);
                 currentArm.turret_angle = turret_angle;
             }
         }
@@ -340,7 +340,7 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
             if( pawl_angle < -360 || pawl_angle > 360){//行程保护
                 Serial.println("pawl_angle out of range");
             } else {
-                Servo_SetAngleMTurn(1, pawl_angle, speed, 3000);
+                Servo_SetAngleMTurn(1, pawl_angle, (300-speed)*3, 3000);
                 currentArm.pawl_angle = pawl_angle;
             }
         }

@@ -14,14 +14,14 @@ MaterialTransferLayout materialTransferLayout = {
         {102, 21, 300}, // 3 号载物台
     },
     {
-        {5, 65, 49}, // 粗加工区/暂存区的 1 号位置
-        {5, 0, 86}, // 粗加工区/暂存区的 2 号位置
-        {5, 43, 125}, // 粗加工区/暂存区的 3 号位置
+        {3, 61, 48}, // 粗加工区/暂存区的 1 号位置
+        {3, 0, 86}, // 粗加工区/暂存区的 2 号位置
+        {3, 39, 125.3}, // 粗加工区/暂存区的 3 号位置
     },
     150.0f, // approachHeight，按物料实际高度修改
     60.0f,  // secondLayerOffset，按物料实际高度修改
     150.0f, // moveSpeed
-    60.0f,   // clawOpenAngle
+    50.0f,   // clawOpenAngle
     -3.0f,  // clawClosedAngle
     1000,   // motionWaitMs
 };
@@ -208,15 +208,15 @@ bool MoveCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
 }
 
 bool DemoCargoToRoughArea() {
-    // 依次完成三次搬运：载物台 1 -> 粗加工区 3、2 -> 2、3 -> 1（第一层）。
+    // 依次完成三次搬运：载物台 1 -> 粗加工区 1、2 -> 2、3 -> 3（第一层）。
     // 每次完整执行抓取、搬运、放置和抬升后，才开始下一次；本函数不负责底盘导航。
     constexpr uint8_t materialCode = MATERIAL_RED; // 物料颜色码：1~6
     static_assert(materialCode >= MATERIAL_RED && materialCode <= MATERIAL_LIGHT_BLUE,
                   "Invalid demo material code");
 
     for (uint8_t cargoCode = 1; cargoCode <= MATERIAL_STATION_COUNT; ++cargoCode) {
-        // 编号为 1~3，目标位置反向对应为 3~1；数组下标需要减 1。
-        const uint8_t workAreaCode = MATERIAL_STATION_COUNT + 1 - cargoCode;
+        // 编号为 1~3，目标位置顺序对应为 1~3；数组下标需要减 1。
+        const uint8_t workAreaCode = cargoCode;
         // 沿用原示例：手动装料后临时登记为红色物料，复用完整搬运接口。
         // 失败时恢复当前载物台记录并停止；已完成的载物台保持空载。
         CargoPlatform &cargo = cargoPlatforms[cargoCode - 1];
