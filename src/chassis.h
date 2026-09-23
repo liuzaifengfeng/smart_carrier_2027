@@ -36,7 +36,10 @@ extern float LENGTH_PULSE; // 伸缩机械臂 每毫米脉冲
 void MovePose(int direction, float speed, bool stop);
 
 // @brief 位置模式移动到位.
-//        isRelative=true 相对移动 / false 绝对移动(需定位)
+// @param x 目标 X 位移 (mm)
+// @param y 目标 Y 位移 (mm)
+// @param theta 目标航向 (0-360, 度)
+// @param isRelative 相对移动 / 绝对移动(需定位)
 void GotoPose(float x, float y, float theta, bool isRelative);
 
 /**

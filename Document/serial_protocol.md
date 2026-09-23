@@ -27,9 +27,32 @@
 
 ## 2. 已实现：上位机发送给 ESP32
 
+### 模式切换（Debug → Release）
+
+上电默认进入 Debug（黄灯），无需按键。发送 `{Mode:Release}` 并以换行结束，
+停止调试对齐，成功后亮绿灯并返回 `{Mode:Release:OK}`。
+资源创建失败则保持 Debug，对齐保持停止，返回 `{Mode:ERR,TIMER}` 或 `{Mode:ERR,TASK}`。
+
+Release 会初始化机械臂，然后等待 `{StartZone:1}` 或 `{StartZone:2}` 和 `{start}`。
+切换前已设置的启停区会保留。重启后重新进入 Debug。
+
+### 开局雷达扫描位姿
+
+设置当前启停区后，可在 Debug 或 Release 发送：
+
+```text
+{LidarPose}
+```
+
+固件先返回 `{LidarPose:ACK}`，然后按启停区执行底盘和机械臂动作。全部动作完成后
+返回 `{LidarPose:OK}`，启停区未知、动作未标定或执行失败时返回 `{LidarPose:ERR}`。
+动作正在执行时再次调用会返回 `{LidarPose:ERR,BUSY}`，不会重复控制机构。
+Release 状态机在取得启停区后也会自动执行一次。具体动作框架位于
+`PrepareLidarScanPose()`；标定完成前保持安全锁关闭，不会控制机构运动。
+
 ### 2.1 视觉闭环对齐
 
-对齐任务默认关闭。Release 上位机或 Debug 上位机必须先发送：
+Debug 上电默认开启对齐；切换到 Release 时关闭。需要重新开启时发送：
 
 ```text
 {ALIGN:START}

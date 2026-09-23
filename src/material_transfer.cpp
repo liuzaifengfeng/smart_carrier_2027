@@ -14,9 +14,9 @@ MaterialTransferLayout materialTransferLayout = {
         {102, 21, 300}, // 3 号载物台
     },
     {
-        {3, 61, 48}, // 粗加工区/暂存区的 1 号位置
-        {3, 0, 86}, // 粗加工区/暂存区的 2 号位置
-        {3, 39, 125.3}, // 粗加工区/暂存区的 3 号位置
+        {2.5, 61, 48}, // 粗加工区/暂存区的 1 号位置
+        {2.5, 0, 86}, // 粗加工区/暂存区的 2 号位置
+        {2.5, 39, 125.3}, // 粗加工区/暂存区的 3 号位置
     },
     150.0f, // approachHeight，按物料实际高度修改
     60.0f,  // secondLayerOffset，按物料实际高度修改
@@ -64,9 +64,17 @@ bool isLayoutParameterValid() {
         && materialTransferLayout.motionWaitMs > 0;
 }
 
-void waitForArm() {
-    // MoveArm 发出指令后等待机械结构运动和稳定。
-    vTaskDelay(pdMS_TO_TICKS(materialTransferLayout.motionWaitMs));
+void waitForArm(float multiplier = 1.0f) {
+    // multiplier 是基础等待时间的倍数：
+    // waitForArm() 等待 1 倍，waitForArm(2.5f) 等待 2.5 倍。
+    if (!isfinite(multiplier) || multiplier <= 0.0f) {
+        Serial.println("[Material] ERR: invalid arm wait multiplier");
+        multiplier = 1.0f; // 非法参数仍按基础时间等待，避免机械臂未停稳就执行下一步。
+    }
+    const uint32_t waitMs = static_cast<uint32_t>(
+        lroundf(materialTransferLayout.motionWaitMs * multiplier)
+    );
+    vTaskDelay(pdMS_TO_TICKS(waitMs));
 }
 
 // 移动到目标上方
@@ -227,6 +235,63 @@ bool DemoCargoToRoughArea() {
             return false;
         }
     }
+    return true;
+}
+
+bool DemoStackCargoToWorkArea() {
+    // 手动在三个载物台装好物料，小车停在码放区后调用。
+    // 与 MaterialDemo 一样依次执行 1 -> 1、2 -> 2、3 -> 3；
+    // 仅松手高度增加 secondLayerOffset。
+    float releaseHeights[MATERIAL_STATION_COUNT];
+    for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
+        const MaterialStationPose &destination = materialTransferLayout.workArea[i];
+        releaseHeights[i] = destination.high + materialTransferLayout.secondLayerOffset;
+        // 三个位置全部检查通过后才抓料，避免执行到一半才发现高度越界。
+        if (!validateAction(materialTransferLayout.cargo[i], destination)) return false;
+        if (!isfinite(releaseHeights[i]) || releaseHeights[i] > 160.0f) {
+            Serial.println("[Material] ERR: invalid demo stacking height");
+            return false;
+        }
+    }
+
+    for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
+        // 数组下标 0~2 对应载物台和区域编号 1~3。
+        // 手动装料按红色登记，完成抓取、码放和收回后再清空记录。
+        cargoPlatforms[i].material = MATERIAL_RED;
+        Serial.printf("[Material] demo stack cargo %u -> work area %u, release height %.1f\n",
+                      i + 1, i + 1, releaseHeights[i]);
+        pickAt(materialTransferLayout.cargo[i]);
+        placeAt(materialTransferLayout.workArea[i], releaseHeights[i]);
+        cargoPlatforms[i].material = MATERIAL_NONE;
+    }
+    return true;
+}
+
+bool PrepareLidarScanPose(uint8_t startZoneCode) {
+
+    switch (startZoneCode) {
+        case 1:
+            Serial.println("[LidarPose] start zone 1");
+            GotoPose(-100, 100, 0, true);
+            MoveArm(100, 50, -1, -1, 150);
+            waitForArm(2);
+            MoveArm(0, 50, 45, -1, 150);
+            break;
+
+        case 2:
+            Serial.println("[LidarPose] start zone 2");
+            GotoPose(100, 100, 0, true);
+            MoveArm(100, 50, -1, -1, 150);
+            waitForArm(3);
+            MoveArm(0, 50, 135, -1, 150);
+            break;
+
+        default:
+            Serial.println("[LidarPose] ERR: start zone must be 1 or 2");
+            return false;
+    }
+
+    // 只有底盘和全部机械臂动作均执行完毕后才返回 true；调用方随后发送 OK 应答。
     return true;
 }
 

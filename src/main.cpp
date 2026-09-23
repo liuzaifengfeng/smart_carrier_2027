@@ -39,7 +39,6 @@
 #include "runtime_parameters.h"
 
 // ================= 基础配置 =================
-#define MODE_key 0             // 开机按键(长按进调试模式)
 #define LED_PIN 48
 #define NUM_LEDS 1
 #define OTA_HOSTNAME "smartcarrier_ESP32S3"
@@ -307,6 +306,7 @@ static bool parseStartZoneFrame(const char *frame, StartZone &zone) {
 TaskHandle_t xTask_MainStateMachine_Handle = NULL;
 QueueHandle_t xVisualTaskQueue = NULL;      // 机载电脑指令队列
 TimerHandle_t xHomeTimer = NULL;            // 总超时兜底(回启停区)
+SemaphoreHandle_t xLidarPoseMutex = NULL;   // 防止自动流程和串口重复执行雷达位姿
 
 // 队列元素: 机载电脑指令
 typedef struct {
@@ -320,6 +320,21 @@ void Task_Serial_CMD(void *pvParameters);// 串口指令任务
 void Task_Debug_CMD(void *pvParameters);// 调试指令任务
 void Task_VisualAlignment(void *pvParameters);// 视觉对齐任务
 void vHomeTimerCallback(TimerHandle_t xTimer);// 总超时兜底(回启停区)
+
+// 执行雷达扫描位姿并统一发送串口应答。
+// ACK 表示命令已开始处理；OK 只会在全部动作执行完成后发送。
+static bool runLidarPoseAction() {
+    if (xLidarPoseMutex == NULL
+            || xSemaphoreTake(xLidarPoseMutex, 0) != pdTRUE) {
+        Serial.println("{LidarPose:ERR,BUSY}");
+        return false;
+    }
+    Serial.println("{LidarPose:ACK}");
+    const bool ok = PrepareLidarScanPose(static_cast<uint8_t>(currentStartZone));
+    Serial.println(ok ? "{LidarPose:OK}" : "{LidarPose:ERR}");
+    xSemaphoreGive(xLidarPoseMutex);
+    return ok;
+}
 
 // ================= 视觉闭环对齐任务 =================
 void Task_VisualAlignment(void *pvParameters) {
@@ -466,6 +481,9 @@ void Task_MainStateMachine(void *pvParameters) {
                 updateDisplay("ERR:start_zone: unknown");
                 break;
             }
+            // Release 开局自动执行一次。动作未标定或执行失败时返回 ERR，
+            // 仍停留在开局等待阶段，便于通过串口修正后再次手动调用。
+            runLidarPoseAction();
             updateDisplay("WAIT START");
             while (!enableRun) vTaskDelay(100 / portTICK_PERIOD_MS);
             // 启动总超时兜底(如 300s 内未回启停区)
@@ -617,6 +635,9 @@ void Task_Serial_CMD(void *pvParameters) {
                         enableRun = true;
                         Serial.println("{start:OK}");
                     }
+                    else if (strcmp(rxBuffer, "{LidarPose}") == 0) {
+                        runLidarPoseAction();
+                    }
                     else {
                         StartZone parsedZone = START_ZONE_UNKNOWN;
                         if (parseStartZoneFrame(rxBuffer, parsedZone)) {
@@ -681,7 +702,41 @@ void Task_Debug_CMD(void *pvParameters) {
             if (c == '\n' || c == '\r') {
                 if (bufferIndex > 0) {
                     buffer[bufferIndex] = '\0';
+                    // 上电默认 Debug；完整匹配模式切换帧。
+                    if (strcmp(buffer, "{Mode:Release}") == 0) {
+                        // 停止调试对齐，正式状态机仍等待启停区和 start 指令。
+                        handleAlignmentControlFrame("{ALIGN:STOP}");
+                        xHomeTimer = xTimerCreate("HomeTimer", pdMS_TO_TICKS(300000),
+                                                 pdFALSE, NULL, vHomeTimerCallback);
+                        if (xHomeTimer == NULL) {
+                            Serial.println("{Mode:ERR,TIMER}");
+                            bufferIndex = 0;
+                            continue;
+                        }
+                        currentState = STATE_WAIT_START;
+                        enableRun = false;
+                        if (xTaskCreate(Task_MainStateMachine, "Task_MainStateMachine",
+                                        16384, NULL, 8, &xTask_MainStateMachine_Handle) != pdPASS) {
+                            xTimerDelete(xHomeTimer, portMAX_DELAY);
+                            xHomeTimer = NULL;
+                            Serial.println("{Mode:ERR,TASK}");
+                            bufferIndex = 0;
+                            continue;
+                        }
+                        leds[0] = CRGB::Green; FastLED.show();
+                        Serial.println("Release mode");
+                        Serial.println("{Mode:Release:OK}");
+                        // 当前任务直接接管 Release 串口循环，避免两个任务抢读串口。
+                        Task_Serial_CMD(pvParameters);
+                        vTaskDelete(NULL);
+                        return;
+                    }
                     if (handleParameterFrame(buffer, true)) {
+                        bufferIndex = 0;
+                        continue;
+                    }
+                    if (strcmp(buffer, "{LidarPose}") == 0) {
+                        runLidarPoseAction();
                         bufferIndex = 0;
                         continue;
                     }
@@ -766,8 +821,14 @@ void Task_Debug_CMD(void *pvParameters) {
                                 const bool ok = DemoCargoToRoughArea();
                                 Serial.println(ok ? "{MaterialDemo:OK}" : "{MaterialDemo:ERR}");
                             }
+                        else if (strcmp(cmd, "MaterialDemo2") == 0)
+                            {
+                                Serial.println("{MaterialDemo2:ACK}");
+                                const bool ok = DemoStackCargoToWorkArea();
+                                Serial.println(ok ? "{MaterialDemo2:OK}" : "{MaterialDemo2:ERR}");
+                            }
                         else if (strcmp(cmd, "help") == 0)
-                            {    Serial.println("Cmds: {ALIGN:START} {ALIGN:STOP} {ALIGN:a,x,y} {way:1-2-5} {StartZone:1} {GOTOpose:x,y,theta} {SetPose:x,y,theta} {Movepose:dir,speed,stop} {MoveArm_1:h,l,speed} {MoveArm_2:turret,pawl,speed} {SERVO:id,angle} {En_C:enable} {help}");}
+                            {    Serial.println("Cmds: {Mode:Release} {LidarPose} {ALIGN:START} {ALIGN:STOP} {ALIGN:a,x,y} {way:1-2-5} {StartZone:1} {GOTOpose:x,y,theta} {SetPose:x,y,theta} {Movepose:dir,speed,stop} {MoveArm_1:h,l,speed} {MoveArm_2:turret,pawl,speed} {SERVO:id,angle} {En_C:enable} {help}");}
                         else  {    Serial.println("{ERR:UNKNOWN_FRAME}");}
                     }
                     bufferIndex = 0;
@@ -799,17 +860,9 @@ void setup() {
     //init_ota_service("longggg", "asdfghjkl", OTA_HOSTNAME);//调试使用，正式比赛时注释掉
     leds[0] = CRGB::Red; FastLED.show();
 
-    // 一键启动: 物理按键(长按)进入 Release 运行模式
-    pinMode(MODE_key, INPUT_PULLUP);
-    bool bootKeyPressed = false;
-    unsigned long startTime = millis();
-    while (millis() - startTime < 5000) {
-        if (digitalRead(MODE_key) == LOW) { bootKeyPressed = true; break; }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
-
     // 机载电脑指令队列(深度10)
     xVisualTaskQueue = xQueueCreate(10, sizeof(VisualCmd_t));
+    xLidarPoseMutex = xSemaphoreCreateMutex();
     // 视觉 PID 对齐只保留 20 Hz 连续反馈中的最新一帧。
     xAlignmentQueue = xQueueCreate(1, sizeof(VisualAlignmentFrame_t));
     xAlignmentMotionMutex = xSemaphoreCreateMutex();
@@ -822,20 +875,14 @@ void setup() {
         Serial.println("[Align] ERR: failed to create alignment queue or mutex");
     }
 
-    if (bootKeyPressed) {
+    // 上电固定进入 Debug；串口发送 {Mode:Release} 切换到正式模式。
+    {
         Serial.println("Debug mode");
         leds[0] = CRGB::Yellow; FastLED.show();
         // Debug 模式默认直接启用视觉闭环对齐，仍可通过
         // {ALIGN:STOP}/{ALIGN:START} 在运行时停止或重新启动。
         handleAlignmentControlFrame("{ALIGN:START}");
         xTaskCreate(Task_Debug_CMD, "Task_Debug_CMD", 16384, NULL, 5, NULL);
-    } else {
-        Serial.println("Release mode");
-        leds[0] = CRGB::Green; FastLED.show();
-        xTaskCreate(Task_MainStateMachine, "Task_MainStateMachine", 16384, NULL, 8, &xTask_MainStateMachine_Handle);
-        xTaskCreate(Task_Serial_CMD, "Task_Serial_CMD", 16384, NULL, 8, NULL);
-        // 总超时兜底(如 300s), 未完成则回启停区
-        xHomeTimer = xTimerCreate("HomeTimer", pdMS_TO_TICKS(300000), pdFALSE, NULL, vHomeTimerCallback);
     }
 }
 

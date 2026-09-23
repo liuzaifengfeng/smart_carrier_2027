@@ -73,9 +73,21 @@ bool MoveDiscToCargo(uint8_t materialCode, uint8_t cargoCode);
 bool MoveCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode);
 
 // 调试示例：在三个载物台手动放好物料并将小车停在粗加工区后调用。
-// 每次调用依次完整搬运三次：载物台 1 -> 区域 3、2 -> 2、3 -> 1。
+// 每次调用依次完整搬运三次：载物台 1 -> 区域 1、2 -> 2、3 -> 3。
 // 临时 code 在函数内修改，也可在 Debug 模式发送 {MaterialDemo} 调用。
 bool DemoCargoToRoughArea();
+
+// 码放调试示例：手动装好三个载物台并将小车停在码放区后，发送 {MaterialDemo2}。
+// 顺序同 MaterialDemo：1 -> 1、2 -> 2、3 -> 3；松手高度为区域基础高度 + approachHeight。
+// 三个目标高度均通过行程检查后才开始动作；本函数不负责底盘导航。
+bool DemoStackCargoToWorkArea();
+
+// ================= 开局雷达扫描位姿 =================
+// 根据当前启停区执行不同的底盘移动，再执行若干机械臂动作。
+// startZoneCode：1 表示启停区 1，2 表示启停区 2；其他值会直接返回 false。
+// 具体距离和机械臂动作在 material_transfer.cpp 的函数内填写。
+// 未完成实车标定前，函数中的 LIDAR_SCAN_ACTION_READY 保持 false，不会控制机构运动。
+bool PrepareLidarScanPose(uint8_t startZoneCode);
 
 // 从粗加工区或暂存区的指定位置抓取物料，然后放到指定载物台。
 // materialCode 用于恢复载物台中的物料状态记录。
@@ -106,5 +118,7 @@ bool RetrieveRoundToCargo(
 // 将三个载物台上的物料，分别码放到 positionCodes 指定位置的第二层。
 // 示例：StackRoundToWorkArea(currentTask.round2_pos);
 bool StackRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]);
+
+
 
 #endif // MATERIAL_TRANSFER_H

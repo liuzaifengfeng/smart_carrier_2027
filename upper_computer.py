@@ -264,6 +264,10 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
     """校验界面参数并生成 ESP32 当前支持的调试命令。"""
     if command == "help":
         return "{help}"
+    if command in ("MaterialDemo", "MaterialDemo2", "Mode:Release", "LidarPose"):
+        if raw_values:
+            raise ValueError("该命令不需要参数")
+        return "{" + command + "}"
     fields = COMMAND_FIELDS.get(command)
     if fields is None or len(raw_values) != len(fields):
         raise ValueError("未知命令或参数数量错误")
@@ -1243,6 +1247,11 @@ class UpperComputerApp:
         )
         self.connect_button = ttk.Button(connection, text="连接", command=self.toggle_connection)
         self.connect_button.grid(row=0, column=3, padx=5)
+        ttk.Button(
+            connection,
+            text="切换到 Release",
+            command=lambda: self.send_command("Mode:Release"),
+        ).grid(row=0, column=5, padx=(12, 0))
         self.connection_var = tk.StringVar(value="未连接 · 115200 8N1")
         ttk.Label(connection, textvariable=self.connection_var).grid(
             row=0, column=4, padx=(12, 0), sticky="e"
@@ -1287,6 +1296,11 @@ class UpperComputerApp:
             command=self.switch_start_zone,
         )
         self.start_zone_button.pack(fill=tk.X, pady=(6, 0))
+        ttk.Button(
+            start_group,
+            text="调整到雷达扫描位姿",
+            command=lambda: self.send_command("LidarPose"),
+        ).pack(fill=tk.X, pady=(6, 0))
 
         self.current_vars = self._pose_editor(pose_tab, "当前理想姿态", (150.0, 150.0, 0.0))
         ttk.Button(pose_tab, text="手动校准理想位置", command=self.update_current).pack(
@@ -1446,7 +1460,31 @@ class UpperComputerApp:
             text="机械臂姿态预览",
             font=("Microsoft YaHei UI", 12, "bold"),
         ).pack(anchor="w", pady=(0, 5))
+        demo_group = ttk.LabelFrame(arm_tab, text="物料搬运 Demo（Debug 模式）", padding=7)
+        demo_group.pack(fill=tk.X, pady=(0, 8))
+        demo_group.columnconfigure(0, weight=1)
+        demo_group.columnconfigure(1, weight=1)
+        ttk.Button(
+            demo_group,
+            text="放料（MaterialDemo）",
+            command=lambda: self.send_command("MaterialDemo"),
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+        ttk.Button(
+            demo_group,
+            text="码放（MaterialDemo2）",
+            command=lambda: self.send_command("MaterialDemo2"),
+        ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+        ttk.Label(
+            demo_group,
+            text="手动装好三个载物台并停好车；执行顺序：1→1、2→2、3→3。\n"
+                 "码放松手高度增加 approachHeight；执行结果见“日志”。",
+            foreground="#59636e",
+            justify=tk.LEFT,
+            wraplength=420,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
+
         self.arm_preview = ArmCanvas(arm_tab)
+        self.arm_preview.configure(height=210)
         self.arm_preview.pack(fill=tk.X, pady=(0, 8))
 
         arm_controls = ttk.LabelFrame(
