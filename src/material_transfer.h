@@ -82,6 +82,11 @@ bool DemoCargoToRoughArea();
 // 三个目标高度均通过行程检查后才开始动作；本函数不负责底盘导航。
 bool DemoStackCargoToWorkArea();
 
+// 码放第三层调试示例：手动装好三个载物台并将小车停在码放区后，发送 {MaterialDemo3}。
+// 顺序同 MaterialDemo：1 -> 1、2 -> 2、3 -> 3；松手高度为区域基础高度 + approachHeight。
+// 三个目标高度均通过行程检查后才开始动作；本函数不负责底盘导航。
+bool DemoStackCargoToWorkArea3();
+
 // ================= 开局雷达扫描位姿 =================
 // 根据当前启停区执行不同的底盘移动，再执行若干机械臂动作。
 // startZoneCode：1 表示启停区 1，2 表示启停区 2；其他值会直接返回 false。

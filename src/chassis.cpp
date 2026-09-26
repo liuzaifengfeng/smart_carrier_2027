@@ -19,13 +19,15 @@ struct NodePosition {
     float y;  // Y 坐标
 };
 
-// 数组下标比节点序号小 1：
-// 第一行是节点 1、2、3，第二行是节点 4、5、6，第三行是节点 7、8、9。
-// 节点顺序与 Python 上位机地图完全一致。
-NodePosition NODE_POSITIONS[9] = {
-    {400.0f,  400.0f}, {1200.0f,  400.0f}, {2000.0f,  400.0f},
-    {400.0f, 1200.0f}, {1200.0f, 1200.0f}, {2000.0f, 1200.0f},
-    {400.0f, 2000.0f}, {1200.0f, 2000.0f}, {2000.0f, 2000.0f},
+// 5×5 蛇形编号，下标就是节点编号 0~24。
+// 从底向上、从左到右：0~4、9~5、10~14、19~15、20~24。
+// 沿用项目 X 向右、Y 向上；中心间距 480 mm。
+NodePosition NODE_POSITIONS[FIELD_NODE_COUNT] = {
+    {240.0f, 240.0f}, {720.0f, 240.0f}, {1200.0f, 240.0f}, {1680.0f, 240.0f}, {2160.0f, 240.0f},
+    {2160.0f, 720.0f}, {1680.0f, 720.0f}, {1200.0f, 720.0f}, {720.0f, 720.0f}, {240.0f, 720.0f},
+    {240.0f, 1200.0f}, {720.0f, 1200.0f}, {1200.0f, 1200.0f}, {1680.0f, 1200.0f}, {2160.0f, 1200.0f},
+    {2160.0f, 1680.0f}, {1680.0f, 1680.0f}, {1200.0f, 1680.0f}, {720.0f, 1680.0f}, {240.0f, 1680.0f},
+    {240.0f, 2160.0f}, {720.0f, 2160.0f}, {1200.0f, 2160.0f}, {1680.0f, 2160.0f}, {2160.0f, 2160.0f},
 };
 
 constexpr uint32_t MOTOR_PULSES_PER_REVOLUTION = 3200; // 16 细分时，电机转一圈的脉冲数
@@ -91,26 +93,25 @@ float updatePid(PidController &pid, float error, float dtSeconds) {
     );
 }
 
-// 根据节点序号读取坐标。序号只能是 1~9。
+// 根据节点序号读取坐标。序号只能是 0~24。
 bool getNodePosition(uint8_t node, NodePosition &position) {
-    if (node < 1 || node > 9) {
+    if (node >= FIELD_NODE_COUNT) {
         return false;
     }
-    position = NODE_POSITIONS[node - 1];
+    position = NODE_POSITIONS[node];
     return true;
 }
 
-// 判断两个节点在 3×3 节点图中是否上下或左右相邻。
-// 例如 1 与 2 相邻、2 与 5 相邻，但 1 与 5 不相邻。
+// 5×5 蛇形图上下或左右相邻：0-9、4-5 相邻，4-9 不相邻。
 bool areAdjacentNodes(uint8_t first, uint8_t second) {
-    if (first < 1 || first > 9 || second < 1 || second > 9) {
-        return false;
-    }
-    int firstIndex = first - 1;
-    int secondIndex = second - 1;
-    int columnDifference = abs(firstIndex % 3 - secondIndex % 3);
-    int rowDifference = abs(firstIndex / 3 - secondIndex / 3);
-    return columnDifference + rowDifference == 1;
+    if (first >= FIELD_NODE_COUNT || second >= FIELD_NODE_COUNT) return false;
+    int firstRow = first / FIELD_GRID_SIZE;
+    int secondRow = second / FIELD_GRID_SIZE;
+    int firstColumn = first % FIELD_GRID_SIZE;
+    int secondColumn = second % FIELD_GRID_SIZE;
+    if (firstRow % 2) firstColumn = FIELD_GRID_SIZE - 1 - firstColumn;
+    if (secondRow % 2) secondColumn = FIELD_GRID_SIZE - 1 - secondColumn;
+    return abs(firstColumn - secondColumn) + abs(firstRow - secondRow) == 1;
 }
 
 // 判断 start -> middle -> end 是否是方向不变的一条直线。
@@ -312,11 +313,11 @@ void RegisterChassisParameters() {
     const char *names[] = {"标定/X脉冲每毫米", "标定/Y脉冲每毫米", "标定/旋转脉冲每度",
                            "标定/升降脉冲每毫米", "标定/伸缩脉冲每毫米"};
     for (uint8_t i = 0; i < 5; ++i) RegisterRuntimeFloat(names[i], *pulses[i], 0.001f, 100000);
-    for (uint8_t i = 0; i < 9; ++i) {
+    for (uint8_t i = 0; i < FIELD_NODE_COUNT; ++i) {
         char name[64];
-        snprintf(name, sizeof(name), "地图/节点%u/X(mm)", i + 1);
+        snprintf(name, sizeof(name), "地图/节点%u/X(mm)", i);
         RegisterRuntimeFloat(name, NODE_POSITIONS[i].x, 0, 2400);
-        snprintf(name, sizeof(name), "地图/节点%u/Y(mm)", i + 1);
+        snprintf(name, sizeof(name), "地图/节点%u/Y(mm)", i);
         RegisterRuntimeFloat(name, NODE_POSITIONS[i].y, 0, 2400);
     }
 }
@@ -383,7 +384,7 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
 /**
  * @brief 速度模式直线移动(麦克纳姆轮, 通用)
  * @param direction 0=前进 1=后退 2=左移 3=右移
- * @param speed   速度 (mm/s)
+ * @param speed   电机转速 (RPM)
  * @param stop    true=停止 false=开始移动
  */
 void MovePose(int direction, float speed, bool stop) {

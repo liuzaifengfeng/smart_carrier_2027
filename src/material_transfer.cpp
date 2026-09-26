@@ -267,23 +267,55 @@ bool DemoStackCargoToWorkArea() {
     return true;
 }
 
+bool DemoStackCargoToWorkArea3() {
+    // 手动在三个载物台装好物料，小车停在码放区后调用。
+    // 与 MaterialDemo 一样依次执行 1 -> 1、2 -> 2、3 -> 3；
+    // 仅松手高度增加 两倍secondLayerOffset。
+    float releaseHeights[MATERIAL_STATION_COUNT];
+    for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
+        const MaterialStationPose &destination = materialTransferLayout.workArea[i];
+        releaseHeights[i] = destination.high + materialTransferLayout.secondLayerOffset * 2;
+        // 三个位置全部检查通过后才抓料，避免执行到一半才发现高度越界。
+        if (!validateAction(materialTransferLayout.cargo[i], destination)) return false;
+        if (!isfinite(releaseHeights[i]) || releaseHeights[i] > 160.0f) {
+            Serial.println("[Material] ERR: invalid demo stacking height");
+            return false;
+        }
+    }
+
+    for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
+        // 数组下标 0~2 对应载物台和区域编号 1~3。
+        // 手动装料按红色登记，完成抓取、码放和收回后再清空记录。
+        cargoPlatforms[i].material = MATERIAL_RED;
+        Serial.printf("[Material] demo stack cargo %u -> work area %u, release height %.1f\n",
+                      i + 1, i + 1, releaseHeights[i]);
+        pickAt(materialTransferLayout.cargo[i]);
+        placeAt(materialTransferLayout.workArea[i], releaseHeights[i]);
+        cargoPlatforms[i].material = MATERIAL_NONE;
+    }
+    return true;
+}
+
 bool PrepareLidarScanPose(uint8_t startZoneCode) {
 
     switch (startZoneCode) {
         case 1:
             Serial.println("[LidarPose] start zone 1");
-            GotoPose(-100, 100, 0, true);
-            MoveArm(100, 50, -1, -1, 150);
+            GotoPose(125, 0, 0, true);
+            MoveArm(100, 100, -1, -1, 150);
             waitForArm(2);
-            MoveArm(0, 50, 45, -1, 150);
+            GotoPose(0, 100, 0, true);
+            MoveArm(0, 100, 45, -1, 150);
+
             break;
 
         case 2:
             Serial.println("[LidarPose] start zone 2");
-            GotoPose(100, 100, 0, true);
-            MoveArm(100, 50, -1, -1, 150);
+            GotoPose(125, 0, 0, true);
+            MoveArm(100, 100, -1, -1, 150);
             waitForArm(3);
-            MoveArm(0, 50, 135, -1, 150);
+            GotoPose(0, -100, 0, true);
+            MoveArm(0, 100, 135, -1, 150);
             break;
 
         default:

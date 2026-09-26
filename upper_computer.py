@@ -32,10 +32,22 @@ FIELD_EDGE_EPSILON_MM = 1e-6
 ARM_HEIGHT_LIMIT_MM = 160.0
 ARM_TRAVEL_LIMIT_MM = 170.0
 FIELD_NODE_RADIUS_MM = 105.0
+FIELD_GRID_SIZE = 5
+FIELD_NODE_COUNT = 25
+MAX_NODE_PATH_LENGTH = 25
+
+
+def node_grid_position(node: int) -> tuple[int, int]:
+    """0~24 蛇形编号转为行、列；第 0 行在场地底部。"""
+    row, column = divmod(node, FIELD_GRID_SIZE)
+    return row, column if row % 2 == 0 else FIELD_GRID_SIZE - 1 - column
+
+
+# 项目坐标 X 向右、Y 向上；与固件节点中心坐标一致。
 FIELD_NODES = tuple(
-    (row_index * 3 + column_index + 1, x, y)
-    for row_index, y in enumerate((450.0, 1200.0, 2100.0))
-    for column_index, x in enumerate((300.0, 1200.0, 2100.0))
+    (node, 240.0 + 480.0 * node_grid_position(node)[1],
+     240.0 + 480.0 * node_grid_position(node)[0])
+    for node in range(FIELD_NODE_COUNT)
 )
 
 # 地图中机械机构的简化俯视尺寸。黄色伸缩臂自身长度保持不变，
@@ -80,8 +92,8 @@ class ArmPose:
 
 
 START_POSES = {
-    "启停区1": Pose(2250.0, 150.0, 180.0),
-    "启停区2": Pose(150.0, 150.0, 0.0),
+    "启停区1": Pose(2250.0, 150.0, 270.0),
+    "启停区2": Pose(150.0, 150.0, 90.0),
 }
 
 
@@ -325,7 +337,7 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
 
 
 def build_node_path_command(raw_path: str) -> str:
-    """校验 3×3 节点图路径，并生成固件使用的 ``{way:1-2-5}`` 指令。"""
+    """校验 5×5 蛇形节点图路径，并生成固件使用的 ``{way:0-1-8}`` 指令。"""
     text = raw_path.strip()
     if text.startswith("{") or text.endswith("}"):
         if not (text.startswith("{") and text.endswith("}")):
@@ -335,17 +347,17 @@ def build_node_path_command(raw_path: str) -> str:
         text = text[len("way:"):].strip()
 
     parts = [part.strip() for part in text.split("-")]
-    if len(parts) < 2 or len(parts) > 16:
-        raise ValueError("节点路径必须包含 2～16 个节点")
+    if len(parts) < 2 or len(parts) > MAX_NODE_PATH_LENGTH:
+        raise ValueError("节点路径必须包含 2～25 个节点")
     if any(not part.isdigit() for part in parts):
-        raise ValueError("节点路径格式应为 1-2-5")
+        raise ValueError("节点路径格式应为 0-1-8")
 
     nodes = [int(part) for part in parts]
-    if any(node < 1 or node > 9 for node in nodes):
-        raise ValueError("节点编号只能是 1～9")
+    if any(node < 0 or node >= FIELD_NODE_COUNT for node in nodes):
+        raise ValueError("节点编号只能是 0～24")
     for start, end in zip(nodes, nodes[1:]):
-        start_row, start_column = divmod(start - 1, 3)
-        end_row, end_column = divmod(end - 1, 3)
+        start_row, start_column = node_grid_position(start)
+        end_row, end_column = node_grid_position(end)
         if abs(start_row - end_row) + abs(start_column - end_column) != 1:
             raise ValueError(f"节点 {start} 与节点 {end} 不相邻")
     return "{way:" + "-".join(str(node) for node in nodes) + "}"
@@ -555,8 +567,17 @@ class FieldCanvas(tk.Canvas):
         self.create_oval(left, top, right, bottom, outline="#60666d")
 
     def _draw_field_nodes(self) -> None:
-        """绘制赛场中的 1~9 号浅灰色导航节点。"""
+        """绘制赛场中的 0~24 号浅灰色导航节点。"""
         radius_px = FIELD_NODE_RADIUS_MM * self.scale
+        # 五等分网格，每格 480 mm；节点位于格子中心。
+        for index in range(1, FIELD_GRID_SIZE):
+            coordinate = index * FIELD_SIZE_MM / FIELD_GRID_SIZE
+            self.create_line(*self.world_to_canvas(coordinate, 0.0),
+                             *self.world_to_canvas(coordinate, FIELD_SIZE_MM),
+                             fill="#aeb4ba")
+            self.create_line(*self.world_to_canvas(0.0, coordinate),
+                             *self.world_to_canvas(FIELD_SIZE_MM, coordinate),
+                             fill="#aeb4ba")
         for number, x, y in FIELD_NODES:
             center_x, center_y = self.world_to_canvas(x, y)
             self.create_oval(
@@ -1366,7 +1387,7 @@ class UpperComputerApp:
 
         node_path_group = ttk.LabelFrame(chassis_tab, text="节点路径", padding=7)
         node_path_group.pack(fill=tk.X, pady=(0, 6))
-        self.node_path_var = tk.StringVar(value="1-2-5")
+        self.node_path_var = tk.StringVar(value="0-1-8")
         ttk.Label(node_path_group, text="路径：").grid(row=0, column=0, sticky="w", pady=2)
         node_path_entry = ttk.Entry(
             node_path_group, textvariable=self.node_path_var, width=20
@@ -1379,7 +1400,7 @@ class UpperComputerApp:
         node_path_group.columnconfigure(1, weight=1)
         ttk.Label(
             node_path_group,
-            text="输入示例：1-2-5（仅允许上下或左右相邻节点）",
+            text="输入示例：0-1-8（仅允许上下或左右相邻节点）",
             foreground="#59636e",
             wraplength=280,
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(5, 0))
@@ -2064,9 +2085,9 @@ class UpperComputerApp:
                 if was_reading and self.parameter_panel.ready:
                     # 节点数组回读成功后同步地图，避免画面坐标与车上配置不一致。
                     values = {p.name: float(p.value) for p in self.parameter_panel.parameters.values()}
-                    if all(f"地图/节点{i}/{axis}(mm)" in values for i in range(1, 10) for axis in ("X", "Y")):
+                    if all(f"地图/节点{i}/{axis}(mm)" in values for i in range(FIELD_NODE_COUNT) for axis in ("X", "Y")):
                         global FIELD_NODES
-                        FIELD_NODES = tuple((i, values[f"地图/节点{i}/X(mm)"], values[f"地图/节点{i}/Y(mm)"]) for i in range(1, 10))
+                        FIELD_NODES = tuple((i, values[f"地图/节点{i}/X(mm)"], values[f"地图/节点{i}/Y(mm)"]) for i in range(FIELD_NODE_COUNT))
                         self.field.redraw()
                 if text.startswith("version:") or text in ("Debug mode", "Release mode"):
                     self.parameter_panel.disconnected()
@@ -2122,7 +2143,23 @@ def run_self_test() -> None:
         ARM_SLIDER_HOME_OFFSET_MM + ARM_SLIDER_FIXED_LENGTH_MM / 2.0
         == ARM_SLIDER_BASE_HOME_OFFSET_MM + ARM_SLIDER_BASE_LENGTH_MM / 2.0
     )
-    assert [number for number, _, _ in FIELD_NODES] == list(range(1, 10))
+    assert [number for number, _, _ in FIELD_NODES] == list(range(FIELD_NODE_COUNT))
+    assert FIELD_NODES[0] == (0, 240.0, 240.0)
+    assert FIELD_NODES[9] == (9, 240.0, 720.0)
+    assert FIELD_NODES[12] == (12, 1200.0, 1200.0)
+    assert FIELD_NODES[24] == (24, 2160.0, 2160.0)
+    # 穷举所有节点对，用物理距离独立核对蛇形编号的相邻判断。
+    for start, x1, y1 in FIELD_NODES:
+        for end, x2, y2 in FIELD_NODES:
+            expected = abs(x1 - x2) + abs(y1 - y2) == 480.0
+            try:
+                build_node_path_command(f"{start}-{end}")
+                accepted = True
+            except ValueError:
+                accepted = False
+            assert accepted == expected, (start, end)
+    full_path = "-".join(str(node) for node in range(FIELD_NODE_COUNT))
+    assert build_node_path_command(full_path) == "{way:" + full_path + "}"
     full_arm_reach = (
         full_slider_center
         + ARM_SLIDER_FIXED_LENGTH_MM / 2.0
@@ -2173,8 +2210,8 @@ def run_self_test() -> None:
     assert build_debug_command("MoveArm_2", ["30", "-1", "80"]) == "{MoveArm_2:30,-1,80}"
     assert build_debug_command("SERVO", ["2", "-45"]) == "{SERVO:2,-45}"
     assert build_debug_command("help", []) == "{help}"
-    assert build_node_path_command("1-2-5") == "{way:1-2-5}"
-    assert build_node_path_command(" {way:9-8-5-2} ") == "{way:9-8-5-2}"
+    assert build_node_path_command("0-1-8") == "{way:0-1-8}"
+    assert build_node_path_command(" {way:24-23-16-13} ") == "{way:24-23-16-13}"
     assert build_start_zone_command("启停区1") == "{StartZone:1}"
     assert build_start_zone_command("启停区2") == "{StartZone:2}"
     assert build_alignment_control_command("start") == "{ALIGN:START}"
@@ -2183,7 +2220,7 @@ def run_self_test() -> None:
         build_pose_calibration_command(Pose(150.0, 150.0, 0.0))
         == "{SetPose:150,150,0}"
     )
-    for invalid_path in ("1", "1-5", "0-1", "1-2-", "{1-2"):
+    for invalid_path in ("1", "1-5", "4-9", "24-25", "1-2-", "{1-2"):
         try:
             build_node_path_command(invalid_path)
         except ValueError:

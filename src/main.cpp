@@ -89,7 +89,7 @@ TaskCode currentTask = { {0,0,0}, {0,0,0}, {0,0,0}, {0,0,0}, false };
  * @return 解析结果(含 valid 标志)
  */
 TaskCode parseTaskCode(const char* code) {
-    TaskCode tc;
+    TaskCode tc = {}; // 解析失败时 valid 保持 false，避免未初始化数据误报成功。
     // 初始化...
     int a1,a2,a3,b1,b2,b3,c1,c2,c3,d1,d2,d3;
     if (sscanf(code, "%1d%1d%1d+%1d%1d%1d+%1d%1d%1d+%1d%1d%1d",
@@ -110,6 +110,7 @@ TaskCode parseTaskCode(const char* code) {
 enum RobotState {
     STATE_WAIT_START,    // 待机,等一键启动
     STATE_READ_TASK,     // 读取任务码(二维码板 / 机载电脑)
+    STATE_SCAN_FAILED,   // 扫码重试耗尽，保持停车，不进入抓取流程
     STATE_GRAB_ROUND1,   // 第一批: 转盘抓取 3 个物料
     STATE_PLACE_COARSE1, // 第一批: 放到粗加工区
     STATE_PLACE_TEMP1,   // 第一批: 放到暂存区
@@ -135,13 +136,13 @@ volatile int  roundProgress = 0;   // 当前轮次已抓/放物料数 0-3
 volatile bool enableRun = false;   // 一键启动触发
 
 volatile bool moveNodePathFlag = false;
-uint8_t nodePathBuffer[16] = {0};
+uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH] = {0};
 size_t nodePathLen = 0;
 
 /**
- * @brief 解析节点路径帧，例如 "{way:2-3-6}"。
+ * @brief 解析节点路径帧，例如 "{way:0-1-8}"。
  *
- * 仅接受 1~9 号节点、短横线分隔和完整花括号，避免 atoi 将非法内容
+ * 仅接受 0~24 号节点、短横线分隔和完整花括号，避免 atoi 将非法内容
  * 静默转换成 0。节点是否相邻由 MoveNodePath 在运动前统一检查。
  */
 bool parseNodePathCommand(const char *command, uint8_t *path, size_t capacity, size_t &pathLength) {
@@ -154,12 +155,20 @@ bool parseNodePathCommand(const char *command, uint8_t *path, size_t capacity, s
 
     const char *cursor = command + sizeof(WAY_PREFIX) - 1;
     for (;;) {
-        if (*cursor < '1' || *cursor > '9' || pathLength >= capacity) {
+        if (*cursor < '0' || *cursor > '9' || pathLength >= capacity) {
             pathLength = 0;
             return false;
         }
-        path[pathLength++] = static_cast<uint8_t>(*cursor - '0');
-        ++cursor;
+        unsigned int node = 0;
+        do {
+            node = node * 10 + static_cast<unsigned int>(*cursor - '0');
+            if (node >= FIELD_NODE_COUNT) {
+                pathLength = 0;
+                return false;
+            }
+            ++cursor;
+        } while (*cursor >= '0' && *cursor <= '9');
+        path[pathLength++] = static_cast<uint8_t>(node);
 
         if (*cursor == '}') {
             if (cursor[1] == '\0' && pathLength >= 2) {
@@ -470,13 +479,13 @@ void Task_MainStateMachine(void *pvParameters) {
             {
             case START_ZONE_1:
                 updateDisplay("start_zone: 1");
-                currentPose = {2250, 150, 0};
+                currentPose = {2250, 150, 270};
                 break;
             case START_ZONE_2:
                 updateDisplay("start_zone: 2");
-                currentPose = {150, 150, 0};
+                currentPose = {150, 150, 270};
                 break;
-            
+
             default:
                 updateDisplay("ERR:start_zone: unknown");
                 break;
@@ -491,39 +500,78 @@ void Task_MainStateMachine(void *pvParameters) {
             currentState = STATE_READ_TASK;
             break;
 
-        case STATE_READ_TASK:
+        case STATE_READ_TASK: {
             updateDisplay("READ TASK");
-            // 方案: 机器人走到二维码板,扫码枪读二维码/条码, 从扫码消息队列取任务码
-
-            if (currentStartZone == START_ZONE_1)
-            {
-                // 向左移动到二维码板位姿
-                MovePose(2, 100, false);
+            // 1. 每段最多估算 1000 mm；首次尝试 + 最多 3 次反向重试，共 4 段。
+            constexpr float SCAN_MAX_DISTANCE_MM = 1000.0f;
+            constexpr float SCAN_SPEED_RPM = 30.0f;
+            constexpr uint8_t SCAN_MAX_RETRIES = 3;
+            // 与 chassis.cpp 的 16 细分配置一致：3200 脉冲/圈。
+            // MovePose 的 speed 直接传给电机，实际单位是 RPM，不是 mm/s。
+            const float scanSpeedMmPerSecond = SCAN_SPEED_RPM * 3200.0f / 60.0f / X_PULSE;
+            if ((currentStartZone != START_ZONE_1 && currentStartZone != START_ZONE_2)
+                    || !isfinite(scanSpeedMmPerSecond) || scanSpeedMmPerSecond <= 0.0f) {
+                MovePose(0, 0, true);
+                Serial.println("[SCANNER] ERR: invalid start zone or pulse calibration");
+                updateDisplay("TASK ERR");
+                if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
+                currentState = STATE_SCAN_FAILED;
+                break;
             }
-            else if (currentStartZone == START_ZONE_2)
-            {
-                // 向右移动到二维码板位姿
-                MovePose(3, 100, false);
-            }
-            else {
-                Serial.println("ERR:start_zone: unknown");
-            }
-            
+            int scanDirection = (currentStartZone == START_ZONE_1) ? 0 : 1;
+            uint8_t scanRetries = 0;
+            taskReceived = false;
+            currentTask = {};
+            // 从下发指令前计时，按匀速保守估算，不额外补偿启动加速距离。
+            uint32_t scanLegStartMs = millis();
+            MovePose(scanDirection, SCAN_SPEED_RPM, false);
             while (!taskReceived) {
-                // 非阻塞检查扫码消息队列(伪函数)
+                // 2. 移动期间持续非阻塞读取；收到有效任务码立即退出并停车。
                 char scanCode[SCANNER_BUF_LEN];
                 if (waitScannerCode(scanCode, sizeof(scanCode), 0)) {
                     currentTask = parseTaskCode(scanCode);
                     taskReceived = currentTask.valid;
                     Serial.printf("[SCANNER] task code %s\n", currentTask.valid ? "OK" : "ERR");
                 }
-                vTaskDelay(100 / portTICK_PERIOD_MS);
+                if (taskReceived) break;
+
+                const float estimatedDistanceMm = scanSpeedMmPerSecond
+                    * static_cast<float>(millis() - scanLegStartMs) / 1000.0f;
+                if (estimatedDistanceMm >= SCAN_MAX_DISTANCE_MM) {
+                    MovePose(scanDirection, 0, true);
+                    if (scanRetries >= SCAN_MAX_RETRIES) {
+                        Serial.println("[SCANNER] ERR: retries exhausted (3/3)");
+                        break;
+                    }
+                    // 3. 停稳后反向，在同一段扫码区域往返；每次重新估算行程。
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                    ++scanRetries;
+                    scanDirection = 1 - scanDirection; // 0=前进，1=后退
+                    Serial.printf("[SCANNER] retry %u/%u, direction=%d\n",
+                                  static_cast<unsigned>(scanRetries),
+                                  static_cast<unsigned>(SCAN_MAX_RETRIES), scanDirection);
+                    scanLegStartMs = millis();
+                    MovePose(scanDirection, SCAN_SPEED_RPM, false);
+                }
+                vTaskDelay(pdMS_TO_TICKS(10));
             }
-            MovePose(0, 100, true);//成功扫码后停下
+            MovePose(scanDirection, 0, true); // 成功或重试耗尽都停车。
+            if (!taskReceived) {
+                updateDisplay("TASK ERR");
+                if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
+                currentState = STATE_SCAN_FAILED;
+                break;
+            }
             updateDisplay(currentTask.valid ? "TASK OK" : "TASK ERR");
             xQueueReset(xVisualTaskQueue); // 清残留信号
             currentState = STATE_GRAB_ROUND1;
             break;
+        }
+
+        case STATE_SCAN_FAILED:
+            // 保持故障状态，避免下一轮状态机再次启动扫码或执行残留路径。
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
 
         case STATE_GRAB_ROUND1:
             // 原料区为旋转电动转盘(6-10s/圈, 转向随机, 物料120°分布)
@@ -598,7 +646,7 @@ void Task_MainStateMachine(void *pvParameters) {
             break;
         }
 
-        if (moveNodePathFlag) {
+        if (moveNodePathFlag && currentState != STATE_SCAN_FAILED) {
             moveNodePathFlag = false;
             MoveNodePath(nodePathBuffer, nodePathLen);
         }
@@ -609,7 +657,7 @@ void Task_MainStateMachine(void *pvParameters) {
 
 // ================= 机载电脑串口指令任务 =================
 void Task_Serial_CMD(void *pvParameters) {
-    char rxBuffer[64];
+    char rxBuffer[128];
     int rxIdx = 0;
 
     for (;;) {
@@ -684,7 +732,7 @@ void Task_Serial_CMD(void *pvParameters) {
                     }
                     rxIdx = 0;
                 }
-            } else if (rxIdx < 63) {
+            } else if (rxIdx < sizeof(rxBuffer) - 1) {
                 rxBuffer[rxIdx++] = c;
             }
         }
@@ -694,7 +742,7 @@ void Task_Serial_CMD(void *pvParameters) {
 
 // ================= 调试模式串口命令 =================
 void Task_Debug_CMD(void *pvParameters) {
-    char buffer[100];
+    char buffer[128];
     int bufferIndex = 0;
     for (;;) {
         while (Serial.available() > 0) {
@@ -764,7 +812,7 @@ void Task_Debug_CMD(void *pvParameters) {
                         continue;
                     }
                     if (strncmp(buffer, "{way:", 5) == 0) {
-                        uint8_t debugPath[16] = {0};
+                        uint8_t debugPath[MAX_NODE_PATH_LENGTH] = {0};
                         size_t debugPathLength = 0;
                         if (parseNodePathCommand(
                                 buffer, debugPath,
@@ -792,7 +840,7 @@ void Task_Debug_CMD(void *pvParameters) {
                     char cmd[20]; float p1=0,p2=0,p3=0;
                     if (sscanf(debugCommand, "%19s %f %f %f", cmd, &p1, &p2, &p3) >= 1) {
                         // [TODO] 按需接入: GOTOpose / movepose / SERVO / height / enable 等
-                        if (strcmp(cmd, "GOTOpose") == 0) 
+                        if (strcmp(cmd, "GOTOpose") == 0)
                             {  Serial.printf("{GOTOpose:ACK,%.0f,%.0f,%.0f}\n", p1, p2, p3);  GotoPose(p1,p2,p3,true);}
                         else if (strcmp(cmd, "SetPose") == 0)
                             {
@@ -805,15 +853,15 @@ void Task_Debug_CMD(void *pvParameters) {
                                     Serial.println("{SetPose:ERR,RANGE}");
                                 }
                             }
-                        else if (strcmp(cmd, "Movepose") == 0) 
+                        else if (strcmp(cmd, "Movepose") == 0)
                             {  Serial.printf("{Movepose:ACK,%.0f,%.0f,%.0f}\n", p1, p2, p3); MovePose(p1,p2,p3);}
-                        else if (strcmp(cmd, "MoveArm_1") == 0) 
+                        else if (strcmp(cmd, "MoveArm_1") == 0)
                             {  Serial.printf("{MoveArm_1:ACK,%.0f,%.0f,%.0f}\n", p1, p2, p3); MoveArm(p1,p2,-1,-1,p3);}
-                        else if (strcmp(cmd, "MoveArm_2") == 0) 
+                        else if (strcmp(cmd, "MoveArm_2") == 0)
                             {  Serial.printf("{MoveArm_2:ACK,%.0f,%.0f,%.0f}\n", p1, p2, p3); MoveArm(-1,-1,p1,p2,p3);}
-                        else if (strcmp(cmd, "SERVO") == 0) 
+                        else if (strcmp(cmd, "SERVO") == 0)
                             {  Serial.printf("{SERVO:ACK,%.0f,%.0f}\n", p1, p2);  Servo_SetAngle((uint8_t)p1, p2, 0, 0);}
-                        else if (strcmp(cmd, "En_C") == 0) 
+                        else if (strcmp(cmd, "En_C") == 0)
                             {  Serial.printf("{En_C:ACK,%.0f}\n", p1);  Emm_V5_En_Control_all(p1);}
                         else if (strcmp(cmd, "MaterialDemo") == 0)
                             {
@@ -827,13 +875,19 @@ void Task_Debug_CMD(void *pvParameters) {
                                 const bool ok = DemoStackCargoToWorkArea();
                                 Serial.println(ok ? "{MaterialDemo2:OK}" : "{MaterialDemo2:ERR}");
                             }
+                        else if (strcmp(cmd, "MaterialDemo3") == 0)
+                            {
+                                Serial.println("{MaterialDemo3}");
+                                const bool ok = DemoStackCargoToWorkArea3();
+                                Serial.println(ok ? "{MaterialDemo3:OK}" : "{MaterialDemo3:ERR}");
+                            }
                         else if (strcmp(cmd, "help") == 0)
-                            {    Serial.println("Cmds: {Mode:Release} {LidarPose} {ALIGN:START} {ALIGN:STOP} {ALIGN:a,x,y} {way:1-2-5} {StartZone:1} {GOTOpose:x,y,theta} {SetPose:x,y,theta} {Movepose:dir,speed,stop} {MoveArm_1:h,l,speed} {MoveArm_2:turret,pawl,speed} {SERVO:id,angle} {En_C:enable} {help}");}
+                            {    Serial.println("Cmds: {Mode:Release} {LidarPose} {ALIGN:START} {ALIGN:STOP} {ALIGN:a,x,y} {way:0-1-8} {StartZone:1} {GOTOpose:x,y,theta} {SetPose:x,y,theta} {Movepose:dir,speed,stop} {MoveArm_1:h,l,speed} {MoveArm_2:turret,pawl,speed} {SERVO:id,angle} {En_C:enable} {help}");}
                         else  {    Serial.println("{ERR:UNKNOWN_FRAME}");}
                     }
                     bufferIndex = 0;
                 }
-            } else if (bufferIndex < 99) {
+            } else if (bufferIndex < sizeof(buffer) - 1) {
                 buffer[bufferIndex++] = c;
             }
         }

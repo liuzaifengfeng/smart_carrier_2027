@@ -7,7 +7,7 @@
 extern uint32_t ALIGN_PID_MAX_SPEED_RPM;
 
 namespace {
-constexpr size_t MAX_PARAMETERS = 96;
+constexpr size_t MAX_PARAMETERS = 160;
 struct Parameter {
     char name[80];
     void *address;
