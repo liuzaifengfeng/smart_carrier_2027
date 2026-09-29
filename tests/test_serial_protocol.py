@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 from upper_computer import (
     SerialLink, UpperComputerApp, build_frame, build_node_path_command,
-    parse_display_event, parse_frame,
+    parse_display_event, parse_frame, parse_vision_start_request,
 )
 
 
@@ -50,6 +50,18 @@ class FrameTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(parse_display_event(text))
 
+    def test_four_vision_start_requests_have_exact_shape(self):
+        for mode in ("DISC", "DISC_MATERIAL", "WORK_AREA", "WORK_AREA_LOADED"):
+            frame = f"{{EVT,VISION,START_REQUEST,{mode}}}"
+            with self.subTest(mode=mode):
+                self.assertEqual(parse_vision_start_request(frame), mode)
+        for frame in ("{CMD,VISION,START_REQUEST,DISC}",
+                      "{EVT,VISION,START_REQUEST,DISC,EXTRA}",
+                      "{EVT,VISION,START_REQUEST,UNKNOWN}",
+                      "{EVT,VISION,START_REQUEST,DISC"):
+            with self.subTest(frame=frame):
+                self.assertIsNone(parse_vision_start_request(frame))
+
 
 class ConnectionGateTests(unittest.TestCase):
     def test_hello_only_until_version_confirmed(self):
@@ -71,6 +83,16 @@ class ConnectionGateTests(unittest.TestCase):
         self.assertTrue(app._accept_display_event("{EVT,DISPLAY,DEBUG,READ TASK}"))
         app.task_code_var.set.assert_called_once_with("156+123+516+231")
         app.debug_display_var.set.assert_called_once_with("READ TASK")
+
+    def test_vision_request_is_displayed_without_claiming_vision_started(self):
+        app = UpperComputerApp.__new__(UpperComputerApp)
+        app.vision_request_var = Mock()
+        self.assertTrue(app._accept_vision_start_request(
+            "{EVT,VISION,START_REQUEST,WORK_AREA_LOADED}"))
+        app.vision_request_var.set.assert_called_once_with(
+            "请求开启：粗加工区／暂存区带物料定位")
+        self.assertFalse(app._accept_vision_start_request(
+            "{EVT,VISION,START_REQUEST,UNKNOWN}"))
 
 
 if __name__ == "__main__":

@@ -66,6 +66,22 @@ def parse_display_event(line: str) -> tuple[str, str] | None:
     return display_type, content
 
 
+VISION_START_REQUEST_LABELS = {
+    "DISC": "圆盘定位",
+    "DISC_MATERIAL": "圆盘物料识别",
+    "WORK_AREA": "粗加工区／暂存区定位",
+    "WORK_AREA_LOADED": "粗加工区／暂存区带物料定位",
+}
+
+
+def parse_vision_start_request(line: str) -> str | None:
+    """只接受四种完整的视觉开启请求，返回机载视觉功能标识。"""
+    fields = parse_frame(line)
+    if fields is None or len(fields) != 4 or fields[:3] != ("EVT", "VISION", "START_REQUEST"):
+        return None
+    return fields[3] if fields[3] in VISION_START_REQUEST_LABELS else None
+
+
 # 运行参数页：读取目录、暂存修改、逐项确认、提交并回读核对。
 @dataclass
 class Parameter:
@@ -1630,6 +1646,11 @@ class UpperComputerApp:
         ttk.Label(connection, textvariable=self.debug_display_var).grid(
             row=3, column=1, columnspan=5, sticky="w"
         )
+        self.vision_request_var = tk.StringVar(value="尚无视觉功能请求")
+        ttk.Label(connection, text="视觉请求：").grid(row=4, column=0, sticky="w")
+        ttk.Label(connection, textvariable=self.vision_request_var).grid(
+            row=4, column=1, columnspan=5, sticky="w"
+        )
 
         self.field = FieldCanvas(container)
         self.field.grid(row=1, column=0, sticky="nsew", padx=(0, 12))
@@ -2517,6 +2538,14 @@ class UpperComputerApp:
             self.debug_display_var.set(content)
         return True
 
+    def _accept_vision_start_request(self, text: str) -> bool:
+        """展示主控的切换请求；实际相机算法由机载电脑程序处理。"""
+        mode = parse_vision_start_request(text)
+        if mode is None:
+            return False
+        self.vision_request_var.set(f"请求开启：{VISION_START_REQUEST_LABELS[mode]}")
+        return True
+
     def poll_serial_events(self) -> None:
         while True:
             try:
@@ -2538,6 +2567,7 @@ class UpperComputerApp:
                         self.connection_var.set("ESP32 协议版本不匹配")
                     continue
                 self._accept_display_event(text)
+                self._accept_vision_start_request(text)
                 # 路径接收确认与执行完成是两个阶段，不能把 OK 当作到达。
                 route_status = {
                     "{EVT,NAV,ROUTE_WAITING}": "小车正在等待路径节点命令。",

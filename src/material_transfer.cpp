@@ -215,6 +215,7 @@ bool MoveCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
     return true;
 }
 
+//放料
 bool DemoCargoToRoughArea() {
     // 依次完成三次搬运：载物台 1 -> 粗加工区 1、2 -> 2、3 -> 3（第一层）。
     // 每次完整执行抓取、搬运、放置和抬升后，才开始下一次；本函数不负责底盘导航。
@@ -238,6 +239,7 @@ bool DemoCargoToRoughArea() {
     return true;
 }
 
+//码放（与放料类似，高度增加）
 bool DemoStackCargoToWorkArea() {
     // 手动在三个载物台装好物料，小车停在码放区后调用。
     // 与 MaterialDemo 一样依次执行 1 -> 1、2 -> 2、3 -> 3；
@@ -400,20 +402,50 @@ bool LoadRoundFromDisc(const int materialCodes[MATERIAL_STATION_COUNT]) {
     return true;
 }
 
-bool PlaceRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]) {
-    // positionCodes[i] 表示第 i+1 号载物台上的物料应放到哪个区域位置。
+bool PlaceTaskCargoToWorkArea(
+        const int positionCodes[MATERIAL_STATION_COUNT], uint8_t layer) {
+    // 1. 整组预检查：无效任务码、层数或目标高度不能让机械臂先动起来。
+    if (layer < 1 || layer > 3) {
+        Serial.println("[Material] ERR: layer must be 1, 2 or 3");
+        return false;
+    }
     if (!validateCodeArrays(positionCodes, nullptr, false)
             || !MaterialTransferPosesReady()) return false;
+
+    float releaseHeights[MATERIAL_STATION_COUNT];
     for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
         if (cargoPlatforms[i].material == MATERIAL_NONE) {
             Serial.println("[Material] ERR: cargo platform is empty");
             return false;
         }
+        const MaterialStationPose &source = materialTransferLayout.cargo[i];
+        const MaterialStationPose &destination =
+            materialTransferLayout.workArea[positionCodes[i] - 1];
+        releaseHeights[i] = destination.high
+            + static_cast<float>(layer - 1) * materialTransferLayout.secondLayerOffset;
+        if (!validateAction(source, destination)) return false;
+        if (!isfinite(releaseHeights[i]) || releaseHeights[i] < 0.0f
+                || releaseHeights[i] > 160.0f) {
+            Serial.println("[Material] ERR: invalid stacking height");
+            return false;
+        }
     }
+
+    // 2. 与已测试 Demo 相同的逐件动作：抓取、转向放置、松手、抬升。
+    // 编号从 1 开始，数组下标从 0 开始；成功放完一件才清空其载物台记录。
     for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
-        if (!MoveCargoToWorkArea(i + 1, positionCodes[i])) return false;
+        const uint8_t workAreaCode = static_cast<uint8_t>(positionCodes[i]);
+        Serial.printf("[Material] cargo %u -> work area %u, layer %u, release height %.1f\n",
+                      i + 1, workAreaCode, layer, releaseHeights[i]);
+        pickAt(materialTransferLayout.cargo[i]);
+        placeAt(materialTransferLayout.workArea[workAreaCode - 1], releaseHeights[i]);
+        cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;
+}
+
+bool PlaceRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]) {
+    return PlaceTaskCargoToWorkArea(positionCodes, 1);
 }
 
 bool RetrieveRoundToCargo(
@@ -438,16 +470,5 @@ bool RetrieveRoundToCargo(
 }
 
 bool StackRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]) {
-    // 与第一层放置流程相同，但最终下降到第二层高度。
-    if (!validateCodeArrays(positionCodes, nullptr, false) || !MaterialTransferPosesReady()) return false;
-    for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
-        if (cargoPlatforms[i].material == MATERIAL_NONE) {
-            Serial.println("[Material] ERR: cargo platform is empty");
-            return false;
-        }
-    }
-    for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
-        if (!StackCargoToWorkArea(i + 1, positionCodes[i])) return false;
-    }
-    return true;
+    return PlaceTaskCargoToWorkArea(positionCodes, 2);
 }

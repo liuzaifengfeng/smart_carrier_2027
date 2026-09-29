@@ -343,7 +343,7 @@ void Task_VisualAlignment(void *pvParameters) {
     }
 }
 
-// 通过 Serial0 通知机载电脑显示。实体显示屏尚未接入，不能把串口显示当作赛场显示硬件。
+// 通过 Serial0 通知机载电脑显示。
 // 参数顺序：1. 命令类型 DISPLAY；2. 显示类型 TASK_CODE/DEBUG；3. 正文。
 bool updateDisplay(const char *commandType, const char *displayType, const char *content) {
     if (commandType == nullptr || strcmp(commandType, "DISPLAY") != 0
@@ -368,6 +368,32 @@ bool updateDisplay(const char *commandType, const char *displayType, const char 
     Serial.println(frame);
     memcpy(previousFrame, frame, static_cast<size_t>(length) + 1);
     return true;
+}
+
+// 主控请求机载电脑切换视觉功能；这些是单次请求，不代表视觉已启动或已对齐。
+// 顺序与 Document/serial_protocol.md 中的四种模式一致。
+enum class VisionStartMode : uint8_t {
+    DISC,
+    DISC_MATERIAL,
+    WORK_AREA,
+    WORK_AREA_LOADED
+};
+
+void requestVisionStart(VisionStartMode mode) {
+    switch (mode) {
+        case VisionStartMode::DISC:
+            Serial.println("{EVT,VISION,START_REQUEST,DISC}");
+            break;
+        case VisionStartMode::DISC_MATERIAL:
+            Serial.println("{EVT,VISION,START_REQUEST,DISC_MATERIAL}");
+            break;
+        case VisionStartMode::WORK_AREA:
+            Serial.println("{EVT,VISION,START_REQUEST,WORK_AREA}");
+            break;
+        case VisionStartMode::WORK_AREA_LOADED:
+            Serial.println("{EVT,VISION,START_REQUEST,WORK_AREA_LOADED}");
+            break;
+    }
 }
 
 // 超时兜底: 任一环节卡死则放弃本轮, 回启停区
@@ -407,9 +433,9 @@ void Task_MainStateMachine(void *pvParameters) {
     while (1) {
         switch (currentState) {
 
-        Serial.println("TASK start");
 
         case STATE_WAIT_START: // 等待开始区域
+            Serial.println("TASK start");
             InitArm();// 初始化机械臂
             updateDisplay("DISPLAY", "DEBUG", "WAIT start_zone");
             while (currentStartZone == START_ZONE_UNKNOWN) vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -540,9 +566,12 @@ void Task_MainStateMachine(void *pvParameters) {
                     break; // 失败时跳过下面的用户代码
                 }
                 routeCompleted = true;
+                // 路径执行完后请求圆盘定位视觉；上位机应切到圆盘定位流程。
+                requestVisionStart(VisionStartMode::DISC);
 
                 // ===== 在这里填写路径执行完毕后只运行一次的用户代码 =====
                 // 到达圆盘并完成视觉对齐后，才可调用抓取接口：
+                // requestVisionStart(VisionStartMode::DISC_MATERIAL);
                 // LoadRoundFromDisc(currentTask.round1_colors);
             }
             // 走到这里时路径已执行成功，可继续轮询后续任务进度。
@@ -556,7 +585,8 @@ void Task_MainStateMachine(void *pvParameters) {
             // 按 round1_pos 顺序放置到粗加工区对应圆环
             // 圆环评分: 1环15分 2环10分 3环7分 ... 越中心分越高
             // 到达粗加工区并完成停车定位后调用：
-            // PlaceRoundToWorkArea(currentTask.round1_pos);
+            // requestVisionStart(VisionStartMode::WORK_AREA);
+            // PlaceTaskCargoToWorkArea(currentTask.round1_pos, 1);
             updateDisplay("DISPLAY", "DEBUG", "PLACE C1");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_PLACE_TEMP1; }
             break;
@@ -564,9 +594,10 @@ void Task_MainStateMachine(void *pvParameters) {
         case STATE_PLACE_TEMP1:
             // 从粗加工区取回3个, 按 round1_pos 放到暂存区
             // 在粗加工区取回：
+            // requestVisionStart(VisionStartMode::WORK_AREA_LOADED);
             // RetrieveRoundToCargo(currentTask.round1_colors, currentTask.round1_pos);
             // 到达暂存区后复用相同工位位姿：
-            // PlaceRoundToWorkArea(currentTask.round1_pos);
+            // PlaceTaskCargoToWorkArea(currentTask.round1_pos, 1);
             updateDisplay("DISPLAY", "DEBUG", "PLACE T1");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_GRAB_ROUND2; }
             break;
@@ -580,7 +611,7 @@ void Task_MainStateMachine(void *pvParameters) {
 
         case STATE_PLACE_COARSE2:
             // 第二批放粗加工区
-            // PlaceRoundToWorkArea(currentTask.round2_pos);
+            // PlaceTaskCargoToWorkArea(currentTask.round2_pos, 1);
             updateDisplay("DISPLAY", "DEBUG", "PLACE C2");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_STACK_TEMP2; }
             break;
@@ -589,7 +620,7 @@ void Task_MainStateMachine(void *pvParameters) {
             // 第二批在暂存区码垛到第一批上方(颜色一致, 需平稳放置)
             // 在粗加工区取回第二批后，到暂存区码放第二层：
             // RetrieveRoundToCargo(currentTask.round2_colors, currentTask.round2_pos);
-            // StackRoundToWorkArea(currentTask.round2_pos);
+            // PlaceTaskCargoToWorkArea(currentTask.round2_pos, 2);
             updateDisplay("DISPLAY", "DEBUG", "STACK T2");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_RETURN_HOME; }
             break;

@@ -67,6 +67,28 @@
 | `{LidarPose:OK}` / `ERR` | `{EVT,VISION,LIDAR_POSE_DONE}` / `FAILED` | 雷达扫描位姿动作结果 |
 | Release 自动触发雷达位姿 | `{EVT,VISION,LIDAR_POSE_RUNNING}` | 自动流程开始，不发送命令回复 |
 
+### 主控请求开启机载视觉功能
+
+主控按业务阶段发送以下四种**单次请求**。机载电脑收到后切换对应的相机识别流程；这是 ESP32 → 机载电脑的 `EVT`，不是电脑发给 ESP32 的 `CMD`。切换请求本身不表示相机已启动、视觉已对齐或物料已识别，也不代替原有 `ALIGN_DATA`、`COLOR`、`CONFIRM` 等回传。当前协议不要求对这四种请求逐条回复；仓库外机载视觉程序需按模式实现切换。
+
+| 事件帧 | 机载电脑应开启的功能 | 典型发送时机 |
+|---|---|---|
+| `{EVT,VISION,START_REQUEST,DISC}` | 圆盘定位／对齐视觉 | 到达圆盘区域、准备定位时 |
+| `{EVT,VISION,START_REQUEST,DISC_MATERIAL}` | 圆盘物料识别视觉 | 圆盘定位结束、准备识别待抓物料时 |
+| `{EVT,VISION,START_REQUEST,WORK_AREA}` | 粗加工区或暂存区的空工位定位视觉 | 准备向无物料的工位放料时 |
+| `{EVT,VISION,START_REQUEST,WORK_AREA_LOADED}` | 粗加工区或暂存区的带物料工位定位视觉 | 准备从已有物料的工位取回或码放时 |
+
+四个模式值是固定 ASCII 标识，不附带区域编号或任务码。当前粗加工区和暂存区共用一套机械臂工位位姿；机载电脑需结合当前业务阶段区分所在区域。固件提供 `requestVisionStart(VisionStartMode)` 发送接口，当前 Release 流程只在首轮圆盘路径执行后自动发送 `DISC`；其余模式要等对应的导航、到位及视觉切换时机接入状态机后才会自动发送。仓库内调试上位机只显示请求及原始日志，不包含相机算法。
+
+```text
+ESP32  {EVT,NAV,ROUTE_DONE,ESTIMATED}
+ESP32  {EVT,VISION,START_REQUEST,DISC}
+电脑   开启圆盘定位视觉，随后按现有协议回传对齐数据
+ESP32  {EVT,VISION,ALIGN_DONE}
+ESP32  {EVT,VISION,START_REQUEST,DISC_MATERIAL}
+电脑   开启圆盘物料识别视觉，随后按现有协议回传颜色
+```
+
 ### 机载电脑显示事件
 
 固件调用 `updateDisplay(命令类型, 显示类型, 正文)`，三个参数依次为：固定命令类型 `DISPLAY`、显示类型 `TASK_CODE` 或 `DEBUG`、要显示的字符串。串口发出 `{EVT,DISPLAY,显示类型,正文}`，无须电脑回复。相同的连续正文只发一次，避免状态机轮询刷屏；切换到其他正文后可再次发送。

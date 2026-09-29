@@ -74,16 +74,16 @@ bool MoveCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode);
 
 // 调试示例：在三个载物台手动放好物料并将小车停在粗加工区后调用。
 // 每次调用依次完整搬运三次：载物台 1 -> 区域 1、2 -> 2、3 -> 3。
-// 临时 code 在函数内修改，也可在 Debug 模式发送 {MaterialDemo} 调用。
+// 临时颜色码在函数内指定，也可在 Debug 模式发送 {CMD,ARM,DEMO1} 调用。
 bool DemoCargoToRoughArea();
 
-// 码放调试示例：手动装好三个载物台并将小车停在码放区后，发送 {MaterialDemo2}。
-// 顺序同 MaterialDemo：1 -> 1、2 -> 2、3 -> 3；松手高度为区域基础高度 + approachHeight。
+// 码放调试示例：手动装好三个载物台并将小车停在码放区后，发送 {CMD,ARM,DEMO2}。
+// 顺序为 1 -> 1、2 -> 2、3 -> 3；松手高度为区域基础高度 + secondLayerOffset。
 // 三个目标高度均通过行程检查后才开始动作；本函数不负责底盘导航。
 bool DemoStackCargoToWorkArea();
 
-// 码放第三层调试示例：手动装好三个载物台并将小车停在码放区后，发送 {MaterialDemo3}。
-// 顺序同 MaterialDemo：1 -> 1、2 -> 2、3 -> 3；松手高度为区域基础高度 + approachHeight。
+// 码放第三层调试示例：手动装好三个载物台并将小车停在码放区后，发送 {CMD,ARM,DEMO3}。
+// 顺序为 1 -> 1、2 -> 2、3 -> 3；松手高度为区域基础高度 + 2 倍 secondLayerOffset。
 // 三个目标高度均通过行程检查后才开始动作；本函数不负责底盘导航。
 bool DemoStackCargoToWorkArea3();
 
@@ -103,13 +103,23 @@ bool MoveWorkAreaToCargo(uint8_t materialCode, uint8_t workAreaCode,
 bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode);
 
 // ================= 三个物料的整组搬运动作 =================
-// 下面四个函数都循环执行三次，可以直接传入扫码得到的 TaskCode 数组。
+// 下方批量接口都循环执行三次，可以直接传入扫码得到的 TaskCode 数组。
+
+// 按任务码中的一组位置码放置三个载物台上的物料。
+// positionCodes[0..2]：1、2、3 号载物台对应的区域位置，必须恰好包含 1、2、3。
+// layer：1=基础高度，2=基础高度+1 倍层高，3=基础高度+2 倍层高。
+// 例如第一批 PlaceTaskCargoToWorkArea(currentTask.round1_pos, 1)，
+// 第二批 PlaceTaskCargoToWorkArea(currentTask.round2_pos, 2)。
+// 调用前必须已装料并停在目标区域；本函数不负责底盘导航。
+// 开始运动前检查全部三个目标，失败返回 false 且不会启动本组动作。
+bool PlaceTaskCargoToWorkArea(
+    const int positionCodes[MATERIAL_STATION_COUNT], uint8_t layer);
 
 // 按颜色码依次从圆盘抓取三个物料，分别放到 1、2、3 号载物台。
 // 示例：LoadRoundFromDisc(currentTask.round1_colors);
 bool LoadRoundFromDisc(const int materialCodes[MATERIAL_STATION_COUNT]);
 
-// 将 1、2、3 号载物台上的物料，分别放到 positionCodes 指定的第一层位置。
+// 第一层兼容入口，等价于 PlaceTaskCargoToWorkArea(positionCodes, 1)。
 // 示例：PlaceRoundToWorkArea(currentTask.round1_pos);
 bool PlaceRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]);
 
@@ -120,7 +130,7 @@ bool RetrieveRoundToCargo(
     const int materialCodes[MATERIAL_STATION_COUNT],
     const int positionCodes[MATERIAL_STATION_COUNT]);
 
-// 将三个载物台上的物料，分别码放到 positionCodes 指定位置的第二层。
+// 第二层兼容入口，等价于 PlaceTaskCargoToWorkArea(positionCodes, 2)。
 // 示例：StackRoundToWorkArea(currentTask.round2_pos);
 bool StackRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]);
 
