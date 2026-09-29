@@ -302,17 +302,19 @@ bool PrepareLidarScanPose(uint8_t startZoneCode) {
         case 1:
             Serial.println("[LidarPose] start zone 1");
             GotoPose(125, 0, 0, true);
-            MoveArm(100, 100, -1, -1, 150);
-            waitForArm(2);
+            MoveArm(150, 100, -1, -1, 150);
+            waitForArm(3);
             GotoPose(0, 100, 0, true);
-            MoveArm(0, 100, 45, -1, 150);
+            MoveArm(-1, 100, 45, -1, 150);
+            waitForArm(2);
+            MoveArm(0, 100, -1, -1, 150);
 
             break;
 
         case 2:
             Serial.println("[LidarPose] start zone 2");
             GotoPose(125, 0, 0, true);
-            MoveArm(100, 100, -1, -1, 150);
+            MoveArm(150, 100, -1, -1, 150);
             waitForArm(3);
             GotoPose(0, -100, 0, true);
             MoveArm(0, 100, 135, -1, 150);

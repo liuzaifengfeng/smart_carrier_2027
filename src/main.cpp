@@ -111,6 +111,7 @@ enum RobotState {
     STATE_WAIT_START,    // 待机,等一键启动
     STATE_READ_TASK,     // 读取任务码(二维码板 / 机载电脑)
     STATE_SCAN_FAILED,   // 扫码重试耗尽，保持停车，不进入抓取流程
+    STATE_ROUTE_FAILED,  // 路径失败，不进入后续用户代码
     STATE_GRAB_ROUND1,   // 第一批: 转盘抓取 3 个物料
     STATE_PLACE_COARSE1, // 第一批: 放到粗加工区
     STATE_PLACE_TEMP1,   // 第一批: 放到暂存区
@@ -135,9 +136,62 @@ volatile bool taskReceived = false;// 已拿到任务码
 volatile int  roundProgress = 0;   // 当前轮次已抓/放物料数 0-3
 volatile bool enableRun = false;   // 一键启动触发
 
-volatile bool moveNodePathFlag = false;
+// 两个任务通过临界区交接路径，避免串口在执行中覆盖节点数组。
+enum class NodePathState { IDLE, WAITING, RECEIVING, RECEIVED, RUNNING, DONE, FAILED };
+NodePathState nodePathState = NodePathState::IDLE;
+portMUX_TYPE nodePathMux = portMUX_INITIALIZER_UNLOCKED;
 uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH] = {0};
 size_t nodePathLen = 0;
+
+static bool executeNodePathWithStatus(const uint8_t *path, size_t count) {
+    Serial.println("{way:RUNNING}");
+    const bool success = MoveNodePath(path, count);
+    // DONE 表示指令和预计等待已结束，不是电机/视觉实测到位。
+    Serial.println(success ? "{way:DONE,ESTIMATED}" : "{way:ERR,EXECUTION}");
+    return success;
+}
+
+/**
+ * @brief 请求路径，等待接收并同步执行，成功后才返回 true。
+ * 1. 等待时只阻塞主状态机，串口任务仍能接收命令。
+ * 2. 收到后检查首尾节点，再执行全部路段。
+ * 3. 调用者必须检查返回值，失败时不能继续用户代码。
+ * 等待仍受现有总任务超时保护，不再固定等待 10 秒。
+ */
+static bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode) {
+    portENTER_CRITICAL(&nodePathMux);
+    nodePathState = NodePathState::WAITING;
+    nodePathLen = 0;
+    portEXIT_CRITICAL(&nodePathMux);
+    Serial.println("{way:WAITING}");
+    Serial.printf("{way:%u-%u?}\n", startNode, endNode);
+
+    uint8_t path[MAX_NODE_PATH_LENGTH];
+    size_t count = 0;
+    for (;;) {
+        portENTER_CRITICAL(&nodePathMux);
+        const bool received = nodePathState == NodePathState::RECEIVED;
+        if (received) {
+            count = nodePathLen;
+            memcpy(path, nodePathBuffer, count * sizeof(path[0]));
+            nodePathState = NodePathState::RUNNING;
+        }
+        portEXIT_CRITICAL(&nodePathMux);
+        if (received) break;
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
+    bool success = false;
+    if (path[0] != startNode || path[count - 1] != endNode) {
+        Serial.println("{way:ERR,ENDPOINT}");
+    } else {
+        success = executeNodePathWithStatus(path, count);
+    }
+    portENTER_CRITICAL(&nodePathMux);
+    nodePathState = success ? NodePathState::DONE : NodePathState::FAILED;
+    portEXIT_CRITICAL(&nodePathMux);
+    return success;
+}
 
 /**
  * @brief 解析节点路径帧，例如 "{way:0-1-8}"。
@@ -443,6 +497,10 @@ void updateDisplay(const char* text) {
 void vHomeTimerCallback(TimerHandle_t xTimer) {
     if (currentState != STATE_DONE) {
         Serial.println("[TIMER] Timeout! Abort round, return home");
+        portENTER_CRITICAL(&nodePathMux);
+        nodePathState = NodePathState::FAILED;
+        portEXIT_CRITICAL(&nodePathMux);
+        Serial.println("{way:ERR,TIMEOUT}");
         if (xTask_MainStateMachine_Handle != NULL)
             vTaskSuspend(xTask_MainStateMachine_Handle);
         // [TODO] 收缩机械臂到安全姿态 + 回启停区
@@ -467,11 +525,14 @@ static bool waitScannerCode(char *out, uint32_t len, uint32_t timeoutMs) {
 // ================= 主状态机 =================
 void Task_MainStateMachine(void *pvParameters) {
     vTaskDelay(1000 / portTICK_PERIOD_MS);
+    bool routeCompleted = false; // 每次创建主任务时，第一轮路径重新等待执行。
 
     while (1) {
         switch (currentState) {
 
-        case STATE_WAIT_START:
+        Serial.println("TASK start");
+
+        case STATE_WAIT_START: // 等待开始区域
             InitArm();// 初始化机械臂
             updateDisplay("WAIT start_zone");
             while (currentStartZone == START_ZONE_UNKNOWN) vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -479,11 +540,13 @@ void Task_MainStateMachine(void *pvParameters) {
             {
             case START_ZONE_1:
                 updateDisplay("start_zone: 1");
-                currentPose = {2250, 150, 270};
+                // 右侧启停区车头朝左，即世界坐标 -X 方向。
+                currentPose = {2250, 150, 180};
                 break;
             case START_ZONE_2:
                 updateDisplay("start_zone: 2");
-                currentPose = {150, 150, 270};
+                // 左侧启停区车头朝右，即世界坐标 +X 方向。
+                currentPose = {150, 150, 0};
                 break;
 
             default:
@@ -500,10 +563,11 @@ void Task_MainStateMachine(void *pvParameters) {
             currentState = STATE_READ_TASK;
             break;
 
-        case STATE_READ_TASK: {
+        case STATE_READ_TASK: { // 读取任务码
             updateDisplay("READ TASK");
-            // 1. 每段最多估算 1000 mm；首次尝试 + 最多 3 次反向重试，共 4 段。
-            constexpr float SCAN_MAX_DISTANCE_MM = 1000.0f;
+            InitArm();
+            // 1. 每段最多估算 1300 mm；首次尝试 + 最多 3 次反向重试，共 4 段。
+            constexpr float SCAN_MAX_DISTANCE_MM = 1300.0f;
             constexpr float SCAN_SPEED_RPM = 30.0f;
             constexpr uint8_t SCAN_MAX_RETRIES = 3;
             // 与 chassis.cpp 的 16 细分配置一致：3200 脉冲/圈。
@@ -568,12 +632,14 @@ void Task_MainStateMachine(void *pvParameters) {
             break;
         }
 
-        case STATE_SCAN_FAILED:
+        case STATE_SCAN_FAILED: // 扫码失败
+        case STATE_ROUTE_FAILED: // 路径失败，同样保持故障状态
             // 保持故障状态，避免下一轮状态机再次启动扫码或执行残留路径。
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
 
-        case STATE_GRAB_ROUND1:
+        case STATE_GRAB_ROUND1: { // 抓取第一轮物料
+            // 此状态会轮询抓取进度，路径成功后只执行一次，避免重复行驶。
             // 原料区为旋转电动转盘(6-10s/圈, 转向随机, 物料120°分布)
             // 机载电脑识别目标颜色物料 -> 发 "color:N" 引导抓取
             // [TODO] 转盘同步/跟随, 逐次抓取, 每次抓完放上载物台
@@ -581,14 +647,25 @@ void Task_MainStateMachine(void *pvParameters) {
             //       不允许手爪夹持运送
             updateDisplay("GRAB R1");// 第一批
             //调取接口获取路径, 并移动到目标位置
-            Serial.println("{way:2-6?}");
-            // 到达圆盘并完成视觉对准后调用：
-            // LoadRoundFromDisc(currentTask.round1_colors);
+            if (!routeCompleted) {
+                if (!requestAndMoveNodePath(2, 14)) {
+                    updateDisplay("ROUTE ERR");
+                    if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);// 路径失败后, 停止定时器
+                    currentState = STATE_ROUTE_FAILED;
+                    break; // 失败时跳过下面的用户代码
+                }
+                routeCompleted = true;
 
-            vTaskDelay(10000 / portTICK_PERIOD_MS);//暂时阻塞10s
+                // ===== 在这里填写路径执行完毕后只运行一次的用户代码 =====
+                // 到达圆盘并完成视觉对齐后，才可调用抓取接口：
+                // LoadRoundFromDisc(currentTask.round1_colors);
+            }
+            // 走到这里时路径已执行成功，可继续轮询后续任务进度。
+            //视觉对齐圆盘
 
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_PLACE_COARSE1; }//抓取3个物料后, 放置到粗加工区对应圆环
             break;
+        }
 
         case STATE_PLACE_COARSE1:
             // 按 round1_pos 顺序放置到粗加工区对应圆环
@@ -646,13 +723,30 @@ void Task_MainStateMachine(void *pvParameters) {
             break;
         }
 
-        if (moveNodePathFlag && currentState != STATE_SCAN_FAILED) {
-            moveNodePathFlag = false;
-            MoveNodePath(nodePathBuffer, nodePathLen);
-        }
-
         vTaskDelay(50 / portTICK_PERIOD_MS);
     }
+}
+
+// 底盘、升降和伸缩回读理想值；两个舵机通过总线现场读取，不触发运动。
+// Debug 和 Release 共用此接口；单位顺序为 mm/mm/度/mm/mm/度/度。
+static bool handlePoseQueryFrame(const char *frame) {
+    if (strcmp(frame, "{POSE:GET}") != 0) return false;
+    const RobotPose robot = currentPose;
+    ArmPose arm = currentArm;
+    // 与 MoveArm 一致：2 号是舵盘，1 号是夹爪。保留原始实测角度（含负值）。
+    // 读取失败不以命令目标/上次角度冒充实测值，也不改写运动目标 currentArm。
+    if (!Servo_QueryAngle(2, arm.turret_angle) || !isfinite(arm.turret_angle)) {
+        Serial.println("{POSE:ERR,SERVO_READ,2}");
+        return true;
+    }
+    if (!Servo_QueryAngle(1, arm.pawl_angle) || !isfinite(arm.pawl_angle)) {
+        Serial.println("{POSE:ERR,SERVO_READ,1}");
+        return true;
+    }
+    Serial.printf("{POSE:OK,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f}\n",
+                  robot.x, robot.y, robot.theta, arm.high, arm.length,
+                  arm.turret_angle, arm.pawl_angle);
+    return true;
 }
 
 // ================= 机载电脑串口指令任务 =================
@@ -666,7 +760,10 @@ void Task_Serial_CMD(void *pvParameters) {
             if (c == '\n' || c == '\r') {
                 rxBuffer[rxIdx] = '\0';
                 if (rxIdx > 0) {
-                    if (handleParameterFrame(rxBuffer, false)) {
+                    if (handlePoseQueryFrame(rxBuffer)) {
+                        // 返回底盘和机械臂的理想位姿。
+                    }
+                    else if (handleParameterFrame(rxBuffer, false)) {
                         // 正式运行模式只允许读取参数。
                     }
                     else if (handleAlignmentControlFrame(rxBuffer)) {
@@ -715,13 +812,29 @@ void Task_Serial_CMD(void *pvParameters) {
                             Serial.println("{ok:ACK}");
                         }
                         else if (strncmp(rxBuffer, "{way:", 5) == 0) {
+                            uint8_t receivedPath[MAX_NODE_PATH_LENGTH];
                             size_t count = 0;
                             if (parseNodePathCommand(
-                                    rxBuffer, nodePathBuffer,
-                                    sizeof(nodePathBuffer) / sizeof(nodePathBuffer[0]), count)) {
-                                nodePathLen = count;
-                                moveNodePathFlag = true;
-                                Serial.printf("{way:OK,%u}\n", (unsigned)count);
+                                    rxBuffer, receivedPath, MAX_NODE_PATH_LENGTH, count)) {
+                                portENTER_CRITICAL(&nodePathMux);
+                                const bool accepting = nodePathState == NodePathState::WAITING;
+                                if (accepting) {
+                                    memcpy(nodePathBuffer, receivedPath, count * sizeof(receivedPath[0]));
+                                    nodePathLen = count;
+                                    nodePathState = NodePathState::RECEIVING;
+                                }
+                                portEXIT_CRITICAL(&nodePathMux);
+                                if (accepting) {
+                                    Serial.printf("{way:OK,%u}\n", (unsigned)count);
+                                    // 先确认接收，再允许主任务执行，保证消息顺序。
+                                    portENTER_CRITICAL(&nodePathMux);
+                                    if (nodePathState == NodePathState::RECEIVING) {
+                                        nodePathState = NodePathState::RECEIVED;
+                                    }
+                                    portEXIT_CRITICAL(&nodePathMux);
+                                } else {
+                                    Serial.println("{way:ERR,NOT_WAITING}");
+                                }
                             } else {
                                 Serial.println("{way:ERR}");
                             }
@@ -779,6 +892,10 @@ void Task_Debug_CMD(void *pvParameters) {
                         vTaskDelete(NULL);
                         return;
                     }
+                    if (handlePoseQueryFrame(buffer)) {
+                        bufferIndex = 0;
+                        continue;
+                    }
                     if (handleParameterFrame(buffer, true)) {
                         bufferIndex = 0;
                         continue;
@@ -818,7 +935,7 @@ void Task_Debug_CMD(void *pvParameters) {
                                 buffer, debugPath,
                                 sizeof(debugPath) / sizeof(debugPath[0]), debugPathLength)) {
                             Serial.printf("{way:OK,%u}\n", (unsigned)debugPathLength);
-                            MoveNodePath(debugPath, debugPathLength);
+                            executeNodePathWithStatus(debugPath, debugPathLength);
                         } else {
                             Serial.println("{way:ERR}");
                         }
@@ -895,6 +1012,34 @@ void Task_Debug_CMD(void *pvParameters) {
     }
 }
 
+// 开机读取一个舵机的角度，并同步到主控维护的机械臂位姿。
+static void readStartupServoAngle(uint8_t servoId, float &storedAngle) {
+    Serial.printf("[Servo] 开机角度读取开始: ID=%u\n",
+                  static_cast<unsigned>(servoId));
+    float measuredAngle = 0.0f;
+    if (!Servo_QueryAngle(servoId, measuredAngle) || !isfinite(measuredAngle)) {
+        Serial.printf("[Servo] 开机角度读取失败: ID=%u, 保留原值=%.1f度, 未进行归一化\n",
+                      static_cast<unsigned>(servoId), storedAngle);
+        return; // 读取失败时保留原值，不把失败当作测得 0 度。
+    }
+
+    float normalizedAngle = measuredAngle;
+    // 1. 0~360 度（含端点）保持不变。
+    // 2. 超出范围时映射到 [0, 360)，例如 -55 -> 305、725 -> 5。
+    // 3. 只归一化主控中的角度数值，不命令舵机旋转或修改舵机零点。
+    const bool needsNormalization = normalizedAngle < 0.0f || normalizedAngle > 360.0f;
+    if (needsNormalization) {
+        normalizedAngle = fmodf(normalizedAngle, 360.0f);
+        if (normalizedAngle < 0.0f) normalizedAngle += 360.0f;
+        if (normalizedAngle == 0.0f) normalizedAngle = 0.0f; // 消除负零。
+    }
+    storedAngle = normalizedAngle;
+    Serial.printf("[Servo] 开机角度读取成功: ID=%u, 原始角度=%.1f度, %s, 保存角度=%.1f度（仅更新数值）\n",
+                  static_cast<unsigned>(servoId), measuredAngle,
+                  needsNormalization ? "超出0~360度，已归一化" : "在0~360度内，无需归一化",
+                  storedAngle);
+}
+
 // ================= setup  =================
 void setup() {
     Serial.begin(115200);
@@ -907,7 +1052,11 @@ void setup() {
     FastLED.setBrightness(10);
 
     currentPose = {0, 0, 0};   // [TODO] 初始位姿按实际
-    currentArm = {0, 0};        // [TODO] 初始臂位姿按实际
+    currentArm = {0, 0, 0, 0}; // 升降/伸缩位置仍待标定，舵机角度由下方实读更新。
+    // 与 MoveArm 的实际 ID 对应：2 号=转台，1 号=夹爪。
+    // 在串口任务启动前读取，避免多个任务同时访问舵机总线。
+    readStartupServoAngle(2, currentArm.turret_angle);
+    readStartupServoAngle(1, currentArm.pawl_angle);
 
     // 注意: 原 initLidar() 已移除, 雷达/定位方案待定
      init_ota_service("null", "1234567899", OTA_HOSTNAME);//调试使用，正式比赛时注释掉

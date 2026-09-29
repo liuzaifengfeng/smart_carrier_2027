@@ -1,4 +1,17 @@
 #include "servo.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
+// 查询期间保护“发送请求 + 接收回复”，防止其他任务的控制指令清空回复。
+// sendPacket 也取同一个递归锁，因此查询内部再次调用发送函数不会死锁。
+static SemaphoreHandle_t s_servoMutex = nullptr;
+class ServoBusGuard {
+public:
+    ServoBusGuard() : locked(s_servoMutex != nullptr
+        && xSemaphoreTakeRecursive(s_servoMutex, portMAX_DELAY) == pdTRUE) {}
+    ~ServoBusGuard() { if (locked) xSemaphoreGiveRecursive(s_servoMutex); }
+    bool locked;
+};
 
 // 内部串口指针，默认指向 Serial2
 static HardwareSerial *s_servoSerial = &Serial2;
@@ -14,6 +27,8 @@ static HardwareSerial *s_servoSerial = &Serial2;
  * Byte Last: Checksum = (0x12 + 0x4C + CmdId + ContentSize + Sum(Content)) % 256
  */
 static void sendPacket(uint8_t cmdId, const uint8_t *content, uint8_t contentSize) {
+    ServoBusGuard guard;
+    if (!guard.locked) return;
     if (!s_servoSerial) return;
 
     uint8_t headerLow = FSUS_PACK_REQ_HEADER & 0xFF;         // 0x12
@@ -124,6 +139,11 @@ static uint8_t receivePacket(uint8_t expectedCmdId, uint8_t *contentBuf, uint8_t
 
 // 初始化总线串口配置
 void Servo_Init(HardwareSerial *serialPort, uint32_t baudrate, int rxPin, int txPin) {
+    if (s_servoMutex == nullptr) s_servoMutex = xSemaphoreCreateRecursiveMutex();
+    if (s_servoMutex == nullptr) {
+        Serial.println("[Servo] ERR: bus mutex allocation failed");
+        return;
+    }
     if (serialPort != nullptr) {
         s_servoSerial = serialPort;
     }
@@ -197,13 +217,15 @@ void Servo_SetAngleByInterval(uint8_t servoId, float angle, uint16_t interval, u
 
 // 查询舵机当前角度
 bool Servo_QueryAngle(uint8_t servoId, float &currentAngle, uint32_t timeoutMs) {
+    ServoBusGuard guard;
+    if (!guard.locked) return false;
     uint8_t content[1] = { servoId };
     sendPacket(FSUS_CMD_QUERY_ANGLE, content, 1);
 
-    uint8_t rxBuf[8];
+    uint8_t rxBuf[32]; // receivePacket 最多写入 32 字节。
     uint8_t rxLen = 0;
     uint8_t res = receivePacket(FSUS_CMD_QUERY_ANGLE, rxBuf, &rxLen, timeoutMs);
-    if (res == FSUS_STATUS_SUCCESS && rxLen >= 3) {
+    if (res == FSUS_STATUS_SUCCESS && rxLen == 3 && rxBuf[0] == servoId) {
         int16_t angleRaw = (int16_t)(rxBuf[1] | (rxBuf[2] << 8));
         currentAngle = (float)angleRaw / 10.0f;
         return true;
@@ -213,6 +235,8 @@ bool Servo_QueryAngle(uint8_t servoId, float &currentAngle, uint32_t timeoutMs) 
 
 // 检测舵机通讯状态 (Ping)
 bool Servo_Ping(uint8_t servoId, uint32_t timeoutMs) {
+    ServoBusGuard guard;
+    if (!guard.locked) return false;
     uint8_t content[1] = { servoId };
     sendPacket(FSUS_CMD_PING, content, 1);
 

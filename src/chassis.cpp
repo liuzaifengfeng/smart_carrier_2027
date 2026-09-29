@@ -273,6 +273,8 @@ bool executeNodeSegment(uint8_t startNode, uint8_t endNode,
         "[Route] Node %u -> %u, distance %.0f mm, target heading %.0f deg\n",
         startNode, endNode, distance, targetHeading
     );
+    Serial.printf("[Route] Current heading %.0f deg, commanded turn %.1f deg\n",
+                  currentPose.theta, turn);
 
     // 第一步：车辆原地转到目标方向，并等待转向完全结束。
     if (fabsf(turn) > ROUTE_ANGLE_EPSILON_DEG) {
@@ -515,6 +517,12 @@ void GotoPose(float x, float y, float theta, bool isRelative) {
             Emm_V5_Pos_Control(4, dir, speed, 50, pulses, 0, 0);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
+        // 命令下发完成后更新开环目标估计；不代表电机已到位。
+        // 相对 X/Y 属于车体坐标，先按移动前航向转换到世界坐标。
+        const float heading = currentPose.theta * PI / 180.0f;
+        currentPose.x += x * cosf(heading) - y * sinf(heading);
+        currentPose.y += x * sinf(heading) + y * cosf(heading);
+        currentPose.theta = normalizeHeading(currentPose.theta + theta);
     } else {
         // 绝对坐标: 需先获取当前位姿, 算出位移增量再调用相对移动.
         // [TODO] 依赖新定位方案, 由负责定位的成员实现
@@ -702,8 +710,11 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
 
     // 第 3 步：把路径首项当作车辆当前节点。
     // 这里只设置理想 X/Y 坐标，不会让车辆从当前位置移动到首节点。
+    // 航向也只是开环估计；执行前必须确认车身实际朝向与记录一致。
     NodePosition firstPosition;
     getNodePosition(path[0], firstPosition);
+    Serial.printf("[Route] Assuming car is at node %u, initial heading %.0f deg (open-loop)\n",
+                  path[0], normalizeHeading(currentPose.theta));
     currentPose.x = firstPosition.x;
     currentPose.y = firstPosition.y;
     currentPose.theta = normalizeHeading(currentPose.theta);
@@ -745,7 +756,7 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
         return false;
     }
 
-    Serial.println("[Route] All moves completed");
+    Serial.println("[Route] All commands sent and estimated waits elapsed; position not verified");
     return true;
 }
 

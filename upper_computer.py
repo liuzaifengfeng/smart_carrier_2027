@@ -2,7 +2,7 @@
 
 坐标系采用比赛场地图示，并在界面中顺时针旋转 90 度显示：
 左下角为原点，X 轴向右，Y 轴向上，单位 mm。
-角度暂定为 0 度朝 X 正方向，正角由 X 正方向转向 Y 正方向。
+底盘航向采用场地坐标：0 度朝右、90 度朝上、180 度朝左、270 度朝下。
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ ARM_SLIDER_BASE_HOME_OFFSET_MM = 35.0
 # 增加的一个夹爪圆环直径全部放在舵盘圆心的后侧，前端位置保持不变。
 ARM_SLIDER_HOME_OFFSET_MM = ARM_SLIDER_BASE_HOME_OFFSET_MM - ARM_JAW_RADIUS_MM
 ARM_SLIDER_CENTER_TRAVEL_MM = 65.0
-ROBOT_DISPLAY_ZERO_OFFSET_DEG = 90.0
+ROBOT_DISPLAY_ZERO_OFFSET_DEG = 0.0
 WHEEL_LENGTH_MM = 76.0
 WHEEL_WIDTH_MM = 26.0
 
@@ -92,8 +92,8 @@ class ArmPose:
 
 
 START_POSES = {
-    "启停区1": Pose(2250.0, 150.0, 270.0),
-    "启停区2": Pose(150.0, 150.0, 90.0),
+    "启停区1": Pose(2250.0, 150.0, 180.0),
+    "启停区2": Pose(150.0, 150.0, 0.0),
 }
 
 
@@ -214,6 +214,23 @@ def parse_gotopose_echo(text: str) -> Pose | None:
     if not all(math.isfinite(value) for value in values):
         return None
     return Pose(*values)
+
+
+def parse_pose_response(text: str) -> tuple[Pose, ArmPose] | None:
+    """解析七轴回读，最后两轴为舵机实测角度；拒绝无效值。"""
+    prefix = "{POSE:OK,"
+    if not text.startswith(prefix) or not text.endswith("}"):
+        return None
+    parts = text[len(prefix):-1].split(",")
+    if len(parts) != 7:
+        return None
+    try:
+        values = [float(part) for part in parts]
+    except ValueError:
+        return None
+    if not all(math.isfinite(value) for value in values):
+        return None
+    return Pose(*values[:3]), ArmPose(*values[3:])
 
 
 def gotopose_echo_matches(text: str, expected: Pose) -> bool:
@@ -599,7 +616,7 @@ class FieldCanvas(tk.Canvas):
     def _robot_local_to_canvas(
         self, pose: Pose, forward: float, lateral: float
     ) -> tuple[float, float]:
-        """把车体局部坐标转换到画布；0 度车头朝上。"""
+        """把车体局部坐标转换到画布；0 度车头朝右，90 度朝上。"""
         angle = math.radians(pose.theta + ROBOT_DISPLAY_ZERO_OFFSET_DEG)
         world_x = pose.x + forward * math.cos(angle) - lateral * math.sin(angle)
         world_y = pose.y + forward * math.sin(angle) + lateral * math.cos(angle)
@@ -1246,6 +1263,7 @@ class UpperComputerApp:
         self.arm_vars: dict[str, tk.StringVar] = {}
         self.pending_target: Pose | None = None
         self.pending_relative_move: Pose | None = None
+        self.pose_query_timer: str | None = None
         self.pressed_drive_keys: list[str] = []
         self.active_drive_key: str | None = None
         self.pressed_rotation_keys: set[str] = set()
@@ -1276,6 +1294,13 @@ class UpperComputerApp:
         self.connection_var = tk.StringVar(value="未连接 · 115200 8N1")
         ttk.Label(connection, textvariable=self.connection_var).grid(
             row=0, column=4, padx=(12, 0), sticky="e"
+        )
+        ttk.Button(connection, text="查询小车 / 机械臂位姿", command=self.query_poses).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(6, 0)
+        )
+        self.pose_query_status = tk.StringVar(value="尚未回读：舵机实测，其余轴为理想值")
+        ttk.Label(connection, textvariable=self.pose_query_status).grid(
+            row=1, column=2, columnspan=4, sticky="w", pady=(6, 0)
         )
 
         self.field = FieldCanvas(container)
@@ -1311,12 +1336,14 @@ class UpperComputerApp:
         self.start_zone_name = "启停区2"
         self.start_zone_var = tk.StringVar(value="当前选择：启停区2")
         ttk.Label(start_group, textvariable=self.start_zone_var).pack(anchor="w")
-        self.start_zone_button = ttk.Button(
-            start_group,
-            text="切换到启停区1",
-            command=self.switch_start_zone,
-        )
-        self.start_zone_button.pack(fill=tk.X, pady=(6, 0))
+        start_buttons = ttk.Frame(start_group)
+        start_buttons.pack(fill=tk.X, pady=(6, 0))
+        for zone_name in ("启停区1", "启停区2"):
+            ttk.Button(
+                start_buttons,
+                text=zone_name,
+                command=lambda zone=zone_name: self.select_start_zone(zone),
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=3)
         ttk.Button(
             start_group,
             text="调整到雷达扫描位姿",
@@ -1629,8 +1656,8 @@ class UpperComputerApp:
             raise ValueError("该姿态会使 300×300 mm 车体超出场地边界")
         return pose
 
-    def switch_start_zone(self) -> None:
-        zone_name = next_start_zone(self.start_zone_name)
+    def select_start_zone(self, zone_name: str) -> None:
+        """独立按钮直接选择指定启停区，并同步固件和地图。"""
         pose = START_POSES[zone_name]
         try:
             line = build_start_zone_command(zone_name)
@@ -1643,7 +1670,6 @@ class UpperComputerApp:
             self._clear_pending_target()
         self.start_zone_name = zone_name
         self.start_zone_var.set(f"当前选择：{zone_name}")
-        self.start_zone_button.configure(text=f"切换到{next_start_zone(zone_name)}")
         for variable, value in zip(self.current_vars, (pose.x, pose.y, pose.theta)):
             variable.set(f"{value:g}")
         self.field.set_start_pose(pose)
@@ -1743,6 +1769,8 @@ class UpperComputerApp:
 
     def toggle_connection(self) -> None:
         self.parameter_panel.disconnected()
+        self._cancel_pose_query_timeout()
+        self.pose_query_status.set("连接已变更，请重新查询位姿")
         if self.serial_link.is_open:
             self._stop_keyboard_drive()
             self.pressed_rotation_keys.clear()
@@ -2072,6 +2100,54 @@ class UpperComputerApp:
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
 
+    def query_poses(self) -> None:
+        """串口查询七轴状态，显示仅在收到合法回复后更新。"""
+        try:
+            self.serial_link.send_line("{POSE:GET}")
+        except (RuntimeError, OSError) as exc:
+            self.pose_query_status.set(f"查询未发送：{exc}")
+            return
+        self.append_log("TX", "{POSE:GET}")
+        self.pose_query_status.set("已发送查询，等待位姿回复")
+        self._cancel_pose_query_timeout()
+        self.pose_query_timer = self.root.after(3000, self._pose_query_timeout)
+
+    def _cancel_pose_query_timeout(self) -> None:
+        if self.pose_query_timer is not None:
+            self.root.after_cancel(self.pose_query_timer)
+            self.pose_query_timer = None
+
+    def _pose_query_timeout(self) -> None:
+        self.pose_query_timer = None
+        self.pose_query_status.set("查询超时，保留上次显示；动作结束后可重新查询")
+
+    def _accept_pose_response(self, text: str) -> None:
+        if text in ("{POSE:ERR,SERVO_READ,1}", "{POSE:ERR,SERVO_READ,2}"):
+            self._cancel_pose_query_timeout()
+            axis = "夹爪（1 号）" if text.endswith(",1}") else "舵盘（2 号）"
+            self.pose_query_status.set(f"{axis}舵机读取失败，保留上次显示")
+            self.arm_status_var.set(f"{axis}实测读取失败；当前图不是本次测量值")
+            return
+        result = parse_pose_response(text)
+        if result is None:
+            if text.startswith("{POSE:"):
+                self.pose_query_status.set("位姿回复无效，未更新显示")
+            return
+        robot, arm = result
+        self._cancel_pose_query_timeout()
+        for variable, value in zip(self.current_vars, (robot.x, robot.y, robot.theta)):
+            variable.set(f"{value:g}")
+        self.field.set_current_pose(robot)
+        self.arm_estimate = arm
+        # 保留机械臂命令输入；回读显示独立于尚未发送的输入预览。
+        self.field.set_arm_pose(arm)
+        self.arm_preview.set_pose(arm)
+        self.arm_status_var.set(
+            f"理想值：H={arm.high:g} mm，L={arm.length:g} mm；"
+            f"实测：舵盘={arm.turret_angle:g}°，夹爪={arm.pawl_angle:g}°"
+        )
+        self.pose_query_status.set("已回读：舵盘 / 夹爪为实测，其余轴为理想值")
+
     def poll_serial_events(self) -> None:
         while True:
             try:
@@ -2080,6 +2156,18 @@ class UpperComputerApp:
                 break
             self.append_log(kind, text)
             if kind == "RX":
+                # 路径接收确认与执行完成是两个阶段，不能把 OK 当作到达。
+                route_status = {
+                    "{way:WAITING}": "小车正在等待路径节点命令。",
+                    "{way:RUNNING}": "路径执行中，请等待。",
+                    "{way:DONE,ESTIMATED}": "路径指令及预计等待已完成；尚无实测到位确认。",
+                }
+                if text in route_status:
+                    self.status_var.set(route_status[text])
+                elif text.startswith("{way:OK,"):
+                    self.status_var.set("小车已收到路径，等待执行结果。")
+                elif text.startswith("{way:ERR"):
+                    self.status_var.set(f"路径命令失败或被拒绝：{text}")
                 was_reading = self.parameter_panel.mode == "read"
                 self.parameter_panel.receive(text)
                 if was_reading and self.parameter_panel.ready:
@@ -2092,7 +2180,9 @@ class UpperComputerApp:
                 if text.startswith("version:") or text in ("Debug mode", "Release mode"):
                     self.parameter_panel.disconnected()
                 self._accept_target_echo(text)
+                self._accept_pose_response(text)
             if kind == "ERROR":
+                self._cancel_pose_query_timeout()
                 self.parameter_panel.disconnected()
                 self.serial_link.disconnect()
                 self.active_drive_key = None
@@ -2103,6 +2193,7 @@ class UpperComputerApp:
                     self.status_var.set("串口异常；等待中的目标估计未更新。")
                 self.connect_button.configure(text="连接")
                 self.connection_var.set("串口异常断开")
+                self.pose_query_status.set("串口异常断开，位姿为上次显示值")
         self.root.after(60, self.poll_serial_events)
 
     def on_close(self) -> None:
