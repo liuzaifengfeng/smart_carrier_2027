@@ -37,6 +37,7 @@
 #include "scanner.h"
 #include "material_transfer.h"
 #include "runtime_parameters.h"
+#include "serial_frame.h"
 
 // ================= 基础配置 =================
 #define LED_PIN 48
@@ -104,7 +105,7 @@ TaskCode parseTaskCode(const char* code) {
 }
 
 // ================= 机载电脑通信(串口)协议 =================
-// 所有机器可读帧统一使用 {魔术字:参数}\n，详见 Document/serial_protocol.md。
+// 机器帧使用 {CMD/RSP/EVT,类别,动作,...}\n，详见 Document/serial_protocol.md。
 
 // ================= 业务状态 =================
 enum RobotState {
@@ -144,10 +145,10 @@ uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH] = {0};
 size_t nodePathLen = 0;
 
 static bool executeNodePathWithStatus(const uint8_t *path, size_t count) {
-    Serial.println("{way:RUNNING}");
+    Serial.println("{EVT,NAV,ROUTE_RUNNING}");
     const bool success = MoveNodePath(path, count);
     // DONE 表示指令和预计等待已结束，不是电机/视觉实测到位。
-    Serial.println(success ? "{way:DONE,ESTIMATED}" : "{way:ERR,EXECUTION}");
+    Serial.println(success ? "{EVT,NAV,ROUTE_DONE,ESTIMATED}" : "{EVT,NAV,ROUTE_FAILED,EXECUTION}");
     return success;
 }
 
@@ -163,8 +164,8 @@ static bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode) {
     nodePathState = NodePathState::WAITING;
     nodePathLen = 0;
     portEXIT_CRITICAL(&nodePathMux);
-    Serial.println("{way:WAITING}");
-    Serial.printf("{way:%u-%u?}\n", startNode, endNode);
+    Serial.println("{EVT,NAV,ROUTE_WAITING}");
+    Serial.printf("{EVT,NAV,ROUTE_REQUEST,%u,%u}\n", startNode, endNode);
 
     uint8_t path[MAX_NODE_PATH_LENGTH];
     size_t count = 0;
@@ -183,7 +184,7 @@ static bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode) {
 
     bool success = false;
     if (path[0] != startNode || path[count - 1] != endNode) {
-        Serial.println("{way:ERR,ENDPOINT}");
+        Serial.println("{EVT,NAV,ROUTE_FAILED,ENDPOINT}");
     } else {
         success = executeNodePathWithStatus(path, count);
     }
@@ -191,84 +192,6 @@ static bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode) {
     nodePathState = success ? NodePathState::DONE : NodePathState::FAILED;
     portEXIT_CRITICAL(&nodePathMux);
     return success;
-}
-
-/**
- * @brief 解析节点路径帧，例如 "{way:0-1-8}"。
- *
- * 仅接受 0~24 号节点、短横线分隔和完整花括号，避免 atoi 将非法内容
- * 静默转换成 0。节点是否相邻由 MoveNodePath 在运动前统一检查。
- */
-bool parseNodePathCommand(const char *command, uint8_t *path, size_t capacity, size_t &pathLength) {
-    pathLength = 0;
-    constexpr char WAY_PREFIX[] = "{way:";
-    if (command == nullptr || path == nullptr || capacity < 2
-            || strncmp(command, WAY_PREFIX, sizeof(WAY_PREFIX) - 1) != 0) {
-        return false;
-    }
-
-    const char *cursor = command + sizeof(WAY_PREFIX) - 1;
-    for (;;) {
-        if (*cursor < '0' || *cursor > '9' || pathLength >= capacity) {
-            pathLength = 0;
-            return false;
-        }
-        unsigned int node = 0;
-        do {
-            node = node * 10 + static_cast<unsigned int>(*cursor - '0');
-            if (node >= FIELD_NODE_COUNT) {
-                pathLength = 0;
-                return false;
-            }
-            ++cursor;
-        } while (*cursor >= '0' && *cursor <= '9');
-        path[pathLength++] = static_cast<uint8_t>(node);
-
-        if (*cursor == '}') {
-            if (cursor[1] == '\0' && pathLength >= 2) {
-                return true;
-            }
-            pathLength = 0;
-            return false;
-        }
-        if (*cursor != '-') {
-            pathLength = 0;
-            return false;
-        }
-        ++cursor;
-    }
-}
-
-/**
- * @brief 解析视觉对齐帧："{ALIGN:angle,x,y}"。
- *
- * 三个字段依次为水平校正角（deg）和 2 号圆盘 X/Y 视觉误差。
- * 必须恰好包含三个完整的有限浮点数，不接受缺字段或尾随字符。
- */
-int parseVisualAlignmentFrame(const char *frame, float &angleDeg, float &x, float &y) {
-    if (frame == nullptr) {
-        return 0;
-    }
-
-    constexpr char ALIGN_PREFIX[] = "{ALIGN:";
-    if (strncmp(frame, ALIGN_PREFIX, sizeof(ALIGN_PREFIX) - 1) != 0) {
-        return 0;
-    }
-    const char *cursor = frame + sizeof(ALIGN_PREFIX) - 1;
-
-    char *end = nullptr;
-    angleDeg = strtof(cursor, &end);
-    if (end == cursor || *end != ',') return 0;
-    cursor = end + 1;
-
-    x = strtof(cursor, &end);
-    if (end == cursor || *end != ',') return 0;
-    cursor = end + 1;
-
-    y = strtof(cursor, &end);
-    if (end == cursor || *end != '}' || end[1] != '\0') return 0;
-
-    return isfinite(x) && isfinite(y) && isfinite(angleDeg) ? 1 : 0;
 }
 
 typedef struct {
@@ -282,33 +205,7 @@ SemaphoreHandle_t xAlignmentMotionMutex = NULL;
 volatile bool alignmentEnabled = false;
 
 // 参数提交与 PID 更新共用锁，避免一个控制周期读取到半套参数。
-static bool handleParameterFrame(const char *frame, bool debugMode) {
-    if (strncmp(frame, "{CFG:", 5) != 0) return false;
-    // 完整目录的串口输出耗时较长；对齐期间拒绝读取，避免阻塞视觉反馈接收。
-    if (alignmentEnabled) {
-        const char *comma = strchr(frame, ',');
-        const unsigned long id = comma ? strtoul(comma + 1, nullptr, 10) : 0;
-        Serial.printf("{CFG:ERR,%lu,BUSY_OR_MODE}\n", id);
-        return true;
-    }
-    if (xAlignmentMotionMutex != NULL &&
-            xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
-        HandleRuntimeParameters(frame, debugMode && !alignmentEnabled);
-        xSemaphoreGive(xAlignmentMotionMutex);
-    } else {
-        Serial.println("{CFG:ERR,0,LOCK}");
-    }
-    return true;
-}
-
-static bool handleAlignmentControlFrame(const char *frame) {
-    bool enable = false;
-    if (strcmp(frame, "{ALIGN:START}") == 0) {
-        enable = true;
-    } else if (strcmp(frame, "{ALIGN:STOP}") != 0) {
-        return false;
-    }
-
+static void setAlignmentEnabled(bool enable, bool acknowledge = false) {
     alignmentEnabled = false;
     if (xAlignmentQueue != NULL) {
         xQueueReset(xAlignmentQueue);
@@ -321,48 +218,9 @@ static bool handleAlignmentControlFrame(const char *frame) {
     }
 
     alignmentEnabled = enable;
-    Serial.println(enable ? "{ALIGN:STARTED}" : "{ALIGN:STOPPED}");
-    return true;
-}
-
-static bool handleVisualAlignmentFrame(const char *frame) {// 处理视觉对齐帧
-    float visualX = 0.0f;
-    float visualY = 0.0f;
-    float angleDeg = 0.0f;
-    if (!parseVisualAlignmentFrame(frame, angleDeg, visualX, visualY)) {
-        return false;
+    if (acknowledge) {
+        Serial.println(enable ? "{RSP,VISION,ALIGN_START,OK}" : "{RSP,VISION,ALIGN_STOP,OK}");
     }
-
-    VisualAlignmentFrame_t alignment = {angleDeg, visualX, visualY};
-    if (alignmentEnabled && xAlignmentQueue != NULL) {
-        // 队列长度为 1；视觉以 20 Hz 连续发送时始终只保留最新一帧。
-        xQueueOverwrite(xAlignmentQueue, &alignment);
-    }
-    return true;
-}
-
-/** @brief 严格解析启停区帧 "{StartZone:1}" / "{StartZone:2}"。 */
-static bool parseStartZoneFrame(const char *frame, StartZone &zone) {
-    constexpr char START_ZONE_PREFIX[] = "{StartZone:";
-    if (frame == nullptr
-            || strncmp(frame, START_ZONE_PREFIX,
-                       sizeof(START_ZONE_PREFIX) - 1) != 0) {
-        return false;
-    }
-
-    const char *value = frame + sizeof(START_ZONE_PREFIX) - 1;
-    if (value[1] != '}' || value[2] != '\0') {
-        return false;
-    }
-    if (value[0] == '1') {
-        zone = START_ZONE_1;
-        return true;
-    }
-    if (value[0] == '2') {
-        zone = START_ZONE_2;
-        return true;
-    }
-    return false;
 }
 
 // ================= 任务/队列句柄 =================
@@ -380,21 +238,22 @@ typedef struct {
 // ================= 函数声明 =================
 void Task_MainStateMachine(void *pvParameters);// 主状态机任务
 void Task_Serial_CMD(void *pvParameters);// 串口指令任务
-void Task_Debug_CMD(void *pvParameters);// 调试指令任务
 void Task_VisualAlignment(void *pvParameters);// 视觉对齐任务
 void vHomeTimerCallback(TimerHandle_t xTimer);// 总超时兜底(回启停区)
 
 // 执行雷达扫描位姿并统一发送串口应答。
 // ACK 表示命令已开始处理；OK 只会在全部动作执行完成后发送。
-static bool runLidarPoseAction() {
+static bool runLidarPoseAction(bool fromCommand = false) {
     if (xLidarPoseMutex == NULL
             || xSemaphoreTake(xLidarPoseMutex, 0) != pdTRUE) {
-        Serial.println("{LidarPose:ERR,BUSY}");
+        Serial.println(fromCommand ? "{RSP,VISION,LIDAR_POSE,ERR,BUSY}"
+                                   : "{EVT,VISION,LIDAR_POSE_FAILED,BUSY}");
         return false;
     }
-    Serial.println("{LidarPose:ACK}");
+    Serial.println(fromCommand ? "{RSP,VISION,LIDAR_POSE,ACK}"
+                               : "{EVT,VISION,LIDAR_POSE_RUNNING}");
     const bool ok = PrepareLidarScanPose(static_cast<uint8_t>(currentStartZone));
-    Serial.println(ok ? "{LidarPose:OK}" : "{LidarPose:ERR}");
+    Serial.println(ok ? "{EVT,VISION,LIDAR_POSE_DONE}" : "{EVT,VISION,LIDAR_POSE_FAILED}");
     xSemaphoreGive(xLidarPoseMutex);
     return ok;
 }
@@ -431,7 +290,7 @@ void Task_VisualAlignment(void *pvParameters) {
                     ResetDiscAlignmentPid();
                     xSemaphoreGive(xAlignmentMotionMutex);
                 }
-                Serial.println("{ALIGN:ERR,TIMEOUT}");
+                Serial.println("{EVT,VISION,ALIGN_FAILED,TIMEOUT}");
                 feedbackActive = false;
                 alignedReported = false;
                 lastFeedbackMs = 0;
@@ -466,7 +325,7 @@ void Task_VisualAlignment(void *pvParameters) {
                     "[Align] OK: angle=%.2f deg, x=%.1f, y=%.1f\n",
                     alignment.angleDeg, alignment.visualX, alignment.visualY
                 );
-                Serial.println("{ALIGN:OK}");
+                Serial.println("{EVT,VISION,ALIGN_DONE}");
                 alignedReported = true;
             }
             continue;
@@ -484,13 +343,31 @@ void Task_VisualAlignment(void *pvParameters) {
     }
 }
 
-// 任务码显示装置 [TODO: 按硬件接入]
-void updateDisplay(const char* text) {
-    // 例: 驱动 LED点阵 / OLED / TFT 显示任务码与完成统计
-    // 硬性要求: 字高>=12mm, 醒目位置, 亮光显示, 不被遮挡
-    // 本函数目前仅串口打印, 待接真实显示硬件
-    Serial.print("[DISPLAY] ");
-    Serial.println(text);
+// 通过 Serial0 通知机载电脑显示。实体显示屏尚未接入，不能把串口显示当作赛场显示硬件。
+// 参数顺序：1. 命令类型 DISPLAY；2. 显示类型 TASK_CODE/DEBUG；3. 正文。
+bool updateDisplay(const char *commandType, const char *displayType, const char *content) {
+    if (commandType == nullptr || strcmp(commandType, "DISPLAY") != 0
+            || displayType == nullptr
+            || (strcmp(displayType, "TASK_CODE") != 0 && strcmp(displayType, "DEBUG") != 0)
+            || content == nullptr || *content == '\0') return false;
+
+    // 正文是一个字段：拒绝分隔符和控制字符，避免正文伪造第二条串口指令。
+    for (const unsigned char *cursor = reinterpret_cast<const unsigned char *>(content);
+            *cursor != '\0'; ++cursor) {
+        if (*cursor == ',' || *cursor == '{' || *cursor == '}'
+                || *cursor < 0x20 || *cursor == 0x7f) return false;
+    }
+    char frame[SERIAL_FRAME_BYTES];
+    const int length = snprintf(frame, sizeof(frame), "{EVT,%s,%s,%s}",
+                                commandType, displayType, content);
+    if (length < 0 || static_cast<size_t>(length) >= sizeof(frame)) return false;
+
+    // 状态机有 50 ms 轮询，重复正文只发一次，避免日志和上位机被刷屏。
+    static char previousFrame[SERIAL_FRAME_BYTES] = {0};
+    if (strcmp(previousFrame, frame) == 0) return true;
+    Serial.println(frame);
+    memcpy(previousFrame, frame, static_cast<size_t>(length) + 1);
+    return true;
 }
 
 // 超时兜底: 任一环节卡死则放弃本轮, 回启停区
@@ -500,7 +377,7 @@ void vHomeTimerCallback(TimerHandle_t xTimer) {
         portENTER_CRITICAL(&nodePathMux);
         nodePathState = NodePathState::FAILED;
         portEXIT_CRITICAL(&nodePathMux);
-        Serial.println("{way:ERR,TIMEOUT}");
+        Serial.println("{EVT,NAV,ROUTE_FAILED,TIMEOUT}");
         if (xTask_MainStateMachine_Handle != NULL)
             vTaskSuspend(xTask_MainStateMachine_Handle);
         // [TODO] 收缩机械臂到安全姿态 + 回启停区
@@ -534,29 +411,29 @@ void Task_MainStateMachine(void *pvParameters) {
 
         case STATE_WAIT_START: // 等待开始区域
             InitArm();// 初始化机械臂
-            updateDisplay("WAIT start_zone");
+            updateDisplay("DISPLAY", "DEBUG", "WAIT start_zone");
             while (currentStartZone == START_ZONE_UNKNOWN) vTaskDelay(100 / portTICK_PERIOD_MS);
             switch (currentStartZone)
             {
             case START_ZONE_1:
-                updateDisplay("start_zone: 1");
+                updateDisplay("DISPLAY", "DEBUG", "start_zone: 1");
                 // 右侧启停区车头朝左，即世界坐标 -X 方向。
                 currentPose = {2250, 150, 180};
                 break;
             case START_ZONE_2:
-                updateDisplay("start_zone: 2");
+                updateDisplay("DISPLAY", "DEBUG", "start_zone: 2");
                 // 左侧启停区车头朝右，即世界坐标 +X 方向。
                 currentPose = {150, 150, 0};
                 break;
 
             default:
-                updateDisplay("ERR:start_zone: unknown");
+                updateDisplay("DISPLAY", "DEBUG", "ERR:start_zone: unknown");
                 break;
             }
             // Release 开局自动执行一次。动作未标定或执行失败时返回 ERR，
             // 仍停留在开局等待阶段，便于通过串口修正后再次手动调用。
             runLidarPoseAction();
-            updateDisplay("WAIT START");
+            updateDisplay("DISPLAY", "DEBUG", "WAIT START");
             while (!enableRun) vTaskDelay(100 / portTICK_PERIOD_MS);
             // 启动总超时兜底(如 300s 内未回启停区)
             if (xHomeTimer != NULL) xTimerStart(xHomeTimer, 0);
@@ -564,7 +441,7 @@ void Task_MainStateMachine(void *pvParameters) {
             break;
 
         case STATE_READ_TASK: { // 读取任务码
-            updateDisplay("READ TASK");
+            updateDisplay("DISPLAY", "DEBUG", "READ TASK");
             InitArm();
             // 1. 每段最多估算 1300 mm；首次尝试 + 最多 3 次反向重试，共 4 段。
             constexpr float SCAN_MAX_DISTANCE_MM = 1300.0f;
@@ -577,7 +454,7 @@ void Task_MainStateMachine(void *pvParameters) {
                     || !isfinite(scanSpeedMmPerSecond) || scanSpeedMmPerSecond <= 0.0f) {
                 MovePose(0, 0, true);
                 Serial.println("[SCANNER] ERR: invalid start zone or pulse calibration");
-                updateDisplay("TASK ERR");
+                updateDisplay("DISPLAY", "DEBUG", "TASK ERR");
                 if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
                 currentState = STATE_SCAN_FAILED;
                 break;
@@ -621,12 +498,20 @@ void Task_MainStateMachine(void *pvParameters) {
             }
             MovePose(scanDirection, 0, true); // 成功或重试耗尽都停车。
             if (!taskReceived) {
-                updateDisplay("TASK ERR");
+                updateDisplay("DISPLAY", "DEBUG", "TASK ERR");
                 if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
                 currentState = STATE_SCAN_FAILED;
                 break;
             }
-            updateDisplay(currentTask.valid ? "TASK OK" : "TASK ERR");
+            // 按已解析的 4 组三位数重新组装，避免二维码尾部杂字符进入显示帧。
+            char taskCodeText[16];
+            snprintf(taskCodeText, sizeof(taskCodeText), "%d%d%d+%d%d%d+%d%d%d+%d%d%d",
+                     currentTask.round1_colors[0], currentTask.round1_colors[1], currentTask.round1_colors[2],
+                     currentTask.round1_pos[0], currentTask.round1_pos[1], currentTask.round1_pos[2],
+                     currentTask.round2_colors[0], currentTask.round2_colors[1], currentTask.round2_colors[2],
+                     currentTask.round2_pos[0], currentTask.round2_pos[1], currentTask.round2_pos[2]);
+            updateDisplay("DISPLAY", "TASK_CODE", taskCodeText);
+            updateDisplay("DISPLAY", "DEBUG", "TASK OK");
             xQueueReset(xVisualTaskQueue); // 清残留信号
             currentState = STATE_GRAB_ROUND1;
             break;
@@ -645,11 +530,11 @@ void Task_MainStateMachine(void *pvParameters) {
             // [TODO] 转盘同步/跟随, 逐次抓取, 每次抓完放上载物台
             // 规则: 每次抓1个; 物料必须放到机器人上才能抓下一个
             //       不允许手爪夹持运送
-            updateDisplay("GRAB R1");// 第一批
+            updateDisplay("DISPLAY", "DEBUG", "GRAB R1");// 第一批
             //调取接口获取路径, 并移动到目标位置
             if (!routeCompleted) {
                 if (!requestAndMoveNodePath(2, 14)) {
-                    updateDisplay("ROUTE ERR");
+                    updateDisplay("DISPLAY", "DEBUG", "ROUTE ERR");
                     if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);// 路径失败后, 停止定时器
                     currentState = STATE_ROUTE_FAILED;
                     break; // 失败时跳过下面的用户代码
@@ -672,7 +557,7 @@ void Task_MainStateMachine(void *pvParameters) {
             // 圆环评分: 1环15分 2环10分 3环7分 ... 越中心分越高
             // 到达粗加工区并完成停车定位后调用：
             // PlaceRoundToWorkArea(currentTask.round1_pos);
-            updateDisplay("PLACE C1");
+            updateDisplay("DISPLAY", "DEBUG", "PLACE C1");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_PLACE_TEMP1; }
             break;
 
@@ -682,21 +567,21 @@ void Task_MainStateMachine(void *pvParameters) {
             // RetrieveRoundToCargo(currentTask.round1_colors, currentTask.round1_pos);
             // 到达暂存区后复用相同工位位姿：
             // PlaceRoundToWorkArea(currentTask.round1_pos);
-            updateDisplay("PLACE T1");
+            updateDisplay("DISPLAY", "DEBUG", "PLACE T1");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_GRAB_ROUND2; }
             break;
 
         case STATE_GRAB_ROUND2:
             // 同 round1, 抓第二批
             // LoadRoundFromDisc(currentTask.round2_colors);
-            updateDisplay("GRAB R2");
+            updateDisplay("DISPLAY", "DEBUG", "GRAB R2");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_PLACE_COARSE2; }
             break;
 
         case STATE_PLACE_COARSE2:
             // 第二批放粗加工区
             // PlaceRoundToWorkArea(currentTask.round2_pos);
-            updateDisplay("PLACE C2");
+            updateDisplay("DISPLAY", "DEBUG", "PLACE C2");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_STACK_TEMP2; }
             break;
 
@@ -705,18 +590,18 @@ void Task_MainStateMachine(void *pvParameters) {
             // 在粗加工区取回第二批后，到暂存区码放第二层：
             // RetrieveRoundToCargo(currentTask.round2_colors, currentTask.round2_pos);
             // StackRoundToWorkArea(currentTask.round2_pos);
-            updateDisplay("STACK T2");
+            updateDisplay("DISPLAY", "DEBUG", "STACK T2");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_RETURN_HOME; }
             break;
 
         case STATE_RETURN_HOME:
-            updateDisplay("GO HOME");
+            updateDisplay("DISPLAY", "DEBUG", "GO HOME");
             // [TODO] 回到启停区, 停转盘...
             currentState = STATE_DONE;
             break;
 
         case STATE_DONE:
-            updateDisplay("DONE");
+            updateDisplay("DISPLAY", "DEBUG", "DONE");
             if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
             Emm_V5_En_Control_all(false);
             vTaskDelay(100000000 / portTICK_PERIOD_MS); // 保持
@@ -729,288 +614,25 @@ void Task_MainStateMachine(void *pvParameters) {
 
 // 底盘、升降和伸缩回读理想值；两个舵机通过总线现场读取，不触发运动。
 // Debug 和 Release 共用此接口；单位顺序为 mm/mm/度/mm/mm/度/度。
-static bool handlePoseQueryFrame(const char *frame) {
-    if (strcmp(frame, "{POSE:GET}") != 0) return false;
+static void sendPoseQueryReply() {
     const RobotPose robot = currentPose;
     ArmPose arm = currentArm;
     // 与 MoveArm 一致：2 号是舵盘，1 号是夹爪。保留原始实测角度（含负值）。
     // 读取失败不以命令目标/上次角度冒充实测值，也不改写运动目标 currentArm。
     if (!Servo_QueryAngle(2, arm.turret_angle) || !isfinite(arm.turret_angle)) {
-        Serial.println("{POSE:ERR,SERVO_READ,2}");
-        return true;
+        Serial.println("{RSP,POSE,GET,ERR,SERVO_READ,2}");
+        return;
     }
     if (!Servo_QueryAngle(1, arm.pawl_angle) || !isfinite(arm.pawl_angle)) {
-        Serial.println("{POSE:ERR,SERVO_READ,1}");
-        return true;
+        Serial.println("{RSP,POSE,GET,ERR,SERVO_READ,1}");
+        return;
     }
-    Serial.printf("{POSE:OK,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f}\n",
+    Serial.printf("{RSP,POSE,GET,OK,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f}\n",
                   robot.x, robot.y, robot.theta, arm.high, arm.length,
                   arm.turret_angle, arm.pawl_angle);
-    return true;
 }
 
-// ================= 机载电脑串口指令任务 =================
-void Task_Serial_CMD(void *pvParameters) {
-    char rxBuffer[128];
-    int rxIdx = 0;
-
-    for (;;) {
-        while (Serial.available() > 0) {
-            char c = Serial.read();
-            if (c == '\n' || c == '\r') {
-                rxBuffer[rxIdx] = '\0';
-                if (rxIdx > 0) {
-                    if (handlePoseQueryFrame(rxBuffer)) {
-                        // 返回底盘和机械臂的理想位姿。
-                    }
-                    else if (handleParameterFrame(rxBuffer, false)) {
-                        // 正式运行模式只允许读取参数。
-                    }
-                    else if (handleAlignmentControlFrame(rxBuffer)) {
-                        // 对齐任务已显式启动或停止。
-                    }
-                    else if (handleVisualAlignmentFrame(rxBuffer)) {
-                        // 已接收视觉对齐帧，例如 {ALIGN:1,10,-26}
-                    }
-                    else if (strcmp(rxBuffer, "{ready}") == 0) { // 机载电脑就绪
-                        nano_ready = true;
-                        Serial.println("{ready:OK}");
-                    }
-                    else if (strcmp(rxBuffer, "{start}") == 0) { // 启动机器人
-                        enableRun = true;
-                        Serial.println("{start:OK}");
-                    }
-                    else if (strcmp(rxBuffer, "{LidarPose}") == 0) {
-                        runLidarPoseAction();
-                    }
-                    else {
-                        StartZone parsedZone = START_ZONE_UNKNOWN;
-                        if (parseStartZoneFrame(rxBuffer, parsedZone)) {
-                            currentStartZone = parsedZone;
-                            Serial.printf(
-                                "{StartZone:OK,%u}\n",
-                                static_cast<unsigned>(parsedZone)
-                            );
-                        }
-                        else if (strncmp(rxBuffer, "{color:", 7) == 0
-                                && rxBuffer[strlen(rxBuffer) - 1] == '}') {
-                            char *end = nullptr;
-                            const float color = strtof(rxBuffer + 7, &end);
-                            if (end == rxBuffer + 7 || *end != '}' || end[1] != '\0'
-                                    || !isfinite(color)) {
-                                Serial.println("{color:ERR}");
-                                rxIdx = 0;
-                                continue;
-                            }
-                            VisualCmd_t vc = {"COLOR", color, 0, 0};
-                            if (xVisualTaskQueue) xQueueSend(xVisualTaskQueue, &vc, 0);
-                            Serial.println("{color:OK}");
-                        }
-                        else if (strcmp(rxBuffer, "{ok}") == 0) {// 视觉确认到位
-                            VisualCmd_t vc = {"OK", 0, 0, 0};
-                            if (xVisualTaskQueue) xQueueSend(xVisualTaskQueue, &vc, 0);
-                            Serial.println("{ok:ACK}");
-                        }
-                        else if (strncmp(rxBuffer, "{way:", 5) == 0) {
-                            uint8_t receivedPath[MAX_NODE_PATH_LENGTH];
-                            size_t count = 0;
-                            if (parseNodePathCommand(
-                                    rxBuffer, receivedPath, MAX_NODE_PATH_LENGTH, count)) {
-                                portENTER_CRITICAL(&nodePathMux);
-                                const bool accepting = nodePathState == NodePathState::WAITING;
-                                if (accepting) {
-                                    memcpy(nodePathBuffer, receivedPath, count * sizeof(receivedPath[0]));
-                                    nodePathLen = count;
-                                    nodePathState = NodePathState::RECEIVING;
-                                }
-                                portEXIT_CRITICAL(&nodePathMux);
-                                if (accepting) {
-                                    Serial.printf("{way:OK,%u}\n", (unsigned)count);
-                                    // 先确认接收，再允许主任务执行，保证消息顺序。
-                                    portENTER_CRITICAL(&nodePathMux);
-                                    if (nodePathState == NodePathState::RECEIVING) {
-                                        nodePathState = NodePathState::RECEIVED;
-                                    }
-                                    portEXIT_CRITICAL(&nodePathMux);
-                                } else {
-                                    Serial.println("{way:ERR,NOT_WAITING}");
-                                }
-                            } else {
-                                Serial.println("{way:ERR}");
-                            }
-                        }
-                        else if (rxBuffer[0] == '{') {
-                            Serial.println("{ERR:UNKNOWN_FRAME}");
-                        }
-                    }
-                    rxIdx = 0;
-                }
-            } else if (rxIdx < sizeof(rxBuffer) - 1) {
-                rxBuffer[rxIdx++] = c;
-            }
-        }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
-}
-
-// ================= 调试模式串口命令 =================
-void Task_Debug_CMD(void *pvParameters) {
-    char buffer[128];
-    int bufferIndex = 0;
-    for (;;) {
-        while (Serial.available() > 0) {
-            char c = Serial.read();
-            if (c == '\n' || c == '\r') {
-                if (bufferIndex > 0) {
-                    buffer[bufferIndex] = '\0';
-                    // 上电默认 Debug；完整匹配模式切换帧。
-                    if (strcmp(buffer, "{Mode:Release}") == 0) {
-                        // 停止调试对齐，正式状态机仍等待启停区和 start 指令。
-                        handleAlignmentControlFrame("{ALIGN:STOP}");
-                        xHomeTimer = xTimerCreate("HomeTimer", pdMS_TO_TICKS(300000),
-                                                 pdFALSE, NULL, vHomeTimerCallback);
-                        if (xHomeTimer == NULL) {
-                            Serial.println("{Mode:ERR,TIMER}");
-                            bufferIndex = 0;
-                            continue;
-                        }
-                        currentState = STATE_WAIT_START;
-                        enableRun = false;
-                        if (xTaskCreate(Task_MainStateMachine, "Task_MainStateMachine",
-                                        16384, NULL, 8, &xTask_MainStateMachine_Handle) != pdPASS) {
-                            xTimerDelete(xHomeTimer, portMAX_DELAY);
-                            xHomeTimer = NULL;
-                            Serial.println("{Mode:ERR,TASK}");
-                            bufferIndex = 0;
-                            continue;
-                        }
-                        leds[0] = CRGB::Green; FastLED.show();
-                        Serial.println("Release mode");
-                        Serial.println("{Mode:Release:OK}");
-                        // 当前任务直接接管 Release 串口循环，避免两个任务抢读串口。
-                        Task_Serial_CMD(pvParameters);
-                        vTaskDelete(NULL);
-                        return;
-                    }
-                    if (handlePoseQueryFrame(buffer)) {
-                        bufferIndex = 0;
-                        continue;
-                    }
-                    if (handleParameterFrame(buffer, true)) {
-                        bufferIndex = 0;
-                        continue;
-                    }
-                    if (strcmp(buffer, "{LidarPose}") == 0) {
-                        runLidarPoseAction();
-                        bufferIndex = 0;
-                        continue;
-                    }
-                    if (handleAlignmentControlFrame(buffer)) {
-                        bufferIndex = 0;
-                        continue;
-                    }
-                    if (handleVisualAlignmentFrame(buffer)) {
-                        bufferIndex = 0;
-                        continue;
-                    }
-                    StartZone debugZone = START_ZONE_UNKNOWN;
-                    if (parseStartZoneFrame(buffer, debugZone)) {
-                        currentStartZone = debugZone;
-                        if (debugZone == START_ZONE_1) {
-                            currentPose = {2250, 150, 180};
-                        } else {
-                            currentPose = {150, 150, 0};
-                        }
-                        Serial.printf(
-                            "{StartZone:OK,%u}\n",
-                            static_cast<unsigned>(debugZone)
-                        );
-                        bufferIndex = 0;
-                        continue;
-                    }
-                    if (strncmp(buffer, "{way:", 5) == 0) {
-                        uint8_t debugPath[MAX_NODE_PATH_LENGTH] = {0};
-                        size_t debugPathLength = 0;
-                        if (parseNodePathCommand(
-                                buffer, debugPath,
-                                sizeof(debugPath) / sizeof(debugPath[0]), debugPathLength)) {
-                            Serial.printf("{way:OK,%u}\n", (unsigned)debugPathLength);
-                            executeNodePathWithStatus(debugPath, debugPathLength);
-                        } else {
-                            Serial.println("{way:ERR}");
-                        }
-                        bufferIndex = 0;
-                        continue;
-                    }
-                    const size_t frameLength = strlen(buffer);
-                    if (frameLength < 2 || buffer[0] != '{'
-                            || buffer[frameLength - 1] != '}') {
-                        Serial.println("{ERR:FRAME}");
-                        bufferIndex = 0;
-                        continue;
-                    }
-                    buffer[frameLength - 1] = '\0';
-                    char *debugCommand = buffer + 1;
-                    for (char *cursor = debugCommand; *cursor != '\0'; ++cursor) {
-                        if (*cursor == ':' || *cursor == ',') *cursor = ' ';
-                    }
-                    char cmd[20]; float p1=0,p2=0,p3=0;
-                    if (sscanf(debugCommand, "%19s %f %f %f", cmd, &p1, &p2, &p3) >= 1) {
-                        // [TODO] 按需接入: GOTOpose / movepose / SERVO / height / enable 等
-                        if (strcmp(cmd, "GOTOpose") == 0)
-                            {  Serial.printf("{GOTOpose:ACK,%.0f,%.0f,%.0f}\n", p1, p2, p3);  GotoPose(p1,p2,p3,true);}
-                        else if (strcmp(cmd, "SetPose") == 0)
-                            {
-                                if (isfinite(p1) && isfinite(p2) && isfinite(p3)
-                                        && p1 >= 0 && p1 <= 2400
-                                        && p2 >= 0 && p2 <= 2400) {
-                                    currentPose = {p1, p2, p3};
-                                    Serial.printf("{SetPose:ACK,%.1f,%.1f,%.1f}\n", p1, p2, p3);
-                                } else {
-                                    Serial.println("{SetPose:ERR,RANGE}");
-                                }
-                            }
-                        else if (strcmp(cmd, "Movepose") == 0)
-                            {  Serial.printf("{Movepose:ACK,%.0f,%.0f,%.0f}\n", p1, p2, p3); MovePose(p1,p2,p3);}
-                        else if (strcmp(cmd, "MoveArm_1") == 0)
-                            {  Serial.printf("{MoveArm_1:ACK,%.0f,%.0f,%.0f}\n", p1, p2, p3); MoveArm(p1,p2,-1,-1,p3);}
-                        else if (strcmp(cmd, "MoveArm_2") == 0)
-                            {  Serial.printf("{MoveArm_2:ACK,%.0f,%.0f,%.0f}\n", p1, p2, p3); MoveArm(-1,-1,p1,p2,p3);}
-                        else if (strcmp(cmd, "SERVO") == 0)
-                            {  Serial.printf("{SERVO:ACK,%.0f,%.0f}\n", p1, p2);  Servo_SetAngle((uint8_t)p1, p2, 0, 0);}
-                        else if (strcmp(cmd, "En_C") == 0)
-                            {  Serial.printf("{En_C:ACK,%.0f}\n", p1);  Emm_V5_En_Control_all(p1);}
-                        else if (strcmp(cmd, "MaterialDemo") == 0)
-                            {
-                                Serial.println("{MaterialDemo:ACK}");
-                                const bool ok = DemoCargoToRoughArea();
-                                Serial.println(ok ? "{MaterialDemo:OK}" : "{MaterialDemo:ERR}");
-                            }
-                        else if (strcmp(cmd, "MaterialDemo2") == 0)
-                            {
-                                Serial.println("{MaterialDemo2:ACK}");
-                                const bool ok = DemoStackCargoToWorkArea();
-                                Serial.println(ok ? "{MaterialDemo2:OK}" : "{MaterialDemo2:ERR}");
-                            }
-                        else if (strcmp(cmd, "MaterialDemo3") == 0)
-                            {
-                                Serial.println("{MaterialDemo3}");
-                                const bool ok = DemoStackCargoToWorkArea3();
-                                Serial.println(ok ? "{MaterialDemo3:OK}" : "{MaterialDemo3:ERR}");
-                            }
-                        else if (strcmp(cmd, "help") == 0)
-                            {    Serial.println("Cmds: {Mode:Release} {LidarPose} {ALIGN:START} {ALIGN:STOP} {ALIGN:a,x,y} {way:0-1-8} {StartZone:1} {GOTOpose:x,y,theta} {SetPose:x,y,theta} {Movepose:dir,speed,stop} {MoveArm_1:h,l,speed} {MoveArm_2:turret,pawl,speed} {SERVO:id,angle} {En_C:enable} {help}");}
-                        else  {    Serial.println("{ERR:UNKNOWN_FRAME}");}
-                    }
-                    bufferIndex = 0;
-                }
-            } else if (bufferIndex < sizeof(buffer) - 1) {
-                buffer[bufferIndex++] = c;
-            }
-        }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
-}
+#include "serial_commands.inc"
 
 // 开机读取一个舵机的角度，并同步到主控维护的机械臂位姿。
 static void readStartupServoAngle(uint8_t servoId, float &storedAngle) {
@@ -1078,14 +700,14 @@ void setup() {
         Serial.println("[Align] ERR: failed to create alignment queue or mutex");
     }
 
-    // 上电固定进入 Debug；串口发送 {Mode:Release} 切换到正式模式。
+    // 上电固定进入 Debug；串口发送 {CMD,SYS,RELEASE} 切换到正式模式。
     {
         Serial.println("Debug mode");
         leds[0] = CRGB::Yellow; FastLED.show();
         // Debug 模式默认直接启用视觉闭环对齐，仍可通过
-        // {ALIGN:STOP}/{ALIGN:START} 在运行时停止或重新启动。
-        handleAlignmentControlFrame("{ALIGN:START}");
-        xTaskCreate(Task_Debug_CMD, "Task_Debug_CMD", 16384, NULL, 5, NULL);
+        // {CMD,VISION,ALIGN_STOP}/{CMD,VISION,ALIGN_START} 可停止或重启。
+        setAlignmentEnabled(true);
+        xTaskCreate(Task_Serial_CMD, "Task_Serial_CMD", 16384, NULL, 5, NULL);
     }
 }
 

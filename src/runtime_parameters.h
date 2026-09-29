@@ -7,4 +7,5 @@ void RegisterRuntimeFloat(const char *name, float &value, float minimum, float m
 void RegisterRuntimeUInt(const char *name, uint32_t &value, float minimum, float maximum);
 void RegisterChassisParameters();
 // 调用方持有对齐互斥锁；仅在调试模式且停止对齐时允许写入。
-bool HandleRuntimeParameters(const char *frame, bool writable);
+// fields = [动作,事务编号,可选参数...]；解析结构由串口接收层完成。
+bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writable);

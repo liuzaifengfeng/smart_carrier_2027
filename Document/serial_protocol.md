@@ -1,157 +1,95 @@
-# 机载电脑与 ESP32 串口通信协议
+# ESP32 Serial0 串口协议 v2
 
-本文档定义 Jetson/上位机与 ESP32 主控之间的 Serial0 文本协议。除人工可读的调试日志外，机器可读消息均使用本协议。
+本文是机载电脑、仓库上位机和 ESP32 之间的**唯一机器指令规范**。固件不接收旧版 `{way:...}` 等指令。仓库外发送端必须先按下表迁移，再切换固件。舵机 Serial2、扫码软串口不属于本协议。
 
-## 1. 基础帧格式
+## 1. 传输与帧结构
 
-```text
-{魔术字:参数1,参数2,...}\n
-```
+- 115200 bit/s，8N1。每行恰好一帧，发送端以 `\n` 结尾；固件兼容 `\r\n`。
+- 发送给 ESP32：`{CMD,类别,动作,参数...}`。ESP32 的命令回复：`{RSP,类别,动作,状态,参数...}`。ESP32 主动发出的状态：`{EVT,类别,事件,参数...}`。
+- 固定字和输入参数只用可打印 ASCII，区分大小写；不得包含空字段、空格、逗号、花括号或换行。参数目录的**返回名称**与显示事件的**正文**可以是 UTF-8 中文。显示正文可以有空格，但不能含逗号、花括号或控制字符。
+- 输入帧最多 **159 字节**（不含换行），最多 32 个逗号字段。超长行会被整行丢弃并回复 `{RSP,SYS,FRAME,ERR,TOO_LONG}`；结构错误回复 `{RSP,SYS,FRAME,ERR,FORMAT}`。固件不会执行截断或格式错误的指令。
+- 数字用十进制，必须完整且有限；`NaN`、`inf`、缺字段、多字段均无效。`ACK` 表示已接令，**不代表物理到位**；`ROUTE_DONE,ESTIMATED` 也只是开环估计结束。
+- 上位机连接后先发 `{CMD,SYS,HELLO}`，仅收到 `{RSP,SYS,HELLO,OK,2}` 才允许控制。超时或版本不符时断开连接。启动日志如 `version:`、`Debug mode` 只供人阅读，不参与机器帧解析。
 
-- 编码：ASCII（UTF-8 的 ASCII 子集）。
-- 串口：115200 bit/s，8N1。
-- 帧头、帧尾：`{`、`}`。
-- 帧终止符：换行 `\n`；接收端也兼容 `\r\n`。
-- 魔术字区分大小写，必须使用本文规定的拼写。
-- 数值使用十进制，可带负号和小数点，不允许 `NaN`、`inf` 或缺失字段。
-- 一行只允许一帧；花括号外不得附加其他字符。
+## 2. 命令总表与旧版迁移对照
 
-无参数命令省略冒号，例如：
+下表中的参数顺序就是实际发送顺序。`两者` 指 Debug 与 Release；`Debug` 指上电调试模式。错误通常为 `{RSP,类别,动作,ERR,原因}`。下表未标为 Release 的 Debug 动作在 Release 中回复 `MODE`，不会执行。
 
-```text
-{ready}
-{start}
-{ok}
-{help}
-```
+| 旧指令 | v2 指令 | 模式 | 成功回复 / 后续事件 |
+|---|---|---|---|
+| 无 | `{CMD,SYS,HELLO}` | 两者 | `{RSP,SYS,HELLO,OK,2}` |
+| `{Mode:Release}` | `{CMD,SYS,RELEASE}` | Debug | `{RSP,SYS,RELEASE,OK}`；失败 `TIMER` / `TASK` |
+| `{ready}` | `{CMD,SYS,READY}` | Release | `{RSP,SYS,READY,OK}` |
+| `{start}` | `{CMD,SYS,START}` | Release | `{RSP,SYS,START,OK}` |
+| `{help}` | `{CMD,SYS,HELP}` | 两者 | `{RSP,SYS,HELP,OK}`；帮助文字参见本文件 |
+| `{StartZone:1}` / `:2` | `{CMD,NAV,START_ZONE,1}` / `2` | 两者 | `{RSP,NAV,START_ZONE,OK,1}` / `2` |
+| `{way:0-1-8}` | `{CMD,NAV,ROUTE,0,1,8}` | 两者 | `{RSP,NAV,ROUTE,ACK,3}`，随后路径事件 |
+| `{ALIGN:START}` | `{CMD,VISION,ALIGN_START}` | 两者 | `{RSP,VISION,ALIGN_START,OK}` |
+| `{ALIGN:STOP}` | `{CMD,VISION,ALIGN_STOP}` | 两者 | `{RSP,VISION,ALIGN_STOP,OK}` |
+| `{ALIGN:angle,x,y}` | `{CMD,VISION,ALIGN_DATA,angle,x,y}` | 两者 | 正常连续反馈不逐帧回复 |
+| `{color:N}` | `{CMD,VISION,COLOR,N}` | Release | `{RSP,VISION,COLOR,OK}` |
+| `{ok}` | `{CMD,VISION,CONFIRM}` | Release | `{RSP,VISION,CONFIRM,ACK}` |
+| `{LidarPose}` | `{CMD,VISION,LIDAR_POSE}` | 两者 | `{RSP,VISION,LIDAR_POSE,ACK}`，随后完成或失败事件 |
+| `{POSE:GET}` | `{CMD,POSE,GET}` | 两者 | `{RSP,POSE,GET,OK,x,y,theta,h,l,turret,pawl}` |
+| `{SetPose:x,y,theta}` | `{CMD,POSE,SET,x,y,theta}` | Debug | `{RSP,POSE,SET,ACK,x,y,theta}` |
+| `{GOTOpose:x,y,theta}` | `{CMD,POSE,GOTO_REL,x,y,theta}` | Debug | `{RSP,POSE,GOTO_REL,ACK,x,y,theta}` |
+| `{Movepose:dir,speed,stop}` | `{CMD,CHASSIS,MOVE,dir,speed,stop}` | Debug | `{RSP,CHASSIS,MOVE,ACK,dir,speed,stop}` |
+| `{MoveArm_1:h,l,speed}` | `{CMD,ARM,MOVE1,h,l,speed}` | Debug | `{RSP,ARM,MOVE1,ACK,h,l,speed}` |
+| `{MoveArm_2:turret,pawl,speed}` | `{CMD,ARM,MOVE2,turret,pawl,speed}` | Debug | `{RSP,ARM,MOVE2,ACK,turret,pawl,speed}` |
+| `{SERVO:id,angle}` | `{CMD,ARM,SERVO,id,angle}` | Debug | `{RSP,ARM,SERVO,ACK,id,angle}` |
+| `{En_C:enable}` | `{CMD,ARM,ENABLE,enable}` | Debug | `{RSP,ARM,ENABLE,ACK,enable}` |
+| `{MaterialDemo}` / `2` / `3` | `{CMD,ARM,DEMO1}` / `2` / `3` | Debug | `{RSP,ARM,DEMO1,ACK}`，随后 `{EVT,ARM,DEMO1,DONE}` 或 `FAILED`；其他编号同理 |
 
-## 2. 已实现：上位机发送给 ESP32
+### 参数与限制
 
-### 查询底盘与机械臂位姿（Debug / Release）
+- `START_ZONE` 只能为 1 或 2。Debug 中设置后同步软件估计位姿；Release 中保留现有业务状态行为。
+- `ROUTE`：2～25 个节点，节点编号 0～24，5×5 蛇形地图中相邻节点必须物理上下或左右相邻。路径的第一个节点必须是小车实际所在节点。固件执行前再检查相邻性；上位机输入框仍可输入 `0-1-8`，发送时转换为逗号字段。
+- `ALIGN_DATA`：三个有限浮点值，依次为角度偏差（度）、视觉 X 与 Y 偏差（视觉单位）；20 Hz 连续输入时只保留最新一帧。停止对齐后收到有效反馈也不驱动电机。
+- `COLOR`：有限数值；`CONFIRM`：无参数。二者仅供 Release 业务状态机使用。
+- `POSE GET`：`x,y,theta,h,l` 是软件维护的理想/开环值，单位依次为 mm、mm、度、mm、mm；`turret,pawl` 是现场读取的 2 号、1 号舵机角度（度）。读取失败回复 `{RSP,POSE,GET,ERR,SERVO_READ,2}` 或 `1`，不会用旧值冒充实测。
+- `POSE SET`：x、y 为 0～2400 mm，theta 为有限角度。`GOTO_REL`：x、y 各为 ±3394.113 mm，theta 为 ±360 度；都是**相对移动量**，ACK 后执行动作。
+- `CHASSIS MOVE`：方向 `0` 前、`1` 后、`2` 左、`3` 右；速度 0～1000；`stop` 为 0 或 1。
+- `ARM MOVE1`：高度 `-1` 或 0～160 mm，伸出 `-1` 或 0～170 mm；`ARM MOVE2`：转台和夹爪角度各为 -360～360 度，`-1` 表示跳过该轴；两种动作速度均为 1～1000。`SERVO`：ID 0～254 整数，角度 -135～135 度。`ENABLE`：0 或 1。
+- 参数个数错误回复 `FORMAT`，越界回复 `RANGE`，模式不符回复 `MODE`，未知动作回复 `UNKNOWN_ACTION`；这些错误均不触发新运动。机械臂动作仍受现有未标定位姿安全门限制。
 
-发送 `{POSE:GET}` 并以换行结束，固件返回一行：
+## 3. 主动事件与路径交互
 
-```text
-{POSE:OK,150.000,150.000,270.000,50.000,80.000,30.000,20.000}
-```
+| 旧回复或事件 | v2 事件 / 回复 | 含义 |
+|---|---|---|
+| `{way:WAITING}` | `{EVT,NAV,ROUTE_WAITING}` | Release 主状态机等待路径 |
+| `{way:start-end?}` | `{EVT,NAV,ROUTE_REQUEST,start,end}` | 上位机应返回完整路径 |
+| `{way:RUNNING}` | `{EVT,NAV,ROUTE_RUNNING}` | 开始执行 |
+| `{way:DONE,ESTIMATED}` | `{EVT,NAV,ROUTE_DONE,ESTIMATED}` | 开环估计完成 |
+| `{way:ERR,ENDPOINT/EXECUTION/TIMEOUT}` | `{EVT,NAV,ROUTE_FAILED,原因}` | 路径业务失败；主状态机不进入后续抓取 |
+| `{way:ERR,NOT_WAITING}` | `{RSP,NAV,ROUTE,ERR,NOT_WAITING}` | Release 尚未请求路径 |
+| `{ALIGN:OK}` | `{EVT,VISION,ALIGN_DONE}` | 对齐已完成 |
+| `{ALIGN:ERR,TIMEOUT}` | `{EVT,VISION,ALIGN_FAILED,TIMEOUT}` | 反馈超时 |
+| `{LidarPose:OK}` / `ERR` | `{EVT,VISION,LIDAR_POSE_DONE}` / `FAILED` | 雷达扫描位姿动作结果 |
+| Release 自动触发雷达位姿 | `{EVT,VISION,LIDAR_POSE_RUNNING}` | 自动流程开始，不发送命令回复 |
 
-七个数值依次为底盘 `x, y, theta` 和机械臂 `high, length, turret_angle, pawl_angle`。
-位置、升降高度和伸出长度单位为 mm，航向、舵盘和夹爪角度单位为度。
-前五个数值来自 `currentPose` / `currentArm`，是软件维护的理想/开环值。
-最后两个角度每次查询均调用 `Servo_QueryAngle` 实读：2 号舵盘、1 号夹爪；
-按现有单圈查询协议返回原始角度（精度 0.1 度，可为负值），不归一化或改写命令目标。
-这些数值不代表动作已完成。速度模式移动和视觉对齐目前不累计位姿。
-舵机读取超时或校验失败返回 `{POSE:ERR,SERVO_READ,2}` 或 `{POSE:ERR,SERVO_READ,1}`，
-不返回伪造的实测角度。上位机提示对应轴读取失败并保留上次显示。
-查询不触发运动。动作执行期间可能读到各轴更新中的状态；Debug 的阻塞动作会延迟回复。
+### 机载电脑显示事件
 
-上位机连接后点击顶部“查询小车 / 机械臂位姿”，合法回复会更新当前姿态数值、
-地图上的小车和机械臂图，以及机械臂四轴回读文字。机械臂待发送输入保持原值，
-再次编辑输入时恢复输入预览。无回复超过 3 秒提示超时，保留上次显示；
-动作结束后可重新查询。也可以在原始串口命令栏手动发送 `{POSE:GET}`。
-
-### 模式切换（Debug → Release）
-
-上电默认进入 Debug（黄灯），无需按键。发送 `{Mode:Release}` 并以换行结束，
-停止调试对齐，成功后亮绿灯并返回 `{Mode:Release:OK}`。
-资源创建失败则保持 Debug，对齐保持停止，返回 `{Mode:ERR,TIMER}` 或 `{Mode:ERR,TASK}`。
-
-Release 会初始化机械臂，然后等待 `{StartZone:1}` 或 `{StartZone:2}` 和 `{start}`。
-切换前已设置的启停区会保留。重启后重新进入 Debug。
-
-### 开局雷达扫描位姿
-
-设置当前启停区后，可在 Debug 或 Release 发送：
-
-```text
-{LidarPose}
-```
-
-固件先返回 `{LidarPose:ACK}`，然后按启停区执行底盘和机械臂动作。全部动作完成后
-返回 `{LidarPose:OK}`，启停区未知、动作未标定或执行失败时返回 `{LidarPose:ERR}`。
-动作正在执行时再次调用会返回 `{LidarPose:ERR,BUSY}`，不会重复控制机构。
-Release 状态机在取得启停区后也会自动执行一次。具体动作框架位于
-`PrepareLidarScanPose()`；标定完成前保持安全锁关闭，不会控制机构运动。
-
-### 2.1 视觉闭环对齐
-
-Debug 上电默认开启对齐；切换到 Release 时关闭。需要重新开启时发送：
+固件调用 `updateDisplay(命令类型, 显示类型, 正文)`，三个参数依次为：固定命令类型 `DISPLAY`、显示类型 `TASK_CODE` 或 `DEBUG`、要显示的字符串。串口发出 `{EVT,DISPLAY,显示类型,正文}`，无须电脑回复。相同的连续正文只发一次，避免状态机轮询刷屏；切换到其他正文后可再次发送。
 
 ```text
-{ALIGN:START}
+{EVT,DISPLAY,TASK_CODE,156+123+516+231}
+{EVT,DISPLAY,DEBUG,READ TASK}
 ```
 
-ESP32 停止当前对齐速度、清除 PID 历史并开启任务，然后返回：
+上位机把 `TASK_CODE` 显示在任务码栏，把 `DEBUG` 显示在调试信息栏，同时保留原始串口日志。扫描成功后发送的是**已解析的四组三位任务码**；`TASK ERR` 等错误只作为 `DEBUG` 消息发送，不会覆盖上次的任务码。这里实现的是机载电脑屏幕显示，赛场实体显示器仍需单独接入。
+
+示例（Release 主状态机请求 2 → 14）：
 
 ```text
-{ALIGN:STARTED}
+ESP32  {EVT,NAV,ROUTE_WAITING}
+ESP32  {EVT,NAV,ROUTE_REQUEST,2,14}
+电脑   {CMD,NAV,ROUTE,2,7,12,13,14}
+ESP32  {RSP,NAV,ROUTE,ACK,5}
+ESP32  {EVT,NAV,ROUTE_RUNNING}
+ESP32  {EVT,NAV,ROUTE_DONE,ESTIMATED}
 ```
 
-停止任务时发送：
-
-```text
-{ALIGN:STOP}
-```
-
-ESP32 会立即停车、清空待处理视觉帧和 PID 历史，然后返回：
-
-```text
-{ALIGN:STOPPED}
-```
-
-任务未开启时，ESP32 会识别但忽略连续视觉帧，不会产生运动。
-
-```text
-{ALIGN:angle,x,y}
-```
-
-示例：
-
-```text
-{ALIGN:0,-120,-121}
-```
-
-字段：
-
-| 字段 | 单位 | 含义 |
-|---|---:|---|
-| `angle` | ° | 上位机检测到的角度偏差 |
-| `x` | 视觉单位 | 上位机检测到的 X 偏差 |
-| `y` | 视觉单位 | 上位机检测到的 Y 偏差 |
-
-上位机应以 20 Hz 连续发送。ESP32 始终只保留最新帧，并将 angle、X、Y
-分别输入三个 PID。PID 输出映射为车身旋转、Y、X 三个速度权重，再通过麦克纳姆轮
-全向速度混合同时执行，因此不依赖单次位置输入，也不再采用“先角度、后坐标”的分段运动。
-
-- 摄像头与车身约呈 90°：视觉 Y 映射到底盘 X，视觉 X 映射到底盘 Y。
-- 三个误差分别设置死区、积分限幅和输出限幅。
-- 超过 300 ms 未收到新帧时，ESP32 立即停车、清除 PID 历史并返回
-  `{ALIGN:ERR,TIMEOUT}`。
-- `abs(angle) < 0.5°` 且 `abs(x) < 3`、`abs(y) < 3` 时判定对齐成功。
-
-对齐成功后 ESP32 返回：
-
-```text
-{ALIGN:OK}
-```
-
-### 2.2 下发完整节点路径
-
-```text
-{way:n1-n2-...-nN}
-```
-
-示例：
-
-```text
-{way:0-1-2-7}
-```
-
-- 节点范围：`0`～`24`。
-- 节点数：`2`～`25`。
-- 相邻节点必须在 5×5 蛇形节点图中上下或左右相邻。
-
-场地中从上到下、每行从左到右的编号如下：
+5×5 节点编号（上方是场地北侧）：
 
 ```text
 20 21 22 23 24
@@ -161,174 +99,24 @@ ESP32 会立即停车、清空待处理视觉帧和 PID 历史，然后返回：
  0  1  2  3  4
 ```
 
-节点中心间距 480 mm，距边界 240 mm。沿用本项目 X 向右、Y 向上的
-坐标约定（参考图的轴名称相反）；节点 12 为 (1200, 1200) mm。
+## 4. 运行参数 CFG
 
-- ESP32 接收后返回 `{way:OK,N}`，其中 `N` 为节点数；这只表示收到，不表示运动完成。格式非法返回 `{way:ERR}`。
-- 执行开始返回 `{way:RUNNING}`；运动指令和预计等待全部结束后返回 `{way:DONE,ESTIMATED}`；路径不相邻或执行接口失败返回 `{way:ERR,EXECUTION}`。
-- Release 模式由主状态机调用 `requestAndMoveNodePath(start, end)`，先输出 `{way:WAITING}` 和路径请求，再等待接收并执行，只有成功后才继续后面的用户代码。当前第一轮请求 `2 -> 14`，例如回复 `{way:2-7-12-13-14}`。
-  首尾节点不符返回 `{way:ERR,ENDPOINT}` 并停留故障状态；非等待阶段收到路径返回 `{way:ERR,NOT_WAITING}`，不会覆盖正在执行的路径。格式错误可重新发送；执行失败不会进入后续抓取。总任务超时返回 `{way:ERR,TIMEOUT}` 并按现有超时逻辑挂起主任务。
-- Debug 模式仍直接执行收到的路径，也输出上述接收、执行和完成状态。上位机状态栏同步显示这些状态。
-- `way` 的第一个节点必须是小车**实际所在节点**；该命令不会先把小车移动到起点。
-  执行时固件按已记录的航向开环转向、前进，等待时间也是估算值，串口成功信息不代表已实测到达。
-  车体航向 0° 朝右、90° 朝上、180° 朝左、270° 朝下。
-  右侧启停区 1 车头朝左，初始航向为 180°；左侧启停区 2 车头朝右，初始航向为 0°。
-  例如 `2-7-12-13-14` 从朝左的 180° 开始，应先转 -90° 朝上走 960 mm，再转 -90° 朝右走 960 mm。
-  执行前仍须核对实际车头方向与电机转向；地图和等待时间不提供实测到位确认。
+CFG 参数只在 RAM 中生效，重启恢复默认值。读取须停止视觉对齐；写入还须处于 Debug 模式。`GET` 输出目录可能阻塞视觉反馈，所以对齐开启时拒绝读写。参数 ID 是**本次固件目录的 0 起始下标**，必须先 GET，不可跨版本写死；界面中的数组名称按 1 起始编号。中文名称返回时使用 UTF-8。
 
-### 2.3 设置启停区
+| 旧帧 | v2 帧 |
+|---|---|
+| `{CFG:GET,id}` | `{CMD,CFG,GET,id}` |
+| `{CFG:VALUE,id,index,name,value,min,max,int}` | `{RSP,CFG,GET,VALUE,id,index,name,value,min,max,int}` |
+| `{CFG:END,id,count}` | `{RSP,CFG,GET,END,id,count}` |
+| `{CFG:BEGIN,id}` | `{CMD,CFG,BEGIN,id}` → `{RSP,CFG,BEGIN,OK,id}` |
+| `{CFG:SET,id,index,value}` | `{CMD,CFG,SET,id,index,value}` → `{RSP,CFG,SET,OK,id,index}` |
+| `{CFG:COMMIT,id}` | `{CMD,CFG,COMMIT,id}` → `{RSP,CFG,COMMIT,OK,id}` |
+| `{CFG:ERR,id,reason}` | `{RSP,CFG,动作,ERR,id,reason}` |
 
-```text
-{StartZone:1}
-{StartZone:2}
-```
+`id` 为非零 uint32，`index` 为有效参数 ID；值必须有限、在该项范围内，整数项必须为整数。BEGIN 建立暂存副本；SET 只修改暂存值；COMMIT 持有对齐锁统一写入并清除 PID 历史。GET 或新的 BEGIN 丢弃旧事务。上位机逐条等待确认，COMMIT 后自动 GET 核对；错误或超时立即停止后续发送，超时不自动重发 COMMIT。常见原因：`BUSY_OR_MODE`、`RANGE`、`TRANSACTION`、`FORMAT`、`REGISTRY`、`LOCK`。
 
-成功时 ESP32 返回：
+## 5. 切换顺序
 
-```text
-{StartZone:OK,1}
-{StartZone:OK,2}
-```
-
-### 2.4 运行状态命令
-
-```text
-{ready}
-{start}
-{color:N}
-{ok}
-```
-
-| 帧 | 状态 | 用途 |
-|---|---|---|
-| `{ready}` | 已实现 | 机载电脑报告通信与业务程序已就绪 |
-| `{start}` | 已实现 | 请求主控启动业务状态机 |
-| `{color:N}` | 已实现 | 报告识别到颜色编号 `N` |
-| `{ok}` | 已实现 | 报告当前视觉动作已经确认到位 |
-
-对应确认帧为 `{ready:OK}`、`{start:OK}`、`{color:OK}`、`{ok:ACK}`。
-
-## 3. 已实现：ESP32 发送给上位机
-
-### 3.1 请求规划路径
-
-```text
-{way:start-end?}
-```
-
-示例：
-
-```text
-{way:0-7?}
-```
-
-含义：ESP32 请求上位机规划从节点 0 到节点 7 的路径。上位机应返回包含首尾节点的完整路径，例如：
-
-```text
-{way:0-1-2-7}
-```
-
-问号只允许出现在 ESP32 发出的路径请求中，不得出现在上位机返回的可执行路径中。
-
-### 3.2 通用错误
-
-```text
-{ERR:FRAME}
-{ERR:UNKNOWN_FRAME}
-```
-
-- `FRAME`：缺少完整花括号或帧结构非法。
-- `UNKNOWN_FRAME`：结构完整，但魔术字不受支持。
-
-## 4. Debug 模式命令
-
-以下命令用于仓库自带的 `upper_computer.py` 调试界面，也统一采用花括号帧：
-
-```text
-{GOTOpose:x_mm,y_mm,theta_deg}
-{SetPose:x_mm,y_mm,theta_deg}
-{Movepose:direction,speed,stop}
-{MoveArm_1:height_mm,length_mm,speed}
-{MoveArm_2:turret_deg,pawl_deg,speed}
-{SERVO:id,angle_deg}
-{En_C:enable}
-{help}
-```
-
-`Movepose` 的 `direction`：`0` 前进、`1` 后退、`2` 左移、`3` 右移；`stop` 为 `0` 启动、`1` 停止。
-
-Debug 命令接收后的机器确认帧使用以下形式：
-
-```text
-{GOTOpose:ACK,x_mm,y_mm,theta_deg}
-{SetPose:ACK,x_mm,y_mm,theta_deg}
-{Movepose:ACK,direction,speed,stop}
-{MoveArm_1:ACK,height_mm,length_mm,speed}
-{MoveArm_2:ACK,turret_deg,pawl_deg,speed}
-{SERVO:ACK,id,angle_deg}
-{En_C:ACK,enable}
-```
-
-`ACK` 仅表示 ESP32 已接收并开始处理命令，不代表车辆或机械臂已经物理到位。
-
-## 5. 运行参数（CFG）
-
-上位机“参数”页支持一键读取、编辑多个参数后批量发送。值只保存在 RAM，
-重启恢复固件默认值，不写 Flash。读取和写入前需要停止视觉对齐；写入仅支持
-Debug 模式。参数提交本身不触发机械动作。
-
-开放参数包括：完整 MaterialTransferLayout（圆盘、载物台 1～3、共享工作区
-1～3 位姿及动作参数）、视觉 X/Y/角度 PID 的 Kp/Ki/Kd/积分限幅、对齐容差、
-最大轮速、脉冲标定系数、停车稳定时间、地图节点 0～24 的 X/Y 数组。
-PID 历史状态和载物台物料状态不属于可调参数。
-
-```text
-{CFG:GET,请求编号}
-{CFG:VALUE,请求编号,参数ID,中文名称,当前值,最小值,最大值,整数标记}
-...逐项返回...
-{CFG:END,请求编号,参数总数}
-
-{CFG:BEGIN,事务编号}
-{CFG:OK,事务编号,BEGIN}
-{CFG:SET,事务编号,参数ID,新值}
-{CFG:OK,事务编号,SET,参数ID}
-...等待每一项确认后再发送下一项...
-{CFG:COMMIT,事务编号}
-{CFG:OK,事务编号,COMMIT}
-```
-
-编号为非零 uint32。参数 ID 是本次固件目录中的 0 起始下标，必须先 GET，
-不可跨固件版本硬编码。数组的中文名称使用 1 起始编号。
-BEGIN 创建暂存副本；SET 检查有限值、范围和整数类型，不立即修改运行值；
-COMMIT 统一更新本批修改并清除 PID 历史。GET 或新的 BEGIN 丢弃旧暂存事务。
-错误回复为 `{CFG:ERR,编号,原因}`，例如 `RANGE`、`TRANSACTION`、
-`BUSY_OR_MODE`、`FORMAT`。上位机停止后续提交，提示重新读取。
-COMMIT 成功后自动 GET 并核对回读值；超时不自动重发 COMMIT。
-
-操作顺序：连接串口 → 参数页“一键读取” → 选中参数 → 输入值并点击
-“修改选中项”（或按回车）→ 可继续修改其他项 → “发送修改”。
-“撤销编辑”只丢弃电脑上的未发送修改。地图节点回读后同步到地图显示。
-
-## 6. 预留协议
-
-以下帧用于后续业务扩展，目前不得依赖 ESP32 已经执行：
-
-```text
-{Task:156+123+516+231}
-{Grab:color,position}
-{Place:area,position,layer}
-{Obstacle:x,y,radius}
-{Pose:x_mm,y_mm,theta_deg}
-{Heartbeat:sequence}
-```
-
-建议的完成/失败回复形式：
-
-```text
-{Task:OK}
-{Grab:OK}
-{Place:OK}
-{ERR:魔术字,错误码}
-```
-
-新增协议时必须同时更新 ESP32 解析逻辑、上位机发送逻辑和本文档，禁止恢复无花括号的裸字符串格式。
+1. 依据本页逐条修改仓库外发送端，并确认其能发送 HELLO、识别 v2 的 `RSP`/`EVT`、完整处理 CFG 事务和路径请求。
+2. 在测试环境先运行新上位机与新固件，核对串口输出和动作安全门。编译通过不代表实车串口或机械动作已验证。
+3. 外部发送端适配并测试完成后再切换实车固件；旧指令在 v2 固件中只会收到 `FRAME` 格式错误。

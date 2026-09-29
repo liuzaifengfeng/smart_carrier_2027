@@ -71,16 +71,23 @@ src/
 
 ## 机载电脑 ↔ 主控 串口协议（Serial0）
 
-所有机器可读消息统一使用 `{魔术字:参数}\n` 文本帧，例如：
+调试上位机只需运行 `upper_computer.py`。串口协议处理和参数面板已内置于这个文件，
+不依赖仓库内的其他 Python 模块；需要安装 `pyserial`，图形界面使用 Python 自带的 Tkinter。
+`tests/` 里是开发时运行的自动测试，不是上位机启动文件。可用
+`python -m unittest discover -s tests -v` 执行。
+
+Serial0 使用 v2 单行文本帧；命令、回复和主动事件分别以 `CMD`、`RSP`、`EVT` 开头。例如：
 
 ```text
-{ALIGN:0,-120,-121}
-{way:0-1-2-7}
-{way:0-7?}
-{StartZone:1}
+{CMD,SYS,HELLO}
+{RSP,SYS,HELLO,OK,2}
+{CMD,VISION,ALIGN_DATA,0,-120,-121}
+{CMD,NAV,ROUTE,0,1,2,7}
+{EVT,NAV,ROUTE_REQUEST,0,7}
+{CMD,NAV,START_ZONE,1}
 ```
 
-完整的已实现命令、回复、Debug 命令和预留扩展见
+完整指令、回复、旧版迁移对照及仓库外设备切换顺序见
 [串口通信协议](Document/serial_protocol.md)。
 
 ## 待办事项 [TODO]（按优先级）
@@ -88,7 +95,7 @@ src/
    候选：机载电脑视觉融合 / 编码器里程计 / 雷达边界测距 / SLAM。
    绝对坐标 `GotoPose(...,false)` 依赖此方案。
 2. **底盘标定**：`X_PULSE / Y_PULSE / THETA_PULSE / HEIGHT_PULSE` 需按新底盘重新标定。
-3. **任务码显示装置**：硬性要求（字高≥12mm、醒目、不被遮挡），需接显示硬件。
+3. **任务码显示装置**：任务码已通过 `{EVT,DISPLAY,TASK_CODE,正文}` 发给机载电脑显示；赛场实体显示器的字高≥12mm、醒目且无遮挡要求仍需接硬件验证。
 4. **转盘动态抓取**：原料区为旋转转盘（6-10s/圈、转向随机、120°分布）。
 5. **抓取/放置/码垛**：禁止手爪夹持运送，需放上载物台；码垛需高度控制。
 6. **避障**：场地有随机黑色障碍物（φ50×100mm）。

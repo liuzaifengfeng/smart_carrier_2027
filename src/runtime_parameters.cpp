@@ -1,4 +1,5 @@
 #include "runtime_parameters.h"
+#include "serial_frame.h"
 #include "material_transfer.h"
 #include <math.h>
 #include <stdlib.h>
@@ -83,8 +84,13 @@ bool parseUnsigned(const char *text, uint32_t &value) {
     return true;
 }
 
-void reply(uint32_t id, const char *status, const char *detail) {
-    Serial.printf("{CFG:%s,%lu,%s}\n", status, static_cast<unsigned long>(id), detail);
+void reply(const char *action, uint32_t id, const char *status, const char *detail) {
+    if (strcmp(status, "OK") == 0) {
+        Serial.printf("{RSP,CFG,%s,OK,%lu}\n", action, static_cast<unsigned long>(id));
+    } else {
+        Serial.printf("{RSP,CFG,%s,ERR,%lu,%s}\n", action,
+                      static_cast<unsigned long>(id), detail);
+    }
 }
 } // namespace
 
@@ -95,70 +101,59 @@ void RegisterRuntimeUInt(const char *name, uint32_t &value, float minimum, float
     add(name, &value, minimum, maximum, true);
 }
 
-bool HandleRuntimeParameters(const char *frame, bool writable) {
-    if (strncmp(frame, "{CFG:", 5) != 0) return false;
+bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writable) {
     initialize();
-    char buffer[100];
-    const size_t length = strlen(frame);
-    if (length >= sizeof(buffer) || length < 8 || frame[length - 1] != '}') {
-        reply(0, "ERR", "FORMAT");
-        return true;
-    }
-    memcpy(buffer, frame + 5, length - 6);
-    buffer[length - 6] = '\0';
-    char *fields[5];
-    size_t size = 0;
-    char *cursor = buffer;
-    // 保留空字段，使缺失参数和多余逗号不能被当作合法命令。
-    while (cursor && size < 5) {
-        fields[size++] = cursor;
-        char *comma = strchr(cursor, ',');
-        if (comma) *comma++ = '\0';
-        cursor = comma;
-    }
+    const char *action = size > 0 ? fields[0] : "FRAME";
     uint32_t id = 0;
-    if (cursor || size < 2 || !parseUnsigned(fields[1], id) || id == 0) {
-        reply(0, "ERR", "FORMAT");
+    if (size < 2 || size > 4 || !parseUnsigned(fields[1], id) || id == 0) {
+        reply(action, 0, "ERR", "FORMAT");
         return true;
     }
-    if (registrationFailed) { reply(id, "ERR", "REGISTRY"); return true; }
+    const bool correctSize = (strcmp(action, "GET") == 0 && size == 2)
+        || (strcmp(action, "BEGIN") == 0 && size == 2)
+        || (strcmp(action, "SET") == 0 && size == 4)
+        || (strcmp(action, "COMMIT") == 0 && size == 2);
+    if (!correctSize) {
+        reply(action, id, "ERR", "FORMAT");
+        return true;
+    }
+    if (registrationFailed) { reply(action, id, "ERR", "REGISTRY"); return true; }
     if (strcmp(fields[0], "GET") == 0 && size == 2) {
         transaction = false;
         for (size_t i = 0; i < count; ++i) {
             const Parameter &p = parameters[i];
-            Serial.printf("{CFG:VALUE,%lu,%u,%s,%.9g,%.9g,%.9g,%u}\n",
+            Serial.printf("{RSP,CFG,GET,VALUE,%lu,%u,%s,%.9g,%.9g,%.9g,%u}\n",
                 static_cast<unsigned long>(id), static_cast<unsigned>(i), p.name,
                 readValue(p), p.minimum, p.maximum, p.integer ? 1 : 0);
         }
-        Serial.printf("{CFG:END,%lu,%u}\n", static_cast<unsigned long>(id), static_cast<unsigned>(count));
+        Serial.printf("{RSP,CFG,GET,END,%lu,%u}\n", static_cast<unsigned long>(id), static_cast<unsigned>(count));
         return true;
     }
     if (!writable) {
         transaction = false;
-        reply(id, "ERR", "BUSY_OR_MODE");
+        reply(action, id, "ERR", "BUSY_OR_MODE");
         return true;
     }
     if (strcmp(fields[0], "BEGIN") == 0 && size == 2) {
         for (size_t i = 0; i < count; ++i) { staged[i] = readValue(parameters[i]); changed[i] = false; }
         transaction = true;
         transactionId = id;
-        reply(id, "OK", "BEGIN");
+        reply(action, id, "OK", "BEGIN");
     } else if (!transaction || transactionId != id) {
-        reply(id, "ERR", "TRANSACTION");
+        reply(action, id, "ERR", "TRANSACTION");
     } else if (strcmp(fields[0], "SET") == 0 && size == 4) {
         uint32_t index = 0;
-        char *end = nullptr;
-        const float value = strtof(fields[3], &end);
-        if (!parseUnsigned(fields[2], index) || index >= count || end == fields[3]
-                || *end || !isfinite(value) || value < parameters[index].minimum
-                || value > parameters[index].maximum
+        float value = 0;
+        if (!parseUnsigned(fields[2], index) || index >= count
+                || !serialFloat(fields[3], value, parameters[index].minimum,
+                                parameters[index].maximum)
                 || (parameters[index].integer && floorf(value) != value)) {
             transaction = false;
-            reply(id, "ERR", "RANGE");
+            reply(action, id, "ERR", "RANGE");
         } else {
             staged[index] = value;
             changed[index] = true;
-            Serial.printf("{CFG:OK,%lu,SET,%lu}\n", static_cast<unsigned long>(id), static_cast<unsigned long>(index));
+            Serial.printf("{RSP,CFG,SET,OK,%lu,%lu}\n", static_cast<unsigned long>(id), static_cast<unsigned long>(index));
         }
     } else if (strcmp(fields[0], "COMMIT") == 0 && size == 2) {
         // 本函数在串口任务中运行且持有对齐锁；提交期间没有机械动作。
@@ -170,10 +165,10 @@ bool HandleRuntimeParameters(const char *frame, bool writable) {
         }
         ResetDiscAlignmentPid();
         transaction = false;
-        reply(id, "OK", "COMMIT");
+        reply(action, id, "OK", "COMMIT");
     } else {
         transaction = false;
-        reply(id, "ERR", "FORMAT");
+        reply(action, id, "ERR", "FORMAT");
     }
     return true;
 }

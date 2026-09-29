@@ -2,7 +2,7 @@
 import tkinter as tk
 import unittest
 
-from parameter_panel import Parameter, ParameterPanel, parse_parameter
+from upper_computer import Parameter, ParameterPanel, parse_parameter
 
 
 class ValidationTests(unittest.TestCase):
@@ -37,9 +37,9 @@ class PanelTests(unittest.TestCase):
 
     def feed_values(self, values=("100", "1000")):
         seq = self.panel.sequence
-        self.panel.receive(f"{{CFG:VALUE,{seq},0,搬运/高度,{values[0]},0,160,0}}")
-        self.panel.receive(f"{{CFG:VALUE,{seq},1,搬运/等待,{values[1]},1,60000,1}}")
-        self.panel.receive(f"{{CFG:END,{seq},2}}")
+        self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq},0,搬运/高度,{values[0]},0,160,0}}")
+        self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq},1,搬运/等待,{values[1]},1,60000,1}}")
+        self.panel.receive(f"{{RSP,CFG,GET,END,{seq},2}}")
 
     def read(self):
         self.panel.read()
@@ -55,26 +55,26 @@ class PanelTests(unittest.TestCase):
     def test_read_requires_complete_directory(self):
         self.panel.read()
         seq = self.panel.sequence
-        self.panel.receive(f"{{CFG:VALUE,{seq},0,高度,100,0,160,0}}")
-        self.panel.receive(f"{{CFG:END,{seq},2}}")
+        self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq},0,高度,100,0,160,0}}")
+        self.panel.receive(f"{{RSP,CFG,GET,END,{seq},2}}")
         self.assertFalse(self.panel.ready)
         self.assertIn("不完整", self.panel.status.get())
 
     def test_batch_waits_for_each_ack_and_verifies(self):
         seq = self.start_write()
-        self.assertEqual(self.sent[-1], f"{{CFG:BEGIN,{seq}}}")
-        self.panel.receive(f"{{CFG:OK,{seq - 1},BEGIN}}")
-        self.assertEqual(self.sent[-1], f"{{CFG:BEGIN,{seq}}}")
-        self.panel.receive(f"{{CFG:OK,{seq},BEGIN}}")
-        self.assertEqual(self.sent[-1], f"{{CFG:SET,{seq},0,120}}")
-        self.panel.receive(f"{{CFG:OK,{seq},SET,1}}")  # 错序 ACK 不能推进队列。
-        self.assertEqual(self.sent[-1], f"{{CFG:SET,{seq},0,120}}")
-        self.panel.receive(f"{{CFG:OK,{seq},SET,0}}")
-        self.assertEqual(self.sent[-1], f"{{CFG:SET,{seq},1,500}}")
-        self.panel.receive(f"{{CFG:OK,{seq},SET,1}}")
-        self.assertEqual(self.sent[-1], f"{{CFG:COMMIT,{seq}}}")
-        self.panel.receive(f"{{CFG:OK,{seq},COMMIT}}")
-        self.assertEqual(self.sent[-1], f"{{CFG:GET,{seq + 1}}}")
+        self.assertEqual(self.sent[-1], f"{{CMD,CFG,BEGIN,{seq}}}")
+        self.panel.receive(f"{{RSP,CFG,BEGIN,OK,{seq - 1}}}")
+        self.assertEqual(self.sent[-1], f"{{CMD,CFG,BEGIN,{seq}}}")
+        self.panel.receive(f"{{RSP,CFG,BEGIN,OK,{seq}}}")
+        self.assertEqual(self.sent[-1], f"{{CMD,CFG,SET,{seq},0,120}}")
+        self.panel.receive(f"{{RSP,CFG,SET,OK,{seq},1}}")  # 错序 ACK 不能推进队列。
+        self.assertEqual(self.sent[-1], f"{{CMD,CFG,SET,{seq},0,120}}")
+        self.panel.receive(f"{{RSP,CFG,SET,OK,{seq},0}}")
+        self.assertEqual(self.sent[-1], f"{{CMD,CFG,SET,{seq},1,500}}")
+        self.panel.receive(f"{{RSP,CFG,SET,OK,{seq},1}}")
+        self.assertEqual(self.sent[-1], f"{{CMD,CFG,COMMIT,{seq}}}")
+        self.panel.receive(f"{{RSP,CFG,COMMIT,OK,{seq}}}")
+        self.assertEqual(self.sent[-1], f"{{CMD,CFG,GET,{seq + 1}}}")
         self.feed_values(("120", "500"))
         self.assertTrue(self.panel.ready)
         self.assertIn("回读确认", self.panel.status.get())
@@ -82,8 +82,8 @@ class PanelTests(unittest.TestCase):
 
     def test_error_stops_without_commit(self):
         seq = self.start_write()
-        self.panel.receive(f"{{CFG:OK,{seq},BEGIN}}")
-        self.panel.receive(f"{{CFG:ERR,{seq},RANGE}}")
+        self.panel.receive(f"{{RSP,CFG,BEGIN,OK,{seq}}}")
+        self.panel.receive(f"{{RSP,CFG,SET,ERR,{seq},RANGE}}")
         self.assertFalse(any("COMMIT" in frame for frame in self.sent))
         self.assertFalse(self.panel.ready)
         self.assertFalse(self.panel.commands)
@@ -92,9 +92,15 @@ class PanelTests(unittest.TestCase):
         seq = self.start_write()
         previous = list(self.sent)
         self.panel.disconnected()
-        self.panel.receive(f"{{CFG:OK,{seq},BEGIN}}")
+        self.panel.receive(f"{{RSP,CFG,BEGIN,OK,{seq}}}")
         self.assertEqual(previous, self.sent)
         self.assertFalse(self.panel.ready)
+
+    def test_malformed_error_reply_stops_batch(self):
+        seq = self.start_write()
+        self.panel.receive(f"{{RSP,CFG,SET,ERR,{seq}}}")
+        self.assertFalse(self.panel.ready)
+        self.assertFalse(self.panel.commands)
 
     def test_readback_mismatch_not_reported_as_success(self):
         self.read()

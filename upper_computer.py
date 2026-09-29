@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import math
 import queue
+import secrets
 import sys
 import threading
 import tkinter as tk
+from collections import deque
 from dataclasses import dataclass
 from tkinter import messagebox, scrolledtext, ttk
-from parameter_panel import ParameterPanel
 
 try:
     import serial
@@ -22,6 +23,307 @@ try:
 except ImportError:
     serial = None
     list_ports = None
+
+
+# Serial0 v2 串口帧：所有命令封包、回复拆包和显示事件都在这里处理。
+PROTOCOL_VERSION = "2"
+MAX_FRAME_BYTES = 159  # 固件接收缓冲区为 160 字节，末尾保留 NUL。
+
+
+def build_frame(kind: str, category: str, action: str, *args: object) -> str:
+    fields = (kind, category, action, *(str(arg) for arg in args))
+    if kind != "CMD" or any(not field or any(c in field for c in "{},\r\n") for field in fields):
+        raise ValueError("串口指令字段无效")
+    line = "{" + ",".join(fields) + "}"
+    if len(line.encode("utf-8")) > MAX_FRAME_BYTES:
+        raise ValueError("串口指令过长")
+    return line
+
+
+def parse_frame(line: str) -> tuple[str, ...] | None:
+    if not line.startswith("{") or not line.endswith("}"):
+        return None
+    fields = tuple(line[1:-1].split(","))
+    if len(fields) < 3 or any(not field or any(c in field for c in "{}\r\n") for field in fields):
+        return None
+    if fields[0] not in {"RSP", "EVT"}:
+        return None
+    return fields
+
+
+def parse_display_event(line: str) -> tuple[str, str] | None:
+    """拆出显示类型和正文；其他串口日志、指令回复均不视为显示内容。"""
+    fields = parse_frame(line)
+    if fields is None or len(fields) != 4 or fields[:2] != ("EVT", "DISPLAY"):
+        return None
+    display_type, content = fields[2:]
+    if display_type not in {"TASK_CODE", "DEBUG"} or not content:
+        return None
+    if any(ord(char) < 0x20 or ord(char) == 0x7f for char in content):
+        return None
+    if len(line.encode("utf-8")) > MAX_FRAME_BYTES:
+        return None
+    return display_type, content
+
+
+# 运行参数页：读取目录、暂存修改、逐项确认、提交并回读核对。
+@dataclass
+class Parameter:
+    index: int
+    name: str
+    value: str
+    minimum: float
+    maximum: float
+    integer: bool
+
+    def validate(self, text: str) -> str:
+        try:
+            value = float(text)
+        except ValueError as exc:
+            raise ValueError("请输入数字") from exc
+        if not math.isfinite(value) or not self.minimum <= value <= self.maximum:
+            raise ValueError(f"{self.name}：范围为 {self.minimum:g}～{self.maximum:g}")
+        if self.integer and not value.is_integer():
+            raise ValueError(f"{self.name}：必须为整数")
+        return str(int(value)) if self.integer else format(value, ".9g")
+
+
+def parse_parameter(fields: list[str]) -> Parameter:
+    if len(fields) != 8 or fields[0] != "VALUE":
+        raise ValueError("参数帧格式错误")
+    index = int(fields[2])
+    minimum, maximum = float(fields[5]), float(fields[6])
+    if (index < 0 or not fields[3] or fields[7] not in ("0", "1")
+            or not math.isfinite(minimum) or not math.isfinite(maximum)
+            or minimum > maximum):
+        raise ValueError("参数描述错误")
+    # 允许显示固件中的 NaN（尚未标定）；发送时只允许有限数值。
+    float(fields[4])
+    return Parameter(index, fields[3], fields[4], minimum, maximum, fields[7] == "1")
+
+
+class ParameterPanel(ttk.Frame):
+    def __init__(self, parent, send_line, log):
+        super().__init__(parent, padding=8)
+        self.send_line = send_line
+        self.log = log
+        self.parameters: dict[int, Parameter] = {}
+        self.edits: dict[int, str] = {}
+        self.received: dict[int, Parameter] = {}
+        self.sequence = secrets.randbelow(1000000000) + 1
+        self.mode = ""
+        self.ready = False
+        self.commands = deque()
+        self.expected = ""
+        self.timer = None
+        self.selected = None
+        self.verifying = False
+        ttk.Label(self, text="运行参数", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w")
+        ttk.Label(self, text="发送后保存在小车内存，重启恢复默认值。\n读写前停止视觉对齐；写入需调试模式。", justify=tk.LEFT).pack(anchor="w", pady=5)
+        toolbar = ttk.Frame(self)
+        toolbar.pack(fill=tk.X)
+        self.read_button = ttk.Button(toolbar, text="一键读取", command=self.read)
+        self.read_button.pack(side=tk.LEFT)
+        self.send_button = ttk.Button(toolbar, text="发送修改", command=self.send)
+        self.send_button.pack(side=tk.LEFT, padx=5)
+        self.revert_button = ttk.Button(toolbar, text="撤销编辑", command=self.revert)
+        self.revert_button.pack(side=tk.LEFT)
+        body = ttk.Frame(self)
+        body.pack(fill=tk.BOTH, expand=True, pady=8)
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
+        self.tree = ttk.Treeview(body, columns=("name", "value", "edit"), show="headings", height=14, selectmode="browse")
+        for key, title, width in (("name", "参数（含单位）", 235), ("value", "当前值", 80), ("edit", "待发送", 80)):
+            self.tree.heading(key, text=title)
+            self.tree.column(key, width=width, minwidth=60, stretch=(key == "name"))
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(body, orient=tk.VERTICAL, command=self.tree.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        horizontal = ttk.Scrollbar(body, orient=tk.HORIZONTAL, command=self.tree.xview)
+        horizontal.grid(row=1, column=0, sticky="ew")
+        self.tree.configure(yscrollcommand=scroll.set, xscrollcommand=horizontal.set)
+        self.tree.tag_configure("dirty", foreground="#b05b00")
+        self.tree.bind("<<TreeviewSelect>>", self.select)
+        self.tree.bind("<Double-1>", lambda _event: self.entry.focus_set())
+        self.label = tk.StringVar(value="选择参数后在下方修改；数组编号从 1 开始。")
+        ttk.Label(self, textvariable=self.label, wraplength=430).pack(anchor="w")
+        editor = ttk.Frame(self)
+        editor.pack(fill=tk.X, pady=6)
+        self.value = tk.StringVar()
+        self.entry = ttk.Entry(editor, textvariable=self.value, width=20)
+        self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.entry.bind("<Return>", lambda _event: self.edit())
+        self.edit_button = ttk.Button(editor, text="修改选中项", command=self.edit)
+        self.edit_button.pack(side=tk.LEFT, padx=5)
+        self.status = tk.StringVar(value="连接串口后点击“一键读取”。")
+        ttk.Label(self, textvariable=self.status, wraplength=430).pack(anchor="w", pady=5)
+        self.update_controls()
+
+    def update_controls(self):
+        idle = not self.mode
+        self.read_button.configure(state=tk.NORMAL if idle else tk.DISABLED)
+        for widget in (self.send_button, self.edit_button, self.revert_button, self.entry):
+            widget.configure(state=tk.NORMAL if idle and self.ready else tk.DISABLED)
+
+    def cancel_timer(self):
+        if self.timer is not None:
+            self.after_cancel(self.timer)
+            self.timer = None
+
+    def fail(self, message):
+        self.cancel_timer()
+        self.mode = ""
+        self.ready = False
+        self.commands.clear()
+        self.status.set(message + "；请重新读取确认小车当前值。")
+        self.update_controls()
+
+    def disconnected(self):
+        self.fail("连接已变化，旧参数不能继续发送")
+
+    def transmit(self, line):
+        try:
+            self.send_line(line)
+        except (RuntimeError, OSError) as exc:
+            self.fail(str(exc))
+            return False
+        self.log("TX", line)
+        self.cancel_timer()
+        self.timer = self.after(8000, lambda: self.fail("等待参数回复超时（固件需支持 CFG 协议）"))
+        return True
+
+    def read(self, verify=False):
+        if self.mode:
+            return
+        if not verify and self.edits:
+            if not messagebox.askyesno("重新读取", "重新读取会丢弃未发送的编辑，是否继续？", parent=self):
+                return
+        self.sequence += 1
+        self.mode = "read"
+        self.ready = False
+        self.verifying = verify
+        self.received = {}
+        self.status.set("正在回读生效值…" if verify else "正在读取小车参数…")
+        self.update_controls()
+        self.transmit(build_frame("CMD", "CFG", "GET", self.sequence))
+
+    def select(self, _event=None):
+        selection = self.tree.selection()
+        if not selection:
+            return
+        self.selected = int(selection[0])
+        p = self.parameters[self.selected]
+        self.value.set(self.edits.get(p.index, p.value))
+        kind = "整数" if p.integer else "数值"
+        self.label.set(f"{p.name}\n允许范围：{p.minimum:g}～{p.maximum:g}（{kind}）")
+
+    def edit(self):
+        if not self.ready or self.mode or self.selected is None:
+            return True
+        p = self.parameters[self.selected]
+        # 未标定值原样显示时不作为一次编辑。
+        if self.value.get().strip() == p.value:
+            self.edits.pop(p.index, None)
+        else:
+            try:
+                value = p.validate(self.value.get())
+            except ValueError as exc:
+                messagebox.showerror("参数无效", str(exc), parent=self)
+                return False
+            if float(value) == float(p.value):
+                self.edits.pop(p.index, None)
+            else:
+                self.edits[p.index] = value
+        self.tree.item(str(p.index), values=(p.name, p.value, self.edits.get(p.index, "")), tags=("dirty",) if p.index in self.edits else ())
+        self.status.set(f"已修改 {len(self.edits)} 项，点击“发送修改”后生效。")
+        return True
+
+    def revert(self):
+        self.edits.clear()
+        for p in self.parameters.values():
+            self.tree.item(str(p.index), values=(p.name, p.value, ""), tags=())
+        self.select()
+        self.status.set("已撤销本地编辑。")
+
+    def send(self):
+        if self.mode or not self.ready or not self.edit():
+            return
+        if not self.edits:
+            self.status.set("没有需要发送的修改。")
+            return
+        self.sequence += 1
+        self.mode = "write"
+        self.commands = deque([("BEGIN", "BEGIN")])
+        self.commands.extend((f"SET,{i},{v}", f"SET,{i}") for i, v in self.edits.items())
+        self.commands.append(("COMMIT", "COMMIT"))
+        self.status.set(f"正在发送 {len(self.edits)} 项修改…")
+        self.update_controls()
+        self.send_next()
+
+    def send_next(self):
+        command, self.expected = self.commands.popleft()
+        operation, *args = command.split(",")
+        self.transmit(build_frame("CMD", "CFG", operation, self.sequence, *args))
+
+    def receive(self, text):
+        parsed = parse_frame(text)
+        if not self.mode or parsed is None or parsed[:2] != ("RSP", "CFG") or len(parsed) < 5:
+            return
+        action, status = parsed[2:4]
+        if status in ("VALUE", "END"):
+            fields = (status, *parsed[4:])
+        elif status == "ERR":
+            if len(parsed) != 6:
+                self.fail("参数回复异常：错误帧缺少原因")
+                return
+            fields = ("ERR", parsed[4], parsed[5])
+        elif status == "OK":
+            if len(parsed) != (6 if action == "SET" else 5):
+                self.fail("参数回复异常：确认帧字段数量错误")
+                return
+            fields = ("OK", parsed[4], action, *parsed[5:])
+        else:
+            return
+        try:
+            if len(fields) < 2 or int(fields[1]) != self.sequence:
+                return  # 忽略旧连接、旧请求的迟到回复。
+            if fields[0] == "ERR":
+                reason = {"BUSY_OR_MODE": "请切换到调试模式并停止视觉对齐", "RANGE": "固件拒绝了越界参数", "TRANSACTION": "参数事务已失效"}.get(fields[2], fields[2])
+                self.fail("发送失败：" + reason)
+            elif self.mode == "read" and fields[0] == "VALUE":
+                p = parse_parameter(fields)
+                if p.index in self.received:
+                    raise ValueError("重复参数")
+                self.received[p.index] = p
+            elif self.mode == "read" and fields[0] == "END":
+                count = int(fields[2])
+                if len(fields) != 3 or count <= 0 or set(self.received) != set(range(count)):
+                    raise ValueError("读取不完整")
+                if self.verifying:
+                    for index, expected in self.edits.items():
+                        if index not in self.received or not math.isclose(float(self.received[index].value), float(expected), rel_tol=1e-6, abs_tol=1e-8):
+                            raise ValueError("回读值与发送值不一致")
+                self.parameters = self.received
+                self.edits.clear()
+                self.tree.delete(*self.tree.get_children())
+                self.selected = None
+                self.value.set("")
+                for p in self.parameters.values():
+                    self.tree.insert("", tk.END, iid=str(p.index), values=(p.name, p.value, ""))
+                self.cancel_timer()
+                self.mode = ""
+                self.ready = True
+                self.status.set(f"修改已生效并回读确认，共 {count} 项。重启恢复默认值。" if self.verifying else f"已读取 {count} 项参数，选择一项开始编辑。")
+                self.update_controls()
+            elif self.mode == "write" and fields[0] == "OK" and ",".join(fields[2:]) == self.expected:
+                self.cancel_timer()
+                if self.commands:
+                    self.send_next()
+                else:
+                    self.mode = ""
+                    self.read(verify=True)
+        except (ValueError, IndexError) as exc:
+            self.fail("参数回复异常：" + str(exc))
 
 
 FIELD_SIZE_MM = 2400.0
@@ -200,11 +502,11 @@ def target_to_relative_move(current: Pose, target: Pose) -> Pose:
 
 
 def parse_gotopose_echo(text: str) -> Pose | None:
-    """解析固件 ``{GOTOpose:ACK,x,y,theta}`` 格式的接令回显。"""
-    prefix = "{GOTOpose:ACK,"
-    if not text.startswith(prefix) or not text.endswith("}"):
+    """只接受固件发回的相对移动接令确认。"""
+    fields = parse_frame(text)
+    if fields is None or fields[:4] != ("RSP", "POSE", "GOTO_REL", "ACK"):
         return None
-    parts = text[len(prefix):-1].split(",")
+    parts = fields[4:]
     if len(parts) != 3:
         return None
     try:
@@ -218,10 +520,10 @@ def parse_gotopose_echo(text: str) -> Pose | None:
 
 def parse_pose_response(text: str) -> tuple[Pose, ArmPose] | None:
     """解析七轴回读，最后两轴为舵机实测角度；拒绝无效值。"""
-    prefix = "{POSE:OK,"
-    if not text.startswith(prefix) or not text.endswith("}"):
+    fields = parse_frame(text)
+    if fields is None or fields[:4] != ("RSP", "POSE", "GET", "OK"):
         return None
-    parts = text[len(prefix):-1].split(",")
+    parts = fields[4:]
     if len(parts) != 7:
         return None
     try:
@@ -292,11 +594,18 @@ def adjust_keyboard_speed(raw_speed: str, increase: bool) -> float:
 def build_debug_command(command: str, raw_values: list[str]) -> str:
     """校验界面参数并生成 ESP32 当前支持的调试命令。"""
     if command == "help":
-        return "{help}"
-    if command in ("MaterialDemo", "MaterialDemo2", "Mode:Release", "LidarPose"):
+        return build_frame("CMD", "SYS", "HELP")
+    if command in ("MaterialDemo", "MaterialDemo2", "MaterialDemo3", "Mode:Release", "LidarPose"):
         if raw_values:
             raise ValueError("该命令不需要参数")
-        return "{" + command + "}"
+        category, action = {
+            "MaterialDemo": ("ARM", "DEMO1"),
+            "MaterialDemo2": ("ARM", "DEMO2"),
+            "MaterialDemo3": ("ARM", "DEMO3"),
+            "Mode:Release": ("SYS", "RELEASE"),
+            "LidarPose": ("VISION", "LIDAR_POSE"),
+        }[command]
+        return build_frame("CMD", category, action)
     fields = COMMAND_FIELDS.get(command)
     if fields is None or len(raw_values) != len(fields):
         raise ValueError("未知命令或参数数量错误")
@@ -350,18 +659,20 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
 
     tokens = [str(int(value)) if index in integer_indexes else f"{value:g}"
               for index, value in enumerate(values)]
-    return "{" + command + ":" + ",".join(tokens) + "}"
+    category, action = {
+        "GOTOpose": ("POSE", "GOTO_REL"),
+        "Movepose": ("CHASSIS", "MOVE"),
+        "MoveArm_1": ("ARM", "MOVE1"),
+        "MoveArm_2": ("ARM", "MOVE2"),
+        "SERVO": ("ARM", "SERVO"),
+        "En_C": ("ARM", "ENABLE"),
+    }[command]
+    return build_frame("CMD", category, action, *tokens)
 
 
 def build_node_path_command(raw_path: str) -> str:
-    """校验 5×5 蛇形节点图路径，并生成固件使用的 ``{way:0-1-8}`` 指令。"""
+    """校验 5×5 蛇形路径。输入示例：0-1-8。"""
     text = raw_path.strip()
-    if text.startswith("{") or text.endswith("}"):
-        if not (text.startswith("{") and text.endswith("}")):
-            raise ValueError("路径花括号必须成对出现")
-        text = text[1:-1].strip()
-    if text.startswith("way:"):
-        text = text[len("way:"):].strip()
 
     parts = [part.strip() for part in text.split("-")]
     if len(parts) < 2 or len(parts) > MAX_NODE_PATH_LENGTH:
@@ -377,14 +688,14 @@ def build_node_path_command(raw_path: str) -> str:
         end_row, end_column = node_grid_position(end)
         if abs(start_row - end_row) + abs(start_column - end_column) != 1:
             raise ValueError(f"节点 {start} 与节点 {end} 不相邻")
-    return "{way:" + "-".join(str(node) for node in nodes) + "}"
+    return build_frame("CMD", "NAV", "ROUTE", *nodes)
 
 
 def build_start_zone_command(zone_name: str) -> str:
     """生成 Debug 固件的启停区切换命令。"""
     if zone_name not in START_POSES:
         raise ValueError("未知启停区")
-    return f"{{StartZone:{1 if zone_name == '启停区1' else 2}}}"
+    return build_frame("CMD", "NAV", "START_ZONE", 1 if zone_name == "启停区1" else 2)
 
 
 def build_alignment_control_command(action: str) -> str:
@@ -392,7 +703,7 @@ def build_alignment_control_command(action: str) -> str:
     normalized = action.strip().upper()
     if normalized not in {"START", "STOP"}:
         raise ValueError("对齐任务动作只能是 START 或 STOP")
-    return f"{{ALIGN:{normalized}}}"
+    return build_frame("CMD", "VISION", "ALIGN_" + normalized)
 
 
 def build_pose_calibration_command(pose: Pose) -> str:
@@ -401,7 +712,7 @@ def build_pose_calibration_command(pose: Pose) -> str:
         raise ValueError("姿态不能包含无穷大或 NaN")
     if not pose_fits_field(pose):
         raise ValueError("该姿态会使 300×300 mm 车体超出场地边界")
-    return f"{{SetPose:{pose.x:g},{pose.y:g},{pose.theta:g}}}"
+    return build_frame("CMD", "POSE", "SET", f"{pose.x:g}", f"{pose.y:g}", f"{pose.theta:g}")
 
 
 class SerialLink:
@@ -412,6 +723,7 @@ class SerialLink:
         self._port = None
         self._reader: threading.Thread | None = None
         self._stop = threading.Event()
+        self.protocol_ready = False
 
     @property
     def is_open(self) -> bool:
@@ -440,12 +752,14 @@ class SerialLink:
         port.rts = False
         port.open()
         self._port = port
+        self.protocol_ready = False
         self._stop.clear()
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
 
     def disconnect(self) -> None:
         self._stop.set()
+        self.protocol_ready = False
         port = self._port
         self._port = None
         if port is not None:
@@ -461,6 +775,8 @@ class SerialLink:
     def send_line(self, command: str) -> None:
         if not self.is_open:
             raise RuntimeError("串口尚未连接")
+        if not self.protocol_ready and command != build_frame("CMD", "SYS", "HELLO"):
+            raise RuntimeError("等待 ESP32 确认串口协议 v2")
         assert self._port is not None
         self._port.write((command + "\n").encode("utf-8"))
 
@@ -1264,6 +1580,7 @@ class UpperComputerApp:
         self.pending_target: Pose | None = None
         self.pending_relative_move: Pose | None = None
         self.pose_query_timer: str | None = None
+        self.protocol_timer: str | None = None
         self.pressed_drive_keys: list[str] = []
         self.active_drive_key: str | None = None
         self.pressed_rotation_keys: set[str] = set()
@@ -1301,6 +1618,17 @@ class UpperComputerApp:
         self.pose_query_status = tk.StringVar(value="尚未回读：舵机实测，其余轴为理想值")
         ttk.Label(connection, textvariable=self.pose_query_status).grid(
             row=1, column=2, columnspan=4, sticky="w", pady=(6, 0)
+        )
+        self.task_code_var = tk.StringVar(value="尚未收到任务码")
+        self.debug_display_var = tk.StringVar(value="等待小车信息")
+        ttk.Label(connection, text="任务码：").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(
+            connection, textvariable=self.task_code_var,
+            font=("Microsoft YaHei UI", 14, "bold"),
+        ).grid(row=2, column=1, columnspan=5, sticky="w", pady=(6, 0))
+        ttk.Label(connection, text="调试信息：").grid(row=3, column=0, sticky="w")
+        ttk.Label(connection, textvariable=self.debug_display_var).grid(
+            row=3, column=1, columnspan=5, sticky="w"
         )
 
         self.field = FieldCanvas(container)
@@ -1407,7 +1735,7 @@ class UpperComputerApp:
         align_group.columnconfigure(1, weight=1)
         ttk.Label(
             align_group,
-            text="开启后接收 20 Hz {ALIGN:angle,x,y}；停止会立即停车并清除 PID。",
+            text="开启后接收 20 Hz {CMD,VISION,ALIGN_DATA,angle,x,y}；停止会立即停车并清除 PID。",
             foreground="#59636e",
             wraplength=280,
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
@@ -1769,6 +2097,7 @@ class UpperComputerApp:
 
     def toggle_connection(self) -> None:
         self.parameter_panel.disconnected()
+        self._cancel_protocol_timer()
         self._cancel_pose_query_timeout()
         self.pose_query_status.set("连接已变更，请重新查询位姿")
         if self.serial_link.is_open:
@@ -1786,15 +2115,39 @@ class UpperComputerApp:
         if not port_name:
             messagebox.showerror("无法连接", "请先选择或输入 COM 端口", parent=self.root)
             return
+        # 丢弃上一连接尚未处理的回复，避免旧 HELLO 确认误解锁新连接。
+        for _ in range(self.serial_events.qsize()):
+            try:
+                self.serial_events.get_nowait()
+            except queue.Empty:
+                break
         try:
             self.serial_link.connect(port_name)
+            self.serial_link.send_line(build_frame("CMD", "SYS", "HELLO"))
         except Exception as exc:
             messagebox.showerror("串口连接失败", str(exc), parent=self.root)
             self.append_log("ERROR", str(exc))
             return
         self.connect_button.configure(text="断开")
-        self.connection_var.set(f"已连接 {port_name} · 115200 8N1")
-        self.append_log("INFO", f"已连接 {port_name}；等待 ESP32 Debug mode 输出")
+        self.connection_var.set(f"已连接 {port_name} · 正在确认协议 v{PROTOCOL_VERSION}")
+        self.task_code_var.set("尚未收到任务码")
+        self.debug_display_var.set("等待小车信息")
+        self.protocol_timer = self.root.after(3000, self._protocol_timeout)
+        self.append_log("TX", build_frame("CMD", "SYS", "HELLO"))
+
+    def _cancel_protocol_timer(self) -> None:
+        if self.protocol_timer is not None:
+            self.root.after_cancel(self.protocol_timer)
+            self.protocol_timer = None
+
+    def _protocol_timeout(self) -> None:
+        self.protocol_timer = None
+        if self.serial_link.is_open and not self.serial_link.protocol_ready:
+            self.serial_link.disconnect()
+            self.parameter_panel.disconnected()
+            self.connect_button.configure(text="连接")
+            self.connection_var.set("协议不匹配或设备无回复")
+            self.append_log("WARN", "未收到 ESP32 串口协议 v2 确认；控制命令已禁用")
 
     def send_command(self, command: str) -> None:
         if command == "GOTOpose" and self.pending_target is not None:
@@ -2076,15 +2429,18 @@ class UpperComputerApp:
         line = self.raw_command_var.get().strip()
         if not line:
             return
-        if self.pending_target is not None and line.split(maxsplit=1)[0] == "GOTOpose":
+        if self.pending_target is not None and line.startswith("{CMD,POSE,GOTO_REL,"):
             messagebox.showerror(
                 "命令未发送",
                 "姿态页目标仍在等待回显，请勿同时发送另一条 GOTOpose。",
                 parent=self.root,
             )
             return
-        if "\n" in line or "\r" in line or len(line.encode("utf-8")) > 90:
-            messagebox.showerror("命令未发送", "原始命令不能换行，长度不能超过 90 字节", parent=self.root)
+        if "\n" in line or "\r" in line or len(line.encode("utf-8")) > 159:
+            messagebox.showerror("命令未发送", "原始命令不能换行，长度不能超过 159 字节", parent=self.root)
+            return
+        if not line.startswith("{CMD,") or not line.endswith("}"):
+            messagebox.showerror("命令未发送", "请输入协议 v2 的 {CMD,类别,动作,...} 指令", parent=self.root)
             return
         try:
             self.serial_link.send_line(line)
@@ -2103,11 +2459,12 @@ class UpperComputerApp:
     def query_poses(self) -> None:
         """串口查询七轴状态，显示仅在收到合法回复后更新。"""
         try:
-            self.serial_link.send_line("{POSE:GET}")
+            line = build_frame("CMD", "POSE", "GET")
+            self.serial_link.send_line(line)
         except (RuntimeError, OSError) as exc:
             self.pose_query_status.set(f"查询未发送：{exc}")
             return
-        self.append_log("TX", "{POSE:GET}")
+        self.append_log("TX", line)
         self.pose_query_status.set("已发送查询，等待位姿回复")
         self._cancel_pose_query_timeout()
         self.pose_query_timer = self.root.after(3000, self._pose_query_timeout)
@@ -2122,7 +2479,7 @@ class UpperComputerApp:
         self.pose_query_status.set("查询超时，保留上次显示；动作结束后可重新查询")
 
     def _accept_pose_response(self, text: str) -> None:
-        if text in ("{POSE:ERR,SERVO_READ,1}", "{POSE:ERR,SERVO_READ,2}"):
+        if text in ("{RSP,POSE,GET,ERR,SERVO_READ,1}", "{RSP,POSE,GET,ERR,SERVO_READ,2}"):
             self._cancel_pose_query_timeout()
             axis = "夹爪（1 号）" if text.endswith(",1}") else "舵盘（2 号）"
             self.pose_query_status.set(f"{axis}舵机读取失败，保留上次显示")
@@ -2130,7 +2487,7 @@ class UpperComputerApp:
             return
         result = parse_pose_response(text)
         if result is None:
-            if text.startswith("{POSE:"):
+            if text.startswith("{RSP,POSE,GET,"):
                 self.pose_query_status.set("位姿回复无效，未更新显示")
             return
         robot, arm = result
@@ -2148,6 +2505,18 @@ class UpperComputerApp:
         )
         self.pose_query_status.set("已回读：舵盘 / 夹爪为实测，其余轴为理想值")
 
+    def _accept_display_event(self, text: str) -> bool:
+        """按显示类型更新对应区域，避免调试信息覆盖任务码。"""
+        display_event = parse_display_event(text)
+        if display_event is None:
+            return False
+        display_type, content = display_event
+        if display_type == "TASK_CODE":
+            self.task_code_var.set(content)
+        else:
+            self.debug_display_var.set(content)
+        return True
+
     def poll_serial_events(self) -> None:
         while True:
             try:
@@ -2156,17 +2525,33 @@ class UpperComputerApp:
                 break
             self.append_log(kind, text)
             if kind == "RX":
+                fields = parse_frame(text)
+                if fields is not None and fields[:4] == ("RSP", "SYS", "HELLO", "OK"):
+                    if len(fields) == 5 and fields[4] == PROTOCOL_VERSION:
+                        self.serial_link.protocol_ready = True
+                        self._cancel_protocol_timer()
+                        self.connection_var.set("协议 v2 已确认 · 115200 8N1")
+                    else:
+                        self._cancel_protocol_timer()
+                        self.serial_link.disconnect()
+                        self.connect_button.configure(text="连接")
+                        self.connection_var.set("ESP32 协议版本不匹配")
+                    continue
+                self._accept_display_event(text)
                 # 路径接收确认与执行完成是两个阶段，不能把 OK 当作到达。
                 route_status = {
-                    "{way:WAITING}": "小车正在等待路径节点命令。",
-                    "{way:RUNNING}": "路径执行中，请等待。",
-                    "{way:DONE,ESTIMATED}": "路径指令及预计等待已完成；尚无实测到位确认。",
+                    "{EVT,NAV,ROUTE_WAITING}": "小车正在等待路径节点命令。",
+                    "{EVT,NAV,ROUTE_RUNNING}": "路径执行中，请等待。",
+                    "{EVT,NAV,ROUTE_DONE,ESTIMATED}": "路径指令及预计等待已完成；尚无实测到位确认。",
                 }
                 if text in route_status:
                     self.status_var.set(route_status[text])
-                elif text.startswith("{way:OK,"):
+                elif fields is not None and fields[:4] == ("RSP", "NAV", "ROUTE", "ACK"):
                     self.status_var.set("小车已收到路径，等待执行结果。")
-                elif text.startswith("{way:ERR"):
+                elif fields is not None and (
+                    fields[:3] == ("EVT", "NAV", "ROUTE_FAILED")
+                    or fields[:4] == ("RSP", "NAV", "ROUTE", "ERR")
+                ):
                     self.status_var.set(f"路径命令失败或被拒绝：{text}")
                 was_reading = self.parameter_panel.mode == "read"
                 self.parameter_panel.receive(text)
@@ -2182,6 +2567,7 @@ class UpperComputerApp:
                 self._accept_target_echo(text)
                 self._accept_pose_response(text)
             if kind == "ERROR":
+                self._cancel_protocol_timer()
                 self._cancel_pose_query_timeout()
                 self.parameter_panel.disconnected()
                 self.serial_link.disconnect()
@@ -2197,6 +2583,7 @@ class UpperComputerApp:
         self.root.after(60, self.poll_serial_events)
 
     def on_close(self) -> None:
+        self._cancel_protocol_timer()
         self._stop_keyboard_drive()
         self.pressed_rotation_keys.clear()
         self.serial_link.disconnect()
@@ -2250,7 +2637,7 @@ def run_self_test() -> None:
                 accepted = False
             assert accepted == expected, (start, end)
     full_path = "-".join(str(node) for node in range(FIELD_NODE_COUNT))
-    assert build_node_path_command(full_path) == "{way:" + full_path + "}"
+    assert build_node_path_command(full_path) == "{CMD,NAV,ROUTE," + full_path.replace("-", ",") + "}"
     full_arm_reach = (
         full_slider_center
         + ARM_SLIDER_FIXED_LENGTH_MM / 2.0
@@ -2275,14 +2662,14 @@ def run_self_test() -> None:
     )
     assert build_debug_command(
         "GOTOpose", [str(diagonal.x), str(diagonal.y), str(diagonal.theta)]
-    ).startswith("{GOTOpose:2545.58,")
-    assert parse_gotopose_echo("{GOTOpose:ACK,450,250,90}") == Pose(450.0, 250.0, 90.0)
-    assert parse_gotopose_echo("{other:ACK,450,250,90}") is None
-    assert gotopose_echo_matches("{GOTOpose:ACK,450,250,90}", Pose(450.4, 249.6, 90.0))
-    assert not gotopose_echo_matches("{GOTOpose:ACK,451,250,90}", Pose(450.4, 249.6, 90.0))
-    assert build_debug_command("GOTOpose", ["100", "-20.5", "90"]) == "{GOTOpose:100,-20.5,90}"
-    assert build_debug_command("Movepose", ["0", "80", "0"]) == "{Movepose:0,80,0}"
-    assert build_debug_command("Movepose", ["3", "80", "0"]) == "{Movepose:3,80,0}"
+    ).startswith("{CMD,POSE,GOTO_REL,2545.58,")
+    assert parse_gotopose_echo("{RSP,POSE,GOTO_REL,ACK,450,250,90}") == Pose(450.0, 250.0, 90.0)
+    assert parse_gotopose_echo("{RSP,POSE,SET,ACK,450,250,90}") is None
+    assert gotopose_echo_matches("{RSP,POSE,GOTO_REL,ACK,450,250,90}", Pose(450.4, 249.6, 90.0))
+    assert not gotopose_echo_matches("{RSP,POSE,GOTO_REL,ACK,451,250,90}", Pose(450.4, 249.6, 90.0))
+    assert build_debug_command("GOTOpose", ["100", "-20.5", "90"]) == "{CMD,POSE,GOTO_REL,100,-20.5,90}"
+    assert build_debug_command("Movepose", ["0", "80", "0"]) == "{CMD,CHASSIS,MOVE,0,80,0}"
+    assert build_debug_command("Movepose", ["3", "80", "0"]) == "{CMD,CHASSIS,MOVE,3,80,0}"
     assert KEYBOARD_DRIVE_DIRECTIONS == {
         "w": (0, "前进"),
         "s": (1, "后退"),
@@ -2297,19 +2684,19 @@ def run_self_test() -> None:
     assert adjust_keyboard_speed("80", False) == 70.0
     assert adjust_keyboard_speed("300", True) == KEYBOARD_MAX_SPEED
     assert adjust_keyboard_speed("10", False) == KEYBOARD_MIN_SPEED
-    assert build_debug_command("MoveArm_1", ["-1", "100", "80"]) == "{MoveArm_1:-1,100,80}"
-    assert build_debug_command("MoveArm_2", ["30", "-1", "80"]) == "{MoveArm_2:30,-1,80}"
-    assert build_debug_command("SERVO", ["2", "-45"]) == "{SERVO:2,-45}"
-    assert build_debug_command("help", []) == "{help}"
-    assert build_node_path_command("0-1-8") == "{way:0-1-8}"
-    assert build_node_path_command(" {way:24-23-16-13} ") == "{way:24-23-16-13}"
-    assert build_start_zone_command("启停区1") == "{StartZone:1}"
-    assert build_start_zone_command("启停区2") == "{StartZone:2}"
-    assert build_alignment_control_command("start") == "{ALIGN:START}"
-    assert build_alignment_control_command("STOP") == "{ALIGN:STOP}"
+    assert build_debug_command("MoveArm_1", ["-1", "100", "80"]) == "{CMD,ARM,MOVE1,-1,100,80}"
+    assert build_debug_command("MoveArm_2", ["30", "-1", "80"]) == "{CMD,ARM,MOVE2,30,-1,80}"
+    assert build_debug_command("SERVO", ["2", "-45"]) == "{CMD,ARM,SERVO,2,-45}"
+    assert build_debug_command("help", []) == "{CMD,SYS,HELP}"
+    assert build_node_path_command("0-1-8") == "{CMD,NAV,ROUTE,0,1,8}"
+    assert build_node_path_command(" 24-23-16-13 ") == "{CMD,NAV,ROUTE,24,23,16,13}"
+    assert build_start_zone_command("启停区1") == "{CMD,NAV,START_ZONE,1}"
+    assert build_start_zone_command("启停区2") == "{CMD,NAV,START_ZONE,2}"
+    assert build_alignment_control_command("start") == "{CMD,VISION,ALIGN_START}"
+    assert build_alignment_control_command("STOP") == "{CMD,VISION,ALIGN_STOP}"
     assert (
         build_pose_calibration_command(Pose(150.0, 150.0, 0.0))
-        == "{SetPose:150,150,0}"
+        == "{CMD,POSE,SET,150,150,0}"
     )
     for invalid_path in ("1", "1-5", "4-9", "24-25", "1-2-", "{1-2"):
         try:
