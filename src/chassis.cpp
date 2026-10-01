@@ -417,8 +417,8 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
 
 
 /**
- * @brief 速度模式直线移动(麦克纳姆轮, 通用)
- * @param direction 0=前进 1=后退 2=左移 3=右移
+ * @brief 速度模式平移或原地旋转(麦克纳姆轮, 通用)
+ * @param direction 0=前进 1=后退 2=左移 3=右移 4=左转 5=右转
  * @param speed   电机转速 (RPM)
  * @param stop    true=停止 false=开始移动
  */
@@ -445,8 +445,8 @@ void MovePose(int direction, float speed, bool stop) {
         return;
     }
 
-    if (direction < 0 || direction > 3) {
-        Serial.println("MovePose direction error, should be 0=fwd, 1=back, 2=left, 3=right");
+    if (direction < 0 || direction > 5) {
+        Serial.println("MovePose direction error, should be 0=fwd, 1=back, 2=left, 3=right, 4=turn left, 5=turn right");
         return;
     }
 
@@ -494,6 +494,15 @@ void MovePose(int direction, float speed, bool stop) {
         vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
         Emm_V5_Vel_Control(4, 1, speed, 50, 1);
         vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
+        Emm_V5_Synchronous_motion(0);
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
+    } else if (direction == 4 || direction == 5) {
+        // 沿用 GotoPose 正角左转、负角右转的四轮方向约定。
+        const uint8_t motorDirection = (direction == 4) ? 1 : 0;
+        for (uint8_t motor = 1; motor <= 4; ++motor) {
+            Emm_V5_Vel_Control(motor, motorDirection, speed, 50, 1);
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
+        }
         Emm_V5_Synchronous_motion(0);
         vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
     }

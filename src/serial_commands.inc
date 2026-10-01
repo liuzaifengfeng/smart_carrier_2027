@@ -20,6 +20,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"NAV", "START_ZONE"}, {"NAV", "ROUTE"},
         {"VISION", "ALIGN_START"}, {"VISION", "ALIGN_STOP"},
         {"VISION", "START_REQUEST"},
+        {"VISION", "STOP_REQUEST"},
         {"VISION", "ALIGN_DATA"}, {"VISION", "COLOR"},
         {"VISION", "CONFIRM"}, {"VISION", "LIDAR_POSE"},
         {"POSE", "GET"}, {"POSE", "SET"}, {"POSE", "GOTO_REL"},
@@ -137,7 +138,8 @@ static void serialDispatch(const SerialFrame &frame) {
         Serial.printf("{RSP,NAV,START_ZONE,OK,%u}\n", static_cast<unsigned>(zone));
     } else if (frame.starts("NAV", "ROUTE")) {
         serialRoute(frame);
-    } else if (frame.is("VISION", "START_REQUEST", 1)) {
+    } else if (frame.is("VISION", "START_REQUEST", 1)
+               || frame.is("VISION", "STOP_REQUEST", 1)) {
         VisionStartMode mode;
         const char *name = frame.fields[3];
         if (strcmp(name, "DISC") == 0) mode = VisionStartMode::DISC;
@@ -147,8 +149,9 @@ static void serialDispatch(const SerialFrame &frame) {
         else if (strcmp(name, "CORNER") == 0) mode = VisionStartMode::CORNER;
         else { serialError(frame, "RANGE"); return; }
         // 两种运行模式都允许请求切换；ACK 仅表示接令，事件才表示主控已发出请求。
-        Serial.printf("{RSP,VISION,START_REQUEST,ACK,%s}\n", name);
-        requestVisionStart(mode);
+        Serial.printf("{RSP,VISION,%s,ACK,%s}\n", frame.fields[2], name);
+        if (strcmp(frame.fields[2], "START_REQUEST") == 0) requestVisionStart(mode);
+        else requestVisionStop(mode);
     } else if (frame.is("VISION", "ALIGN_START", 0)) {
         setAlignmentEnabled(true, true);
     } else if (frame.is("VISION", "ALIGN_STOP", 0)) {
@@ -207,7 +210,7 @@ static void serialDispatch(const SerialFrame &frame) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         uint32_t direction = 0, stop = 0;
         float speed = 0;
-        if (!serialUInt(frame.fields[3], direction, 3)
+        if (!serialUInt(frame.fields[3], direction, 5)
                 || !serialFloat(frame.fields[4], speed, 0, 1000)
                 || !serialUInt(frame.fields[5], stop, 1)) {
             serialError(frame, "RANGE"); return;

@@ -8,10 +8,27 @@ from upper_computer import (
     SerialLink, UpperComputerApp, build_frame, build_node_path_command,
     build_debug_command, parse_display_event, parse_frame, parse_vision_start_request,
     build_vision_start_request_command,
+    build_vision_stop_request_command, parse_vision_stop_request,
 )
 
 
 class FrameTests(unittest.TestCase):
+    def test_five_stop_requests_and_invalid_modes(self):
+        for mode in ("DISC", "DISC_MATERIAL", "WORK_AREA", "WORK_AREA_LOADED", "CORNER"):
+            with self.subTest(mode=mode):
+                self.assertEqual(build_vision_stop_request_command(mode),
+                                 f"{{CMD,VISION,STOP_REQUEST,{mode}}}")
+                self.assertEqual(parse_vision_stop_request(f"{{EVT,VISION,STOP_REQUEST,{mode}}}"), mode)
+                self.assertIsNone(parse_vision_start_request(f"{{EVT,VISION,STOP_REQUEST,{mode}}}"))
+        for mode in ("", "corner", "UNKNOWN", "DISC,EXTRA", "CORNER\n"):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                build_vision_stop_request_command(mode)
+        for text in ("{CMD,VISION,STOP_REQUEST,DISC}", "{EVT,VISION,STOP_REQUEST,UNKNOWN}",
+                     "{EVT,VISION,STOP_REQUEST,DISC,EXTRA}", "{EVT,VISION,STOP_REQUEST}",
+                     "{EVT,VISION,START_REQUEST,DISC}", "{EVT,VISION,STOP_REQUEST,DISC"):
+            with self.subTest(text=text):
+                self.assertIsNone(parse_vision_stop_request(text))
+
     def test_retrieve_demo_command(self):
         self.assertEqual(build_debug_command("MaterialDemo4", []), "{CMD,ARM,DEMO4}")
         with self.assertRaises(ValueError):
@@ -75,6 +92,23 @@ class FrameTests(unittest.TestCase):
 
 
 class ConnectionGateTests(unittest.TestCase):
+    def test_stop_button_and_reply_do_not_claim_vision_has_stopped(self):
+        app = UpperComputerApp.__new__(UpperComputerApp)
+        app.serial_link = Mock()
+        app.append_log = Mock()
+        app.vision_request_var = Mock()
+        for mode, label in (("DISC", "圆盘定位"), ("CORNER", "角点视觉识别")):
+            app.send_vision_stop_request(mode)
+            app.serial_link.send_line.assert_called_with(f"{{CMD,VISION,STOP_REQUEST,{mode}}}")
+            app.vision_request_var.set.assert_called_with(f"结束命令已发送：{label}，等待小车接令")
+            self.assertTrue(app._accept_vision_start_request(f"{{RSP,VISION,STOP_REQUEST,ACK,{mode}}}"))
+            app.vision_request_var.set.assert_called_with(f"小车已接结束命令：{label}，等待请求事件")
+            self.assertTrue(app._accept_vision_start_request(f"{{EVT,VISION,STOP_REQUEST,{mode}}}"))
+            app.vision_request_var.set.assert_called_with(f"请求结束：{label}")
+        self.assertTrue(app._accept_vision_start_request("{RSP,VISION,STOP_REQUEST,ERR,FORMAT}"))
+        app.vision_request_var.set.assert_called_with("小车拒绝视觉请求：FORMAT")
+        self.assertFalse(app._accept_vision_start_request("{RSP,VISION,STOP_REQUEST,ACK,UNKNOWN}"))
+
     def test_vision_button_waits_for_vehicle_event(self):
         app = UpperComputerApp.__new__(UpperComputerApp)
         app.serial_link = Mock()

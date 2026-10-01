@@ -32,7 +32,7 @@ extern float LENGTH_PULSE; // 伸缩机械臂 每毫米脉冲
 
 // ================= 运动原语(麦克纳姆轮, 通用) =================
 
-// @brief 速度模式移动. direction 0=前进 1=后退 2=左移 3=右移, speed=RPM, stop=true停止
+// @brief 速度模式移动. direction 0=前进 1=后退 2=左移 3=右移 4=左转 5=右转, speed=RPM, stop=true停止
 void MovePose(int direction, float speed, bool stop);
 
 // @brief 位置模式移动到位.

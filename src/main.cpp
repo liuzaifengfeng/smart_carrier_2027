@@ -380,25 +380,32 @@ enum class VisionStartMode : uint8_t {
     CORNER
 };
 
-void requestVisionStart(VisionStartMode mode) {
+static void requestVisionFunction(VisionStartMode mode, bool start) {
+    const char *name = nullptr;
     switch (mode) {
         case VisionStartMode::DISC:
-            Serial.println("{EVT,VISION,START_REQUEST,DISC}");
+            name = "DISC";
             break;
         case VisionStartMode::DISC_MATERIAL:
-            Serial.println("{EVT,VISION,START_REQUEST,DISC_MATERIAL}");
+            name = "DISC_MATERIAL";
             break;
         case VisionStartMode::WORK_AREA:
-            Serial.println("{EVT,VISION,START_REQUEST,WORK_AREA}");
+            name = "WORK_AREA";
             break;
         case VisionStartMode::WORK_AREA_LOADED:
-            Serial.println("{EVT,VISION,START_REQUEST,WORK_AREA_LOADED}");
+            name = "WORK_AREA_LOADED";
             break;
         case VisionStartMode::CORNER:
-            Serial.println("{EVT,VISION,START_REQUEST,CORNER}");
+            name = "CORNER";
             break;
     }
+    if (name) Serial.printf("{EVT,VISION,%s,%s}\n", start ? "START_REQUEST" : "STOP_REQUEST", name);
 }
+
+void requestVisionStart(VisionStartMode mode) { requestVisionFunction(mode, true); }
+
+// 只请求机载电脑结束指定功能，不表示相机已经停止。
+void requestVisionStop(VisionStartMode mode) { requestVisionFunction(mode, false); }
 
 // 超时兜底: 任一环节卡死则放弃本轮, 回启停区
 void vHomeTimerCallback(TimerHandle_t xTimer) {

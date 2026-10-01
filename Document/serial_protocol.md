@@ -25,6 +25,7 @@
 | `{StartZone:1}` / `:2` | `{CMD,NAV,START_ZONE,1}` / `2` | 两者 | `{RSP,NAV,START_ZONE,OK,1}` / `2` |
 | `{way:0-1-8}` | `{CMD,NAV,ROUTE,0,1,8}` | 两者 | `{RSP,NAV,ROUTE,ACK,3}`，随后路径事件 |
 | 无 | `{CMD,VISION,START_REQUEST,mode}` | 两者 | `{RSP,VISION,START_REQUEST,ACK,mode}`，随后 `{EVT,VISION,START_REQUEST,mode}` |
+| 无 | `{CMD,VISION,STOP_REQUEST,mode}` | 两者 | `{RSP,VISION,STOP_REQUEST,ACK,mode}`，随后 `{EVT,VISION,STOP_REQUEST,mode}` |
 | `{ALIGN:START}` | `{CMD,VISION,ALIGN_START}` | 两者 | `{RSP,VISION,ALIGN_START,OK}` |
 | `{ALIGN:STOP}` | `{CMD,VISION,ALIGN_STOP}` | 两者 | `{RSP,VISION,ALIGN_STOP,OK}` |
 | `{ALIGN:angle,x,y}` | `{CMD,VISION,ALIGN_DATA,angle,x,y}` | 两者 | 正常连续反馈不逐帧回复 |
@@ -44,6 +45,8 @@
 
 ### 参数与限制
 
+键盘微调：Shift+Q 左转、Shift+E 右转，按住启动，松开 Q/E 或 Shift 停止。MOVE 的 dir 支持 0=前进、1=后退、2=左移、3=右移、4=左转、5=右转；speed 为电机 RPM，stop=0 启动、stop=1 停止。单独 Q/E 仍执行 ±90° 相对旋转。
+
 - `DEMO4`：小车停稳在暂存区、区域 1～3 号位各有一件物料且三个载物台为空时使用。按内侧到外侧依次完整执行“暂存区 1 → 载物台 3、2 → 2、3 → 1”。固件在运动前检查三个载物台状态和位姿；物料颜色临时按红色登记，动作不含底盘导航，也不能检测实际有无物料。`DONE` 表示预设动作序列执行结束，不代表传感器确认抓取成功。
 
 - `START_ZONE` 只能为 1 或 2。Debug 中设置后同步软件估计位姿；Release 中保留现有业务状态行为。
@@ -51,6 +54,7 @@
 - `ALIGN_DATA`：三个有限浮点值，依次为角度偏差（度）、视觉 X 与 Y 偏差（视觉单位）；20 Hz 连续输入时只保留最新一帧。停止对齐后收到有效反馈也不驱动电机。
 - `COLOR`：有限数值；`CONFIRM`：无参数。二者仅供 Release 业务状态机使用。
 - `VISION START_REQUEST`：恰好一个模式参数，只允许 `DISC`、`DISC_MATERIAL`、`WORK_AREA`、`WORK_AREA_LOADED`、`CORNER`。未知模式回复 `RANGE`，缺参数或多参数回复 `FORMAT`，均不发送视觉请求事件。Debug 和 Release 均可调用，每次合法命令发送一次事件，不自动开启 PID 对齐或改变业务状态。
+- `VISION STOP_REQUEST`：模式、参数数量、运行模式及错误规则与 `START_REQUEST` 相同。每次合法命令仅请求结束指定视觉功能，先回复 ACK 再发出 STOP_REQUEST 事件；不自动停止 ESP32 的 PID 对齐，不改变业务状态。连续对齐需要单独发送 `{CMD,VISION,ALIGN_STOP}` 停车并清零 PID。
 - `POSE GET`：`x,y,theta,h,l` 是软件维护的理想/开环值，单位依次为 mm、mm、度、mm、mm；`turret,pawl` 是现场读取的 2 号、1 号舵机角度（度）。读取失败回复 `{RSP,POSE,GET,ERR,SERVO_READ,2}` 或 `1`，不会用旧值冒充实测。
 - `ARM MOVE2` 使用多圈绝对角度控制。输入角度限制为 ±360°；下发前读取舵机真实多圈角度，在相同物理朝向的多个目标中选择最近的一项。真实累计多圈目标可能超过 ±360°，不能按输入范围拦截；只检查舵机协议的 ±368640° 范围。多圈回读失败时跳过该舵机动作并输出 `[Arm] ERR`。搬运 Demo 遇到该失败会停止并报告 `FAILED`；失败后需人工确认物料位置。`POSE GET` 的角度仍是单圈回读，不能用它判断舵机已累计的圈数。
 - `POSE SET`：x、y 为 0～2400 mm，theta 为有限角度。`GOTO_REL`：x、y 各为 ±3394.113 mm，theta 为 ±360 度；都是**相对移动量**，ACK 后执行动作。
@@ -96,11 +100,35 @@ ESP32  {EVT,VISION,START_REQUEST,CORNER}
 电脑   由机载视觉程序处理事件并开启角点识别
 ```
 
+### 主控请求结束机载视觉功能
+
+五种功能各有对应的结束命令和事件，上位机“视觉”页每一行提供“开启”和“结束”按钮。固件业务流程可调用 `requestVisionStop(VisionStartMode)` 发出结束事件。
+
+| 视觉功能 | 上位机 → 小车结束命令 | 小车 → 机载电脑结束事件 |
+|---|---|---|
+| 圆盘定位 | `{CMD,VISION,STOP_REQUEST,DISC}` | `{EVT,VISION,STOP_REQUEST,DISC}` |
+| 圆盘物料识别 | `{CMD,VISION,STOP_REQUEST,DISC_MATERIAL}` | `{EVT,VISION,STOP_REQUEST,DISC_MATERIAL}` |
+| 暂存区／粗加工区定位 | `{CMD,VISION,STOP_REQUEST,WORK_AREA}` | `{EVT,VISION,STOP_REQUEST,WORK_AREA}` |
+| 暂存区／粗加工区带物料视觉 | `{CMD,VISION,STOP_REQUEST,WORK_AREA_LOADED}` | `{EVT,VISION,STOP_REQUEST,WORK_AREA_LOADED}` |
+| 角点识别 | `{CMD,VISION,STOP_REQUEST,CORNER}` | `{EVT,VISION,STOP_REQUEST,CORNER}` |
+
+机载电脑收到结束事件后停止指定功能的数据采集／识别与反馈；重复结束请求应可安全处理。ACK 只表示小车接令，事件只表示已发出结束请求，均不证明视觉程序已停止，也不表示识别任务成功完成。当前协议不要求对结束事件逐条回复，仓库外机载视觉程序需实现这五种事件的处理。开启另一种视觉不会自动发送上一种的结束事件，切换时按业务阶段显式结束上一种。
+
+```text
+电脑   {CMD,VISION,STOP_REQUEST,CORNER}
+ESP32  {RSP,VISION,STOP_REQUEST,ACK,CORNER}
+ESP32  {EVT,VISION,STOP_REQUEST,CORNER}
+电脑   由机载视觉程序处理事件并结束角点识别
+```
+
+### 视觉切换示例
+
 ```text
 ESP32  {EVT,NAV,ROUTE_DONE,ESTIMATED}
 ESP32  {EVT,VISION,START_REQUEST,DISC}
 电脑   开启圆盘定位视觉，随后按现有协议回传对齐数据
 ESP32  {EVT,VISION,ALIGN_DONE}
+ESP32  {EVT,VISION,STOP_REQUEST,DISC}
 ESP32  {EVT,VISION,START_REQUEST,DISC_MATERIAL}
 电脑   开启圆盘物料识别视觉，随后按现有协议回传颜色
 ```

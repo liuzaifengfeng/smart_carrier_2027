@@ -90,6 +90,20 @@ def parse_vision_start_request(line: str) -> str | None:
     return fields[3] if fields[3] in VISION_START_REQUEST_LABELS else None
 
 
+def build_vision_stop_request_command(mode: str) -> str:
+    """让小车请求机载电脑结束指定视觉功能。"""
+    if mode not in VISION_START_REQUEST_LABELS:
+        raise ValueError("未知视觉功能")
+    return build_frame("CMD", "VISION", "STOP_REQUEST", mode)
+
+
+def parse_vision_stop_request(line: str) -> str | None:
+    fields = parse_frame(line)
+    if fields is None or len(fields) != 4 or fields[:3] != ("EVT", "VISION", "STOP_REQUEST"):
+        return None
+    return fields[3] if fields[3] in VISION_START_REQUEST_LABELS else None
+
+
 # 运行参数页：读取目录、暂存修改、逐项确认、提交并回读核对。
 @dataclass
 class Parameter:
@@ -576,7 +590,7 @@ def gotopose_echo_matches(text: str, expected: Pose) -> bool:
 COMMAND_FIELDS = {
     "GOTOpose": (("X 增量", "0"), ("Y 增量", "0"), ("θ 增量", "0")),
     "Movepose": (
-        ("方向 0前 1后 2左 3右", "0"),
+        ("方向 0前 1后 2左 3右 4左转 5右转", "0"),
         ("速度", "80"),
         ("停止 0/1", "0"),
     ),
@@ -597,6 +611,10 @@ KEYBOARD_DRIVE_DIRECTIONS = {
 KEYBOARD_ROTATION_ANGLES = {
     "q": (90.0, "向左旋转 90°"),
     "e": (-90.0, "向右旋转 90°"),
+}
+KEYBOARD_FINE_ROTATION_DIRECTIONS = {
+    "q": (4, "向左微调旋转"),
+    "e": (5, "向右微调旋转"),
 }
 KEYBOARD_SPEED_STEP = 10.0
 KEYBOARD_MIN_SPEED = 10.0
@@ -659,8 +677,8 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
         require_range(1, -MAX_RELATIVE_MOVE_MM, MAX_RELATIVE_MOVE_MM, "Y 增量")
         require_range(2, -360.0, 360.0, "θ 增量")
     elif command == "Movepose":
-        if values[0] not in (0.0, 1.0, 2.0, 3.0):
-            raise ValueError("方向只能填写 0、1、2、3（前、后、左、右）")
+        if values[0] not in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0):
+            raise ValueError("方向只能填写 0～5（前、后、左移、右移、左转、右转）")
         require_range(1, 0.0, 1000.0, "速度")
         require_binary(2, "停止参数")
         integer_indexes = {0, 2}
@@ -1684,8 +1702,13 @@ class UpperComputerApp:
 
         ttk.Label(vision_tab, text="请求机载视觉功能", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w", pady=(0, 10))
         for mode, label in VISION_START_REQUEST_LABELS.items():
-            ttk.Button(vision_tab, text=label,
-                       command=lambda mode=mode: self.send_vision_start_request(mode)).pack(fill=tk.X, pady=4)
+            row = ttk.Frame(vision_tab)
+            row.pack(fill=tk.X, pady=4)
+            ttk.Label(row, text=label).pack(side=tk.LEFT)
+            ttk.Button(row, text="结束", width=6,
+                       command=lambda mode=mode: self.send_vision_stop_request(mode)).pack(side=tk.RIGHT, padx=(4, 0))
+            ttk.Button(row, text="开启", width=6,
+                       command=lambda mode=mode: self.send_vision_start_request(mode)).pack(side=tk.RIGHT)
         ttk.Label(vision_tab, textvariable=self.vision_request_var,
                   foreground="#145a86", wraplength=400).pack(anchor="w", pady=(12, 6))
         ttk.Label(vision_tab, text="小车收到命令后向机载电脑发出视觉请求。\n相机程序需处理对应事件；定位功能仍需单独开启连续对齐。",
@@ -1823,6 +1846,7 @@ class UpperComputerApp:
             text=(
                 "Q：左转 90°     W：前进     E：右转 90°\n\n"
                 "A：向左移动     S：后退     D：向右移动\n\n"
+                "Shift+Q / E：按住微调，松开停止\n\n"
                 "左 Shift：加速 10\n"
                 "右 Shift：减速 10"
             ),
@@ -1860,6 +1884,7 @@ class UpperComputerApp:
             keyboard_tab,
             text=(
                 "W/A/S/D 按下时运动、松开时停止；Q/E 每次按下旋转一次。"
+                "Shift+Q/E 按住旋转，松开 Q/E 或 Shift 停止。"
                 "输入框获得焦点时不会触发键盘遥控。"
             ),
             foreground="#59636e",
@@ -2213,14 +2238,22 @@ class UpperComputerApp:
         self.append_log("TX", line)
 
     def send_vision_start_request(self, mode: str) -> None:
+        self._send_vision_request(mode, True)
+
+    def send_vision_stop_request(self, mode: str) -> None:
+        self._send_vision_request(mode, False)
+
+    def _send_vision_request(self, mode: str, start: bool) -> None:
         try:
-            line = build_vision_start_request_command(mode)
+            line = (build_vision_start_request_command(mode) if start
+                    else build_vision_stop_request_command(mode))
             self.serial_link.send_line(line)
         except (ValueError, RuntimeError, OSError) as exc:
             messagebox.showerror("视觉请求未发送", str(exc), parent=self.root)
             return
         self.append_log("TX", line)
-        self.vision_request_var.set(f"命令已发送：{VISION_START_REQUEST_LABELS[mode]}，等待小车接令")
+        prefix = "命令已发送" if start else "结束命令已发送"
+        self.vision_request_var.set(f"{prefix}：{VISION_START_REQUEST_LABELS[mode]}，等待小车接令")
 
     def send_alignment_control(self, action: str) -> None:
         """从 Debug 上位机显式开启或停止连续视觉对齐任务。"""
@@ -2254,8 +2287,9 @@ class UpperComputerApp:
         return isinstance(widget, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Text))
 
     def _send_keyboard_drive(self, key: str, *, stop: bool) -> bool:
-        """根据一个 WASD 键发送 Movepose 启动或停止命令。"""
-        direction, action = KEYBOARD_DRIVE_DIRECTIONS[key]
+        """根据 WASD 或 Shift+Q/E 发送速度模式启动或停止命令。"""
+        directions = {**KEYBOARD_DRIVE_DIRECTIONS, **KEYBOARD_FINE_ROTATION_DIRECTIONS}
+        direction, action = directions[key]
         speed = self.command_vars["Movepose"][1].get()
         try:
             line = build_debug_command(
@@ -2264,15 +2298,15 @@ class UpperComputerApp:
             )
             self.serial_link.send_line(line)
         except (ValueError, RuntimeError, OSError) as exc:
-            self.keyboard_drive_status_var.set(f"WASD 命令未发送：{exc}")
-            self.append_log("WARN", f"WASD 命令未发送：{exc}")
+            self.keyboard_drive_status_var.set(f"键盘运动命令未发送：{exc}")
+            self.append_log("WARN", f"键盘运动命令未发送：{exc}")
             return False
 
-        self.append_log("TX", f"{line}  # WASD {action}{'停止' if stop else '启动'}")
+        self.append_log("TX", f"{line}  # 键盘 {action}{'停止' if stop else '启动'}")
         self.keyboard_drive_status_var.set(
-            "WASD：车辆已停止"
+            "键盘：停止命令已发送"
             if stop
-            else f"WASD：{key.upper()} 键按下，车辆{action}"
+            else f"键盘：{key.upper()} 键按下，车辆{action}"
         )
         return True
 
@@ -2338,7 +2372,15 @@ class UpperComputerApp:
         if self._is_text_input(event.widget):
             return None
 
-        if key in KEYBOARD_DRIVE_DIRECTIONS:
+        if key in KEYBOARD_ROTATION_ANGLES:
+            if key in self.pressed_rotation_keys:
+                return "break"
+            self.pressed_rotation_keys.add(key)
+            if not (getattr(event, "state", 0) & 0x0001):
+                self._send_keyboard_rotation(key)
+                return "break"
+
+        if key in KEYBOARD_DRIVE_DIRECTIONS or key in KEYBOARD_FINE_ROTATION_DIRECTIONS:
             # 过滤系统键盘连发产生的重复 KeyPress。
             if key in self.pressed_drive_keys:
                 return "break"
@@ -2355,13 +2397,6 @@ class UpperComputerApp:
                 self.active_drive_key = None
             return "break"
 
-        if key in KEYBOARD_ROTATION_ANGLES:
-            if key in self.pressed_rotation_keys:
-                return "break"
-            self.pressed_rotation_keys.add(key)
-            self._send_keyboard_rotation(key)
-            return "break"
-
         if key in ("shift_l", "shift_r"):
             # 不依赖 Shift 的 KeyRelease 状态；部分 Windows/Tk 环境无法稳定
             # 区分右 Shift 的抬起事件，导致它只能生效一次。
@@ -2376,17 +2411,32 @@ class UpperComputerApp:
 
         if key in KEYBOARD_ROTATION_ANGLES:
             self.pressed_rotation_keys.discard(key)
-            return "break"
+            if key not in self.pressed_drive_keys:
+                return "break"
         if key in ("shift_l", "shift_r"):
+            # 松开组合键的修饰键也停止微调；保留 Q/E 的防连发状态。
+            fine_keys = [held for held in self.pressed_drive_keys
+                         if held in KEYBOARD_FINE_ROTATION_DIRECTIONS]
+            for held in fine_keys:
+                if held != self.active_drive_key:
+                    self.pressed_drive_keys.remove(held)
+            if self.active_drive_key in fine_keys:
+                self._release_keyboard_drive_key(self.active_drive_key)
             return "break"
-        if key not in KEYBOARD_DRIVE_DIRECTIONS:
+        if key not in KEYBOARD_DRIVE_DIRECTIONS and key not in KEYBOARD_FINE_ROTATION_DIRECTIONS:
             return None
         if key not in self.pressed_drive_keys:
             return None
 
+        self._release_keyboard_drive_key(key)
+        return "break"
+
+    def _release_keyboard_drive_key(self, key: str) -> None:
+        """释放速度模式按键，并恢复最后一个仍按住的方向。"""
+
         self.pressed_drive_keys.remove(key)
         if key != self.active_drive_key:
-            return "break"
+            return
 
         self._send_keyboard_drive(key, stop=True)
         self.active_drive_key = None
@@ -2396,7 +2446,6 @@ class UpperComputerApp:
             next_key = self.pressed_drive_keys[-1]
             if self._send_keyboard_drive(next_key, stop=False):
                 self.active_drive_key = next_key
-        return "break"
 
     def _stop_keyboard_drive(self) -> None:
         """停止键盘控制，并清除所有按键状态。"""
@@ -2574,13 +2623,19 @@ class UpperComputerApp:
         return True
 
     def _accept_vision_start_request(self, text: str) -> bool:
-        """展示主控的切换请求；实际相机算法由机载电脑程序处理。"""
+        """展示主控的开启或结束请求；实际相机算法由机载电脑程序处理。"""
+        stop_mode = parse_vision_stop_request(text)
+        if stop_mode is not None:
+            self.vision_request_var.set(f"请求结束：{VISION_START_REQUEST_LABELS[stop_mode]}")
+            return True
         mode = parse_vision_start_request(text)
         if mode is None:
             fields = parse_frame(text)
-            if fields is not None and fields[:3] == ("RSP", "VISION", "START_REQUEST"):
+            if (fields is not None and fields[:2] == ("RSP", "VISION")
+                    and fields[2] in ("START_REQUEST", "STOP_REQUEST")):
                 if len(fields) == 5 and fields[3] == "ACK" and fields[4] in VISION_START_REQUEST_LABELS:
-                    self.vision_request_var.set(f"小车已接令：{VISION_START_REQUEST_LABELS[fields[4]]}，等待请求事件")
+                    prefix = "小车已接令" if fields[2] == "START_REQUEST" else "小车已接结束命令"
+                    self.vision_request_var.set(f"{prefix}：{VISION_START_REQUEST_LABELS[fields[4]]}，等待请求事件")
                 elif len(fields) == 5 and fields[3] == "ERR":
                     self.vision_request_var.set(f"小车拒绝视觉请求：{fields[4]}")
                 else:
