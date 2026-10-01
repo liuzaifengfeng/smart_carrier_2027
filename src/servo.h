@@ -44,6 +44,7 @@
 #define FSUS_CMD_SET_ANGLE      0x08    // 单圈角度控制 (指定时间)
 #define FSUS_CMD_SET_DAMPING    0x09    // 阻尼模式 / 掉电卸力
 #define FSUS_CMD_QUERY_ANGLE    0x0A    // 读取舵机实时角度
+#define FSUS_CMD_QUERY_ANGLE_MTURN 0x10 // 读取舵机实时多圈角度
 #define FSUS_CMD_SET_ANGLE_INTERVAL 0x11// 梯形加减速角度控制
 #define FSUS_CMD_SET_ANGLE_MTURN    0x0D// 多圈绝对角度控制
 
@@ -101,6 +102,10 @@ void Servo_SetAngleByInterval(uint8_t servoId, float angle, uint16_t interval, u
  * @return true 读取成功, false 超时或校验失败
  */
 bool Servo_QueryAngle(uint8_t servoId, float &currentAngle, uint32_t timeoutMs = 50);
+
+// 读取与 Servo_SetAngleMTurn 相同坐标系的真实多圈角度（单位：度）。
+// 返回 false 表示通信失败，调用方不能用单圈读数代替多圈读数。
+bool Servo_QueryAngleMTurn(uint8_t servoId, float &currentAngle, uint32_t timeoutMs = 50);
 
 /**
  * @brief 检测舵机是否在线 (Ping)

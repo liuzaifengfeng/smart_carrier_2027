@@ -117,17 +117,15 @@ static uint8_t receivePacket(uint8_t expectedCmdId, uint8_t *contentBuf, uint8_t
                 case 5: // Checksum
                     checksum = b;
                     if ((sum % 256) == checksum) {
-                        if (contentSize != nullptr) {
-                            *contentSize = length;
-                        }
                         if (cmdId == expectedCmdId) {
+                            if (contentSize != nullptr) *contentSize = length;
                             return FSUS_STATUS_SUCCESS;
-                        } else {
-                            return FSUS_STATUS_ID_MISMATCH;
                         }
-                    } else {
-                        return FSUS_STATUS_CHECKSUM_ERR;
                     }
+                    // 上一条控制命令的应答可能晚于本次查询到达；跳过它继续等匹配帧。
+                    // 校验错误也继续扫描，避免一个坏帧使后面的有效应答被丢弃。
+                    step = 0;
+                    break;
             }
         } else {
             delayMicroseconds(50);
@@ -229,6 +227,34 @@ bool Servo_QueryAngle(uint8_t servoId, float &currentAngle, uint32_t timeoutMs) 
         int16_t angleRaw = (int16_t)(rxBuf[1] | (rxBuf[2] << 8));
         currentAngle = (float)angleRaw / 10.0f;
         return true;
+    }
+    return false;
+}
+
+bool Servo_QueryAngleMTurn(uint8_t servoId, float &currentAngle, uint32_t timeoutMs) {
+    ServoBusGuard guard;
+    if (!guard.locked) return false;
+    uint8_t content[1] = { servoId };
+    for (uint8_t attempt = 0; attempt < 2; ++attempt) {
+        if (attempt != 0) vTaskDelay(pdMS_TO_TICKS(10));
+        sendPacket(FSUS_CMD_QUERY_ANGLE_MTURN, content, 1);
+
+        uint8_t rxBuf[32];
+        uint8_t rxLen = 0;
+        const uint8_t res = receivePacket(FSUS_CMD_QUERY_ANGLE_MTURN, rxBuf, &rxLen, timeoutMs);
+        // 应答为：ID(1) + 有符号多圈角度(4, 0.1度) + 圈数(2)。
+        if (res == FSUS_STATUS_SUCCESS && rxLen == 7 && rxBuf[0] == servoId) {
+            const uint32_t rawBits = static_cast<uint32_t>(rxBuf[1])
+                | (static_cast<uint32_t>(rxBuf[2]) << 8)
+                | (static_cast<uint32_t>(rxBuf[3]) << 16)
+                | (static_cast<uint32_t>(rxBuf[4]) << 24);
+            const int32_t rawAngle = static_cast<int32_t>(rawBits);
+            currentAngle = static_cast<float>(rawAngle) / 10.0f;
+            return true;
+        }
+        Serial.printf("[Servo] multi-turn query ID=%u failed: status=%u length=%u attempt=%u\n",
+                      static_cast<unsigned>(servoId), static_cast<unsigned>(res),
+                      static_cast<unsigned>(rxLen), static_cast<unsigned>(attempt + 1));
     }
     return false;
 }

@@ -77,6 +77,11 @@ bool MoveCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode);
 // 临时颜色码在函数内指定，也可在 Debug 模式发送 {CMD,ARM,DEMO1} 调用。
 bool DemoCargoToRoughArea();
 
+// 取回调试示例：小车停在暂存区、三个区域位置各有一件物料且三个载物台为空时调用。
+// 由内到外依次放置：区域 1 -> 载物台 3、区域 2 -> 载物台 2、区域 3 -> 载物台 1。
+// Debug 模式发送 {CMD,ARM,DEMO4}；本函数不负责底盘导航或检测区域内是否真的有物料。
+bool DemoWorkAreaToCargo();
+
 // 码放调试示例：手动装好三个载物台并将小车停在码放区后，发送 {CMD,ARM,DEMO2}。
 // 顺序为 1 -> 1、2 -> 2、3 -> 3；松手高度为区域基础高度 + secondLayerOffset。
 // 三个目标高度均通过行程检查后才开始动作；本函数不负责底盘导航。

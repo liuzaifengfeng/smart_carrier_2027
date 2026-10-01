@@ -77,7 +77,8 @@ bool AlignToDiscContinuous(float angleErrorDeg, float visualXError,
 void ResetDiscAlignmentPid();
 
 // @brief 机械臂移动到位.
-void MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
+// 返回值表示所请求的控制命令是否全部成功下发，不代表机构已物理到位。
+bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
 
 // @brief 机械臂初始化归零位
 void InitArm();

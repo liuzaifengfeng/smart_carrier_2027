@@ -18,7 +18,7 @@ MaterialTransferLayout materialTransferLayout = {
         {2.5, 0, 86}, // 粗加工区/暂存区的 2 号位置
         {2.5, 39, 125.3}, // 粗加工区/暂存区的 3 号位置
     },
-    150.0f, // approachHeight，按物料实际高度修改
+    160.0f, // approachHeight，按物料实际高度修改
     60.0f,  // secondLayerOffset，按物料实际高度修改
     150.0f, // moveSpeed
     50.0f,   // clawOpenAngle
@@ -78,46 +78,49 @@ void waitForArm(float multiplier = 1.0f) {
 }
 
 // 移动到目标上方
-void moveAbove(const MaterialStationPose &pose, float clawAngle) {
+bool moveAbove(const MaterialStationPose &pose, float clawAngle) {
     // 先升到安全高度，再转向目标并伸出，防止横向移动时碰到物料或车体。
-    MoveArm(materialTransferLayout.approachHeight, pose.length,
-            -1, clawAngle, materialTransferLayout.moveSpeed);
+    if (!MoveArm(materialTransferLayout.approachHeight, pose.length,
+                 -1, clawAngle, materialTransferLayout.moveSpeed)) return false;
     waitForArm();    
     waitForArm();
-    MoveArm(materialTransferLayout.approachHeight, pose.length,
-            pose.turretAngle, clawAngle, materialTransferLayout.moveSpeed);
+    if (!MoveArm(materialTransferLayout.approachHeight, pose.length,
+                 pose.turretAngle, clawAngle, materialTransferLayout.moveSpeed)) return false;
     waitForArm();
+    return true;
 }
 
 // 抓取物料
-void pickAt(const MaterialStationPose &pose) {
+bool pickAt(const MaterialStationPose &pose) {
     // 抓取顺序：张开夹爪到目标上方 -> 下降 -> 夹紧 -> 提升到安全高度。
-    moveAbove(pose, materialTransferLayout.clawOpenAngle);
-    MoveArm(pose.high, -1, -1, materialTransferLayout.clawOpenAngle,
-            materialTransferLayout.moveSpeed);
+    if (!moveAbove(pose, materialTransferLayout.clawOpenAngle)) return false;
+    if (!MoveArm(pose.high, -1, -1, materialTransferLayout.clawOpenAngle,
+                 materialTransferLayout.moveSpeed)) return false;
+    waitForArm(2);
+    if (!MoveArm(-1, -1, -1, materialTransferLayout.clawClosedAngle,
+                 materialTransferLayout.moveSpeed)) return false;
     waitForArm();
-    MoveArm(-1, -1, -1, materialTransferLayout.clawClosedAngle,
-            materialTransferLayout.moveSpeed);
+    if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1,
+                 materialTransferLayout.moveSpeed)) return false;
     waitForArm();
-    MoveArm(materialTransferLayout.approachHeight, -1, -1, -1,
-            materialTransferLayout.moveSpeed);
-    waitForArm();
+    return true;
 }
 
 // 放置物料
-void placeAt(const MaterialStationPose &pose, float targetHeight) {
+bool placeAt(const MaterialStationPose &pose, float targetHeight) {
     // 放置顺序：夹持物料到目标上方 -> 下降 -> 张开夹爪 -> 提升到安全高度。
-    moveAbove(pose, materialTransferLayout.clawClosedAngle);
-    MoveArm(targetHeight, -1, -1, materialTransferLayout.clawClosedAngle,
-            materialTransferLayout.moveSpeed);
+    if (!moveAbove(pose, materialTransferLayout.clawClosedAngle)) return false;
+    if (!MoveArm(targetHeight, -1, -1, materialTransferLayout.clawClosedAngle,
+                 materialTransferLayout.moveSpeed)) return false;
     waitForArm();
     waitForArm();
-    MoveArm(-1, -1, -1, materialTransferLayout.clawOpenAngle,
-            materialTransferLayout.moveSpeed);
+    if (!MoveArm(-1, -1, -1, materialTransferLayout.clawOpenAngle,
+                 materialTransferLayout.moveSpeed)) return false;
     waitForArm();
-    MoveArm(materialTransferLayout.approachHeight, -1, -1, -1,
-            materialTransferLayout.moveSpeed);
+    if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1,
+                 materialTransferLayout.moveSpeed)) return false;
     waitForArm();
+    return true;
 }
 
 bool validateAction(const MaterialStationPose &source,
@@ -184,8 +187,8 @@ bool MoveDiscToCargo(uint8_t materialCode, uint8_t cargoCode) {
 
     Serial.printf("[Material] disc -> cargo %u, material %u\n", cargoCode, materialCode);
     // 先从圆盘抓起，再放到指定载物台；完成后才更新载物台状态。
-    pickAt(materialTransferLayout.disc);
-    placeAt(destination, destination.high);
+    if (!pickAt(materialTransferLayout.disc)
+            || !placeAt(destination, destination.high)) return false;
     cargo.material = static_cast<MaterialType>(materialCode);
     return true;
 }
@@ -209,8 +212,7 @@ bool MoveCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
                   cargoCode, workAreaCode, cargo.material);
     // 粗加工区和暂存区使用相同的 workArea 位姿。
     // 小车当前停在哪一个区域，动作就发生在哪一个区域。
-    pickAt(source);
-    placeAt(destination, destination.high);
+    if (!pickAt(source) || !placeAt(destination, destination.high)) return false;
     cargo.material = MATERIAL_NONE;
     return true;
 }
@@ -239,6 +241,33 @@ bool DemoCargoToRoughArea() {
     return true;
 }
 
+bool DemoWorkAreaToCargo() {
+    // 调试时暂存区的三个位置各放一件物料；颜色只用于载物台状态记录。
+    // 取料仍按区域 1、2、3；放回载物台时按内侧到外侧的 3、2、1 顺序。
+    constexpr uint8_t materialCode = MATERIAL_RED;
+    static_assert(materialCode >= MATERIAL_RED && materialCode <= MATERIAL_LIGHT_BLUE,
+                  "Invalid demo material code");
+
+    // 整组预检查：避免搬到一半才发现后续载物台已占用或位姿无效。
+    for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
+        if (cargoPlatforms[i].material != MATERIAL_NONE) {
+            Serial.println("[Material] ERR: cargo platform is occupied");
+            return false;
+        }
+        const uint8_t cargoIndex = MATERIAL_STATION_COUNT - 1 - i;
+        if (!validateAction(materialTransferLayout.workArea[i],
+                            materialTransferLayout.cargo[cargoIndex])) return false;
+    }
+
+    for (uint8_t workAreaCode = 1; workAreaCode <= MATERIAL_STATION_COUNT; ++workAreaCode) {
+        // 区域 1→载物台 3、区域 2→载物台 2、区域 3→载物台 1。
+        // 单次接口会把外部 1~3 编号转换成数组 0~2 下标；每件放稳、抬升后才取下一件。
+        const uint8_t cargoCode = MATERIAL_STATION_COUNT + 1 - workAreaCode;
+        if (!MoveWorkAreaToCargo(materialCode, workAreaCode, cargoCode)) return false;
+    }
+    return true;
+}
+
 //码放（与放料类似，高度增加）
 bool DemoStackCargoToWorkArea() {
     // 手动在三个载物台装好物料，小车停在码放区后调用。
@@ -262,8 +291,8 @@ bool DemoStackCargoToWorkArea() {
         cargoPlatforms[i].material = MATERIAL_RED;
         Serial.printf("[Material] demo stack cargo %u -> work area %u, release height %.1f\n",
                       i + 1, i + 1, releaseHeights[i]);
-        pickAt(materialTransferLayout.cargo[i]);
-        placeAt(materialTransferLayout.workArea[i], releaseHeights[i]);
+        if (!pickAt(materialTransferLayout.cargo[i])
+                || !placeAt(materialTransferLayout.workArea[i], releaseHeights[i])) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;
@@ -291,8 +320,8 @@ bool DemoStackCargoToWorkArea3() {
         cargoPlatforms[i].material = MATERIAL_RED;
         Serial.printf("[Material] demo stack cargo %u -> work area %u, release height %.1f\n",
                       i + 1, i + 1, releaseHeights[i]);
-        pickAt(materialTransferLayout.cargo[i]);
-        placeAt(materialTransferLayout.workArea[i], releaseHeights[i]);
+        if (!pickAt(materialTransferLayout.cargo[i])
+                || !placeAt(materialTransferLayout.workArea[i], releaseHeights[i])) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;
@@ -349,8 +378,7 @@ bool MoveWorkAreaToCargo(uint8_t materialCode, uint8_t workAreaCode, uint8_t car
     Serial.printf("[Material] work area %u -> cargo %u, material %u\n",
                   workAreaCode, cargoCode, materialCode);
     // 抓取成功并放到车上以后，记录该载物台装入了什么颜色的物料。
-    pickAt(source);
-    placeAt(destination, destination.high);
+    if (!pickAt(source) || !placeAt(destination, destination.high)) return false;
     cargo.material = static_cast<MaterialType>(materialCode);
     return true;
 }
@@ -379,8 +407,7 @@ bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
 
     Serial.printf("[Material] cargo %u -> work area %u layer 2, material %u\n",
                   cargoCode, workAreaCode, cargo.material);
-    pickAt(source);
-    placeAt(destination, secondLayerHeight);
+    if (!pickAt(source) || !placeAt(destination, secondLayerHeight)) return false;
     cargo.material = MATERIAL_NONE;
     return true;
 }
@@ -437,8 +464,8 @@ bool PlaceTaskCargoToWorkArea(
         const uint8_t workAreaCode = static_cast<uint8_t>(positionCodes[i]);
         Serial.printf("[Material] cargo %u -> work area %u, layer %u, release height %.1f\n",
                       i + 1, workAreaCode, layer, releaseHeights[i]);
-        pickAt(materialTransferLayout.cargo[i]);
-        placeAt(materialTransferLayout.workArea[workAreaCode - 1], releaseHeights[i]);
+        if (!pickAt(materialTransferLayout.cargo[i])
+                || !placeAt(materialTransferLayout.workArea[workAreaCode - 1], releaseHeights[i])) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;

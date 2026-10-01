@@ -19,12 +19,14 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"SYS", "START"}, {"SYS", "HELP"},
         {"NAV", "START_ZONE"}, {"NAV", "ROUTE"},
         {"VISION", "ALIGN_START"}, {"VISION", "ALIGN_STOP"},
+        {"VISION", "START_REQUEST"},
         {"VISION", "ALIGN_DATA"}, {"VISION", "COLOR"},
         {"VISION", "CONFIRM"}, {"VISION", "LIDAR_POSE"},
         {"POSE", "GET"}, {"POSE", "SET"}, {"POSE", "GOTO_REL"},
         {"CHASSIS", "MOVE"},
         {"ARM", "MOVE1"}, {"ARM", "MOVE2"}, {"ARM", "SERVO"},
         {"ARM", "ENABLE"}, {"ARM", "DEMO1"}, {"ARM", "DEMO2"}, {"ARM", "DEMO3"},
+        {"ARM", "DEMO4"},
         {"CFG", "GET"}, {"CFG", "BEGIN"}, {"CFG", "SET"}, {"CFG", "COMMIT"},
     };
     for (const auto &name : names) {
@@ -135,6 +137,18 @@ static void serialDispatch(const SerialFrame &frame) {
         Serial.printf("{RSP,NAV,START_ZONE,OK,%u}\n", static_cast<unsigned>(zone));
     } else if (frame.starts("NAV", "ROUTE")) {
         serialRoute(frame);
+    } else if (frame.is("VISION", "START_REQUEST", 1)) {
+        VisionStartMode mode;
+        const char *name = frame.fields[3];
+        if (strcmp(name, "DISC") == 0) mode = VisionStartMode::DISC;
+        else if (strcmp(name, "DISC_MATERIAL") == 0) mode = VisionStartMode::DISC_MATERIAL;
+        else if (strcmp(name, "WORK_AREA") == 0) mode = VisionStartMode::WORK_AREA;
+        else if (strcmp(name, "WORK_AREA_LOADED") == 0) mode = VisionStartMode::WORK_AREA_LOADED;
+        else if (strcmp(name, "CORNER") == 0) mode = VisionStartMode::CORNER;
+        else { serialError(frame, "RANGE"); return; }
+        // 两种运行模式都允许请求切换；ACK 仅表示接令，事件才表示主控已发出请求。
+        Serial.printf("{RSP,VISION,START_REQUEST,ACK,%s}\n", name);
+        requestVisionStart(mode);
     } else if (frame.is("VISION", "ALIGN_START", 0)) {
         setAlignmentEnabled(true, true);
     } else if (frame.is("VISION", "ALIGN_STOP", 0)) {
@@ -233,12 +247,13 @@ static void serialDispatch(const SerialFrame &frame) {
         Serial.printf("{RSP,ARM,ENABLE,ACK,%u}\n", static_cast<unsigned>(enabled));
         Emm_V5_En_Control_all(enabled);
     } else if (frame.is("ARM", "DEMO1", 0) || frame.is("ARM", "DEMO2", 0)
-               || frame.is("ARM", "DEMO3", 0)) {
+               || frame.is("ARM", "DEMO3", 0) || frame.is("ARM", "DEMO4", 0)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         serialReply(frame, "ACK");
         const bool ok = strcmp(frame.fields[2], "DEMO1") == 0 ? DemoCargoToRoughArea()
             : strcmp(frame.fields[2], "DEMO2") == 0 ? DemoStackCargoToWorkArea()
-            : DemoStackCargoToWorkArea3();
+            : strcmp(frame.fields[2], "DEMO3") == 0 ? DemoStackCargoToWorkArea3()
+            : DemoWorkAreaToCargo();
         Serial.printf("{EVT,ARM,%s,%s}\n", frame.fields[2], ok ? "DONE" : "FAILED");
     } else if (frame.count >= 3) {
         serialError(frame, serialKnownAction(frame) ? "FORMAT" : "UNKNOWN_ACTION");

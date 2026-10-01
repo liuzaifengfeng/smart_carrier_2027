@@ -71,11 +71,19 @@ VISION_START_REQUEST_LABELS = {
     "DISC_MATERIAL": "圆盘物料识别",
     "WORK_AREA": "粗加工区／暂存区定位",
     "WORK_AREA_LOADED": "粗加工区／暂存区带物料定位",
+    "CORNER": "角点视觉识别",
 }
 
 
+def build_vision_start_request_command(mode: str) -> str:
+    """让小车发出对应的机载视觉请求，不直接启动相机或底盘对齐。"""
+    if mode not in VISION_START_REQUEST_LABELS:
+        raise ValueError("未知视觉功能")
+    return build_frame("CMD", "VISION", "START_REQUEST", mode)
+
+
 def parse_vision_start_request(line: str) -> str | None:
-    """只接受四种完整的视觉开启请求，返回机载视觉功能标识。"""
+    """只接受五种完整的视觉开启请求，返回机载视觉功能标识。"""
     fields = parse_frame(line)
     if fields is None or len(fields) != 4 or fields[:3] != ("EVT", "VISION", "START_REQUEST"):
         return None
@@ -611,13 +619,14 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
     """校验界面参数并生成 ESP32 当前支持的调试命令。"""
     if command == "help":
         return build_frame("CMD", "SYS", "HELP")
-    if command in ("MaterialDemo", "MaterialDemo2", "MaterialDemo3", "Mode:Release", "LidarPose"):
+    if command in ("MaterialDemo", "MaterialDemo2", "MaterialDemo3", "MaterialDemo4", "Mode:Release", "LidarPose"):
         if raw_values:
             raise ValueError("该命令不需要参数")
         category, action = {
             "MaterialDemo": ("ARM", "DEMO1"),
             "MaterialDemo2": ("ARM", "DEMO2"),
             "MaterialDemo3": ("ARM", "DEMO3"),
+            "MaterialDemo4": ("ARM", "DEMO4"),
             "Mode:Release": ("SYS", "RELEASE"),
             "LidarPose": ("VISION", "LIDAR_POSE"),
         }[command]
@@ -1663,13 +1672,24 @@ class UpperComputerApp:
         keyboard_tab = ttk.Frame(notebook, padding=12, takefocus=True)
         self.keyboard_tab = keyboard_tab
         log_tab = ttk.Frame(notebook, padding=8)
+        vision_tab = ttk.Frame(notebook, padding=12)
         notebook.add(pose_tab, text="姿态")
         notebook.add(chassis_tab, text="底盘")
         notebook.add(arm_tab, text="机械臂")
         notebook.add(keyboard_tab, text="键盘控制")
         notebook.add(log_tab, text="日志")
+        notebook.add(vision_tab, text="视觉")
         self.parameter_panel = ParameterPanel(notebook, self.serial_link.send_line, self.append_log)
         notebook.add(self.parameter_panel, text="参数")
+
+        ttk.Label(vision_tab, text="请求机载视觉功能", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w", pady=(0, 10))
+        for mode, label in VISION_START_REQUEST_LABELS.items():
+            ttk.Button(vision_tab, text=label,
+                       command=lambda mode=mode: self.send_vision_start_request(mode)).pack(fill=tk.X, pady=4)
+        ttk.Label(vision_tab, textvariable=self.vision_request_var,
+                  foreground="#145a86", wraplength=400).pack(anchor="w", pady=(12, 6))
+        ttk.Label(vision_tab, text="小车收到命令后向机载电脑发出视觉请求。\n相机程序需处理对应事件；定位功能仍需单独开启连续对齐。",
+                  foreground="#59636e", wraplength=400, justify=tk.LEFT).pack(anchor="w")
 
         ttk.Label(pose_tab, text="姿态调试", font=("Microsoft YaHei UI", 16, "bold")).pack(
             anchor="w", pady=(0, 6)
@@ -1871,14 +1891,19 @@ class UpperComputerApp:
             text="码放（MaterialDemo2）",
             command=lambda: self.send_command("MaterialDemo2"),
         ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+        ttk.Button(
+            demo_group,
+            text="暂存区取回（MaterialDemo4）",
+            command=lambda: self.send_command("MaterialDemo4"),
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 0))
         ttk.Label(
             demo_group,
-            text="手动装好三个载物台并停好车；执行顺序：1→1、2→2、3→3。\n"
-                 "码放松手高度增加 approachHeight；执行结果见“日志”。",
+            text="放料/码放：手动装好三个载物台；取回：暂存区 1～3 号位各有一件，载物台均为空。\n"
+                 "小车需先停稳；放料/码放为 1→1、2→2、3→3；取回为区域 1→载物台 3、2→2、3→1。",
             foreground="#59636e",
             justify=tk.LEFT,
             wraplength=420,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
         self.arm_preview = ArmCanvas(arm_tab)
         self.arm_preview.configure(height=210)
@@ -2186,6 +2211,16 @@ class UpperComputerApp:
             messagebox.showerror("命令未发送", str(exc), parent=self.root)
             return
         self.append_log("TX", line)
+
+    def send_vision_start_request(self, mode: str) -> None:
+        try:
+            line = build_vision_start_request_command(mode)
+            self.serial_link.send_line(line)
+        except (ValueError, RuntimeError, OSError) as exc:
+            messagebox.showerror("视觉请求未发送", str(exc), parent=self.root)
+            return
+        self.append_log("TX", line)
+        self.vision_request_var.set(f"命令已发送：{VISION_START_REQUEST_LABELS[mode]}，等待小车接令")
 
     def send_alignment_control(self, action: str) -> None:
         """从 Debug 上位机显式开启或停止连续视觉对齐任务。"""
@@ -2542,6 +2577,15 @@ class UpperComputerApp:
         """展示主控的切换请求；实际相机算法由机载电脑程序处理。"""
         mode = parse_vision_start_request(text)
         if mode is None:
+            fields = parse_frame(text)
+            if fields is not None and fields[:3] == ("RSP", "VISION", "START_REQUEST"):
+                if len(fields) == 5 and fields[3] == "ACK" and fields[4] in VISION_START_REQUEST_LABELS:
+                    self.vision_request_var.set(f"小车已接令：{VISION_START_REQUEST_LABELS[fields[4]]}，等待请求事件")
+                elif len(fields) == 5 and fields[3] == "ERR":
+                    self.vision_request_var.set(f"小车拒绝视觉请求：{fields[4]}")
+                else:
+                    return False
+                return True
             return False
         self.vision_request_var.set(f"请求开启：{VISION_START_REQUEST_LABELS[mode]}")
         return True

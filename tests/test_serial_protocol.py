@@ -6,11 +6,17 @@ from unittest.mock import Mock
 
 from upper_computer import (
     SerialLink, UpperComputerApp, build_frame, build_node_path_command,
-    parse_display_event, parse_frame, parse_vision_start_request,
+    build_debug_command, parse_display_event, parse_frame, parse_vision_start_request,
+    build_vision_start_request_command,
 )
 
 
 class FrameTests(unittest.TestCase):
+    def test_retrieve_demo_command(self):
+        self.assertEqual(build_debug_command("MaterialDemo4", []), "{CMD,ARM,DEMO4}")
+        with self.assertRaises(ValueError):
+            build_debug_command("MaterialDemo4", ["1"])
+
     def test_command_and_reply_shapes(self):
         self.assertEqual(build_frame("CMD", "SYS", "HELLO"), "{CMD,SYS,HELLO}")
         self.assertEqual(
@@ -50,11 +56,16 @@ class FrameTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(parse_display_event(text))
 
-    def test_four_vision_start_requests_have_exact_shape(self):
-        for mode in ("DISC", "DISC_MATERIAL", "WORK_AREA", "WORK_AREA_LOADED"):
+    def test_five_vision_start_requests_have_exact_shape(self):
+        for mode in ("DISC", "DISC_MATERIAL", "WORK_AREA", "WORK_AREA_LOADED", "CORNER"):
             frame = f"{{EVT,VISION,START_REQUEST,{mode}}}"
             with self.subTest(mode=mode):
                 self.assertEqual(parse_vision_start_request(frame), mode)
+                self.assertEqual(build_vision_start_request_command(mode),
+                                 f"{{CMD,VISION,START_REQUEST,{mode}}}")
+        for mode in ("", "corner", "UNKNOWN", "CORNER,DISC", "CORNER\n"):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                build_vision_start_request_command(mode)
         for frame in ("{CMD,VISION,START_REQUEST,DISC}",
                       "{EVT,VISION,START_REQUEST,DISC,EXTRA}",
                       "{EVT,VISION,START_REQUEST,UNKNOWN}",
@@ -64,6 +75,22 @@ class FrameTests(unittest.TestCase):
 
 
 class ConnectionGateTests(unittest.TestCase):
+    def test_vision_button_waits_for_vehicle_event(self):
+        app = UpperComputerApp.__new__(UpperComputerApp)
+        app.serial_link = Mock()
+        app.append_log = Mock()
+        app.vision_request_var = Mock()
+        app.send_vision_start_request("CORNER")
+        app.serial_link.send_line.assert_called_once_with("{CMD,VISION,START_REQUEST,CORNER}")
+        app.vision_request_var.set.assert_called_with("命令已发送：角点视觉识别，等待小车接令")
+        self.assertTrue(app._accept_vision_start_request("{RSP,VISION,START_REQUEST,ACK,CORNER}"))
+        app.vision_request_var.set.assert_called_with("小车已接令：角点视觉识别，等待请求事件")
+        self.assertTrue(app._accept_vision_start_request("{EVT,VISION,START_REQUEST,CORNER}"))
+        app.vision_request_var.set.assert_called_with("请求开启：角点视觉识别")
+        self.assertTrue(app._accept_vision_start_request("{RSP,VISION,START_REQUEST,ERR,RANGE}"))
+        app.vision_request_var.set.assert_called_with("小车拒绝视觉请求：RANGE")
+        self.assertFalse(app._accept_vision_start_request("{RSP,VISION,START_REQUEST,ACK,UNKNOWN}"))
+
     def test_hello_only_until_version_confirmed(self):
         link = SerialLink(queue.Queue())
         link._port = Mock(is_open=True)

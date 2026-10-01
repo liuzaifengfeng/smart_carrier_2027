@@ -371,12 +371,13 @@ bool updateDisplay(const char *commandType, const char *displayType, const char 
 }
 
 // 主控请求机载电脑切换视觉功能；这些是单次请求，不代表视觉已启动或已对齐。
-// 顺序与 Document/serial_protocol.md 中的四种模式一致。
+// 顺序与 Document/serial_protocol.md 中的五种模式一致。
 enum class VisionStartMode : uint8_t {
     DISC,
     DISC_MATERIAL,
     WORK_AREA,
-    WORK_AREA_LOADED
+    WORK_AREA_LOADED,
+    CORNER
 };
 
 void requestVisionStart(VisionStartMode mode) {
@@ -392,6 +393,9 @@ void requestVisionStart(VisionStartMode mode) {
             break;
         case VisionStartMode::WORK_AREA_LOADED:
             Serial.println("{EVT,VISION,START_REQUEST,WORK_AREA_LOADED}");
+            break;
+        case VisionStartMode::CORNER:
+            Serial.println("{EVT,VISION,START_REQUEST,CORNER}");
             break;
     }
 }
@@ -628,6 +632,8 @@ void Task_MainStateMachine(void *pvParameters) {
         case STATE_RETURN_HOME:
             updateDisplay("DISPLAY", "DEBUG", "GO HOME");
             // [TODO] 回到启停区, 停转盘...
+            // 回家路径执行结束后调用 requestVisionStart(VisionStartMode::CORNER)，
+            // 等机载电脑确认角点定位结果后再进入 STATE_DONE；当前回家导航尚未实现。
             currentState = STATE_DONE;
             break;
 

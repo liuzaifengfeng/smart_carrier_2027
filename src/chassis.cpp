@@ -334,13 +334,14 @@ void RegisterChassisParameters() {
  * @param speed 速度 (mm/s)
  * @note -1 表示不操作该轴
  */
-void MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
+bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
 
     int acc = 150;
 
         if (currentArm.high - high != 0 && high != -1) {
             if( high < 0 || high > 160){//行程保护
                 Serial.println("high out of range");
+                return false;
             } else {
                 uint8_t dir = (currentArm.high - high > 0) ? 0 : 1;
                 uint32_t pulses = (uint32_t)(fabsf(currentArm.high - high) * HEIGHT_PULSE);
@@ -353,6 +354,7 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
         if (currentArm.length - length != 0 && length != -1) {
             if( length < 0 || length > 170){//行程保护
                 Serial.println("length out of range");
+                return false;
             } else {
                 uint8_t dir = (currentArm.length - length > 0) ? 0 : 1;
                 uint32_t pulses = (uint32_t)(fabsf(currentArm.length - length) * LENGTH_PULSE);
@@ -365,21 +367,52 @@ void MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
         if(turret_angle != -1) {
             if( turret_angle < -360 || turret_angle > 360){//行程保护
                 Serial.println("turret_angle out of range");
+                return false;
             } else {
-                Servo_SetAngleMTurn(2, turret_angle, (300-speed)*3, 3000);
-                currentArm.turret_angle = turret_angle;
+                float measuredAngle = 0.0f;
+                if (!Servo_QueryAngleMTurn(2, measuredAngle, 100) || !isfinite(measuredAngle)) {
+                    Serial.println("[Arm] ERR: turret multi-turn angle read failed; motion skipped");
+                    return false;
+                } else {
+                    // 同一物理朝向每隔 360 度重复一次。选择离当前多圈角度最近的目标，
+                    // 例如实测 359 度、目标 0 度时下发 360 度，避免反转一整圈。
+                    const float nearestAngle = turret_angle
+                        + 360.0f * roundf((measuredAngle - turret_angle) / 360.0f);
+                    // 输入目标仍限制在 ±360°；舵机的多圈累计值可能早已超过该范围。
+                    // 只检查实际下发值没有超出舵机协议范围，不再错误地卡住正常动作。
+                    if (!isfinite(nearestAngle) || fabsf(nearestAngle) > 368640.0f) {
+                        Serial.println("[Arm] ERR: turret multi-turn target out of servo range");
+                        return false;
+                    }
+                    Servo_SetAngleMTurn(2, nearestAngle, (300-speed)*3, 4000);
+                    currentArm.turret_angle = turret_angle;
+                }
             }
         }
 
         if(pawl_angle != -1) {
             if( pawl_angle < -360 || pawl_angle > 360){//行程保护
                 Serial.println("pawl_angle out of range");
+                return false;
             } else {
-                Servo_SetAngleMTurn(1, pawl_angle, (300-speed)*3, 3000);
-                currentArm.pawl_angle = pawl_angle;
+                float measuredAngle = 0.0f;
+                if (!Servo_QueryAngleMTurn(1, measuredAngle, 100) || !isfinite(measuredAngle)) {
+                    Serial.println("[Arm] ERR: gripper multi-turn angle read failed; motion skipped");
+                    return false;
+                } else {
+                    const float nearestAngle = pawl_angle
+                        + 360.0f * roundf((measuredAngle - pawl_angle) / 360.0f);
+                    if (!isfinite(nearestAngle) || fabsf(nearestAngle) > 368640.0f) {
+                        Serial.println("[Arm] ERR: gripper multi-turn target out of servo range");
+                        return false;
+                    }
+                    Servo_SetAngleMTurn(1, nearestAngle, (300-speed)*3, 4000);
+                    currentArm.pawl_angle = pawl_angle;
+                }
             }
         }
 
+    return true;
 }
 
 
@@ -766,7 +799,7 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
 void InitArm() {
     MoveArm(150,-1,-1,0,150);
     vTaskDelay(pdMS_TO_TICKS(3000));
-    Servo_SetAngleMTurn(2, -55, 0, 0);
+    MoveArm(-1, -1, -55, -1, 150);
     vTaskDelay(pdMS_TO_TICKS(100));
     MoveArm(150,40,-1,0,150);
     vTaskDelay(pdMS_TO_TICKS(100));
