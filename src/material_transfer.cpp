@@ -18,7 +18,7 @@ MaterialTransferLayout materialTransferLayout = {
         {2.5, 0, 86}, // 粗加工区/暂存区的 2 号位置
         {2.5, 39, 125.3}, // 粗加工区/暂存区的 3 号位置
     },
-    160.0f, // approachHeight，按物料实际高度修改
+    170.0f, // approachHeight，按物料实际高度修改
     60.0f,  // secondLayerOffset，按物料实际高度修改
     150.0f, // moveSpeed
     50.0f,   // clawOpenAngle
@@ -45,16 +45,17 @@ bool isStationCodeValid(int code) {
 
 bool isPoseValid(const MaterialStationPose &pose) {
     // 检查标定值是否已经填写，并确保没有超过 MoveArm 的机械行程。
-    return isfinite(pose.high) && pose.high >= 0.0f && pose.high <= 160.0f
+    return isfinite(pose.high) && pose.high >= 0.0f && pose.high <= ARM_HEIGHT_LIMIT_MM
         && isfinite(pose.length) && pose.length >= 0.0f && pose.length <= 170.0f
         && isfinite(pose.turretAngle)
-        && pose.turretAngle >= -360.0f && pose.turretAngle <= 360.0f;
+        && pose.turretAngle >= TURRET_CABLE_MIN_DEG
+        && pose.turretAngle <= TURRET_CABLE_MAX_DEG;
 }
 
 bool isLayoutParameterValid() {
     return isfinite(materialTransferLayout.approachHeight)
         && materialTransferLayout.approachHeight >= 0.0f
-        && materialTransferLayout.approachHeight <= 160.0f
+        && materialTransferLayout.approachHeight <= ARM_HEIGHT_LIMIT_MM
         && isfinite(materialTransferLayout.secondLayerOffset)
         && materialTransferLayout.secondLayerOffset >= 0.0f
         && isfinite(materialTransferLayout.moveSpeed)
@@ -279,7 +280,7 @@ bool DemoStackCargoToWorkArea() {
         releaseHeights[i] = destination.high + materialTransferLayout.secondLayerOffset;
         // 三个位置全部检查通过后才抓料，避免执行到一半才发现高度越界。
         if (!validateAction(materialTransferLayout.cargo[i], destination)) return false;
-        if (!isfinite(releaseHeights[i]) || releaseHeights[i] > 160.0f) {
+        if (!isfinite(releaseHeights[i]) || releaseHeights[i] > ARM_HEIGHT_LIMIT_MM) {
             Serial.println("[Material] ERR: invalid demo stacking height");
             return false;
         }
@@ -308,7 +309,7 @@ bool DemoStackCargoToWorkArea3() {
         releaseHeights[i] = destination.high + materialTransferLayout.secondLayerOffset * 2;
         // 三个位置全部检查通过后才抓料，避免执行到一半才发现高度越界。
         if (!validateAction(materialTransferLayout.cargo[i], destination)) return false;
-        if (!isfinite(releaseHeights[i]) || releaseHeights[i] > 160.0f) {
+        if (!isfinite(releaseHeights[i]) || releaseHeights[i] > ARM_HEIGHT_LIMIT_MM) {
             Serial.println("[Material] ERR: invalid demo stacking height");
             return false;
         }
@@ -400,7 +401,7 @@ bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
     const float secondLayerHeight =
         destination.high + materialTransferLayout.secondLayerOffset;
     if (!validateAction(source, destination)) return false;
-    if (secondLayerHeight > 160.0f) {
+    if (secondLayerHeight > ARM_HEIGHT_LIMIT_MM) {
         Serial.println("[Material] ERR: invalid second-layer height");
         return false;
     }
@@ -452,7 +453,7 @@ bool PlaceTaskCargoToWorkArea(
             + static_cast<float>(layer - 1) * materialTransferLayout.secondLayerOffset;
         if (!validateAction(source, destination)) return false;
         if (!isfinite(releaseHeights[i]) || releaseHeights[i] < 0.0f
-                || releaseHeights[i] > 160.0f) {
+                || releaseHeights[i] > ARM_HEIGHT_LIMIT_MM) {
             Serial.println("[Material] ERR: invalid stacking height");
             return false;
         }

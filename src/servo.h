@@ -45,8 +45,10 @@
 #define FSUS_CMD_SET_DAMPING    0x09    // 阻尼模式 / 掉电卸力
 #define FSUS_CMD_QUERY_ANGLE    0x0A    // 读取舵机实时角度
 #define FSUS_CMD_QUERY_ANGLE_MTURN 0x10 // 读取舵机实时多圈角度
-#define FSUS_CMD_SET_ANGLE_INTERVAL 0x11// 梯形加减速角度控制
+#define FSUS_CMD_SET_ANGLE_INTERVAL 0x0B// 梯形加减速角度控制
 #define FSUS_CMD_SET_ANGLE_MTURN    0x0D// 多圈绝对角度控制
+#define FSUS_CMD_RESET_TURNS        0x11// 重置当前累计圈数（不转动）
+#define FSUS_CMD_STOP              0x18// 停止/释放/保持锁力
 
 // 状态返回值
 #define FSUS_STATUS_SUCCESS     0
@@ -106,6 +108,10 @@ bool Servo_QueryAngle(uint8_t servoId, float &currentAngle, uint32_t timeoutMs =
 // 读取与 Servo_SetAngleMTurn 相同坐标系的真实多圈角度（单位：度）。
 // 返回 false 表示通信失败，调用方不能用单圈读数代替多圈读数。
 bool Servo_QueryAngleMTurn(uint8_t servoId, float &currentAngle, uint32_t timeoutMs = 50);
+
+// 先释放锁力，再重置累计圈数，随后在当前位置恢复锁力并回读。
+// 仅改变舵机的多圈计数，不下发旋转目标；返回 true 表示回读成功。
+bool Servo_ResetTurnCount(uint8_t servoId, float &newAngle);
 
 /**
  * @brief 检测舵机是否在线 (Ping)

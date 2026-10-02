@@ -8,6 +8,13 @@
 RobotPose currentPose = {0, 0, 0};//X,Y,Theta
 //机械臂位姿——大臂高度、小臂伸出长度、转台角度、夹爪角度
 ArmPose currentArm = {0, 0, 0, 0};//high,length,turret_angle,pawl_angle
+static bool s_turretStartupReferenceFault = false;
+static const char* s_turretStartupReferenceFaultReason = "UNKNOWN";
+
+void DisableTurretMotionUntilRestart(const char* reason) {
+    s_turretStartupReferenceFault = true;
+    s_turretStartupReferenceFaultReason = reason;
+}
 
 namespace {
 
@@ -336,10 +343,49 @@ void RegisterChassisParameters() {
  */
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
 
-    int acc = 150;
+    int acc = 200;
+    float safeTurretTarget = 0.0f;
+    if (turret_angle != -1.0f) {
+        if (s_turretStartupReferenceFault) {
+            Serial.printf("[Arm] ERR: turret startup turn count unverified (%s); motion skipped\n",
+                          s_turretStartupReferenceFaultReason);
+            return false;
+        }
+        if (!isfinite(turret_angle) || turret_angle < TURRET_CABLE_MIN_DEG
+                || turret_angle > TURRET_CABLE_MAX_DEG) {
+            Serial.println("[Arm] ERR: turret request outside cable range [-180,360]");
+            return false;
+        }
+        float measuredAngle = 0.0f;
+        if (!Servo_QueryAngleMTurn(2, measuredAngle, 100) || !isfinite(measuredAngle)) {
+            Serial.println("[Arm] ERR: turret multi-turn angle read failed; motion skipped");
+            return false;
+        }
+        // 舵机的多圈读数就是线缆累计旋转角；已经越界时禁止自动动作。
+        if (measuredAngle < TURRET_CABLE_MIN_DEG || measuredAngle > TURRET_CABLE_MAX_DEG) {
+            Serial.printf("[Arm] ERR: turret actual %.1f outside cable range [-180,360]; motion skipped\n",
+                          measuredAngle);
+            return false;
+        }
+        // 同一物理方向有相差 360 度的目标，但只允许选择线缆边界内的目标。
+        float bestDistance = INFINITY;
+        for (int8_t turn = -1; turn <= 1; ++turn) {
+            const float candidate = turret_angle + 360.0f * turn;
+            if (candidate < TURRET_CABLE_MIN_DEG || candidate > TURRET_CABLE_MAX_DEG) continue;
+            const float distance = fabsf(candidate - measuredAngle);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                safeTurretTarget = candidate;
+            }
+        }
+        if (!isfinite(bestDistance)) {
+            Serial.println("[Arm] ERR: no turret target within cable range");
+            return false;
+        }
+    }
 
         if (currentArm.high - high != 0 && high != -1) {
-            if( high < 0 || high > 160){//行程保护
+            if( high < 0 || high > ARM_HEIGHT_LIMIT_MM){//行程保护
                 Serial.println("high out of range");
                 return false;
             } else {
@@ -365,29 +411,8 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
         }
         
         if(turret_angle != -1) {
-            if( turret_angle < -360 || turret_angle > 360){//行程保护
-                Serial.println("turret_angle out of range");
-                return false;
-            } else {
-                float measuredAngle = 0.0f;
-                if (!Servo_QueryAngleMTurn(2, measuredAngle, 100) || !isfinite(measuredAngle)) {
-                    Serial.println("[Arm] ERR: turret multi-turn angle read failed; motion skipped");
-                    return false;
-                } else {
-                    // 同一物理朝向每隔 360 度重复一次。选择离当前多圈角度最近的目标，
-                    // 例如实测 359 度、目标 0 度时下发 360 度，避免反转一整圈。
-                    const float nearestAngle = turret_angle
-                        + 360.0f * roundf((measuredAngle - turret_angle) / 360.0f);
-                    // 输入目标仍限制在 ±360°；舵机的多圈累计值可能早已超过该范围。
-                    // 只检查实际下发值没有超出舵机协议范围，不再错误地卡住正常动作。
-                    if (!isfinite(nearestAngle) || fabsf(nearestAngle) > 368640.0f) {
-                        Serial.println("[Arm] ERR: turret multi-turn target out of servo range");
-                        return false;
-                    }
-                    Servo_SetAngleMTurn(2, nearestAngle, (300-speed)*3, 4000);
-                    currentArm.turret_angle = turret_angle;
-                }
-            }
+            Servo_SetAngleMTurn(2, safeTurretTarget, (300-speed)*3, 4000);
+            currentArm.turret_angle = safeTurretTarget;
         }
 
         if(pawl_angle != -1) {

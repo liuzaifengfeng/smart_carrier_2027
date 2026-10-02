@@ -67,6 +67,11 @@ class PoseQueryTests(unittest.TestCase):
         app.arm_preview.set_pose.assert_called_once_with(measured)
         self.assertIn("实测", app.arm_status_var.set.call_args.args[0])
 
+    def test_turret_multiturn_angle_is_shown_for_cable_check(self):
+        app = self.app()
+        app._accept_pose_response("{RSP,POSE,GET,OK,150,150,270,50,80,360,12.7}")
+        self.assertIn("舵盘多圈=360°", app.arm_status_var.set.call_args.args[0])
+
     def test_servo_failure_preserves_views_and_reports_axis(self):
         for servo_id, axis in ((1, "夹爪"), (2, "舵盘")):
             with self.subTest(servo_id=servo_id):

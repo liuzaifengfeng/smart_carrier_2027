@@ -369,8 +369,10 @@ ROBOT_SIZE_MM = 300.0
 ROBOT_HALF_MM = ROBOT_SIZE_MM / 2.0
 MAX_RELATIVE_MOVE_MM = FIELD_SIZE_MM * math.sqrt(2.0)
 FIELD_EDGE_EPSILON_MM = 1e-6
-ARM_HEIGHT_LIMIT_MM = 160.0
+ARM_HEIGHT_LIMIT_MM = 175.0
 ARM_TRAVEL_LIMIT_MM = 170.0
+TURRET_CABLE_MIN_DEG = -180.0
+TURRET_CABLE_MAX_DEG = 360.0
 FIELD_NODE_RADIUS_MM = 105.0
 FIELD_GRID_SIZE = 5
 FIELD_NODE_COUNT = 25
@@ -474,7 +476,7 @@ def parse_arm_request(raw_values: list[str]) -> ArmPose:
     limits = (
         (0.0, ARM_HEIGHT_LIMIT_MM, "大臂高度"),
         (0.0, ARM_TRAVEL_LIMIT_MM, "伸缩距离"),
-        (-360.0, 360.0, "舵盘角度"),
+        (TURRET_CABLE_MIN_DEG, TURRET_CABLE_MAX_DEG, "舵盘角度"),
         (-360.0, 360.0, "夹爪角度"),
     )
     for value, (minimum, maximum, label) in zip(values, limits):
@@ -690,11 +692,11 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
         require_range_or_skip(1, 0.0, ARM_TRAVEL_LIMIT_MM, "伸缩距离")
         require_range(2, 1.0, 1000.0, "速度")
     elif command == "MoveArm_2":
-        require_range_or_skip(0, -360.0, 360.0, "舵盘角度")
+        require_range_or_skip(0, TURRET_CABLE_MIN_DEG, TURRET_CABLE_MAX_DEG, "舵盘角度")
         require_range_or_skip(1, -360.0, 360.0, "夹爪角度")
         require_range(2, 1.0, 1000.0, "速度")
     elif command == "SERVO":
-        require_range(0, 0.0, 254.0, "舵机 ID")
+        require_range(0, 0.0, 253.0, "舵机 ID")
         require_range(1, -135.0, 135.0, "舵机角度")
         if not values[0].is_integer():
             raise ValueError("舵机 ID 必须是整数")
@@ -1970,6 +1972,12 @@ class UpperComputerApp:
             text="发送舵盘 / 夹爪（MoveArm_2）",
             command=lambda: self.send_arm_command("MoveArm_2"),
         ).grid(row=6, column=0, columnspan=3, sticky="ew", pady=3)
+        ttk.Label(
+            arm_controls,
+            text="转台线缆范围：实测多圈角度 -180°～360°；越界时自动拒绝转台动作。",
+            foreground="#9a3f20",
+            wraplength=285,
+        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(2, 0))
 
         self.arm_status_var = tk.StringVar(
             value="输入参数会实时预览；-1 保留上次已发送的估计值。"
@@ -2606,9 +2614,9 @@ class UpperComputerApp:
         self.arm_preview.set_pose(arm)
         self.arm_status_var.set(
             f"理想值：H={arm.high:g} mm，L={arm.length:g} mm；"
-            f"实测：舵盘={arm.turret_angle:g}°，夹爪={arm.pawl_angle:g}°"
+            f"实测：舵盘多圈={arm.turret_angle:g}°（线缆 -180°～360°），夹爪={arm.pawl_angle:g}°"
         )
-        self.pose_query_status.set("已回读：舵盘 / 夹爪为实测，其余轴为理想值")
+        self.pose_query_status.set("已回读：舵盘为实测多圈角度，夹爪为实测单圈角度；其余轴为理想值")
 
     def _accept_display_event(self, text: str) -> bool:
         """按显示类型更新对应区域，避免调试信息覆盖任务码。"""

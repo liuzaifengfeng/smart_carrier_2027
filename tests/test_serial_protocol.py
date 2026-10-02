@@ -13,6 +13,21 @@ from upper_computer import (
 
 
 class FrameTests(unittest.TestCase):
+    def test_turret_cable_limits_in_debug_commands(self):
+        self.assertEqual(
+            build_debug_command("MoveArm_2", ["-180", "-1", "80"]),
+            "{CMD,ARM,MOVE2,-180,-1,80}",
+        )
+        self.assertEqual(
+            build_debug_command("MoveArm_2", ["360", "-1", "80"]),
+            "{CMD,ARM,MOVE2,360,-1,80}",
+        )
+        for angle in ("-180.1", "360.1"):
+            with self.subTest(angle=angle), self.assertRaises(ValueError):
+                build_debug_command("MoveArm_2", [angle, "-1", "80"])
+        with self.assertRaises(ValueError):
+            build_debug_command("SERVO", ["254", "0"])
+
     def test_five_stop_requests_and_invalid_modes(self):
         for mode in ("DISC", "DISC_MATERIAL", "WORK_AREA", "WORK_AREA_LOADED", "CORNER"):
             with self.subTest(mode=mode):

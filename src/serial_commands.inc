@@ -221,8 +221,8 @@ static void serialDispatch(const SerialFrame &frame) {
     } else if (frame.is("ARM", "MOVE1", 3) || frame.is("ARM", "MOVE2", 3)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         const bool first = strcmp(frame.fields[2], "MOVE1") == 0;
-        const float minimum[] = {first ? -1.0f : -360.0f, first ? -1.0f : -360.0f, 1.0f};
-        const float maximum[] = {first ? 160.0f : 360.0f, first ? 170.0f : 360.0f, 1000.0f};
+        const float minimum[] = {first ? -1.0f : TURRET_CABLE_MIN_DEG, first ? -1.0f : -360.0f, 1.0f};
+        const float maximum[] = {first ? ARM_HEIGHT_LIMIT_MM : 360.0f, first ? 170.0f : 360.0f, 1000.0f};
         float values[3];
         if (!serialFloats(frame, values, minimum, maximum, 3)
                 || (first && ((values[0] < 0 && values[0] != -1)
@@ -231,18 +231,26 @@ static void serialDispatch(const SerialFrame &frame) {
         }
         Serial.printf("{RSP,ARM,%s,ACK,%.3f,%.3f,%.3f}\n", frame.fields[2],
                       values[0], values[1], values[2]);
-        if (first) MoveArm(values[0], values[1], -1, -1, values[2]);
-        else MoveArm(-1, -1, values[0], values[1], values[2]);
+        const bool ok = first
+            ? MoveArm(values[0], values[1], -1, -1, values[2])
+            : MoveArm(-1, -1, values[0], values[1], values[2]);
+        Serial.printf("{EVT,ARM,%s,%s}\n", frame.fields[2], ok ? "ISSUED" : "FAILED");
     } else if (frame.is("ARM", "SERVO", 2)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         uint32_t id = 0;
         float angle = 0;
         if (!serialUInt(frame.fields[3], id, 254)
+                || id == SERVO_ID_BROADCAST
                 || !serialFloat(frame.fields[4], angle, -135, 135)) {
             serialError(frame, "RANGE"); return;
         }
         Serial.printf("{RSP,ARM,SERVO,ACK,%u,%.3f}\n", static_cast<unsigned>(id), angle);
-        Servo_SetAngle(static_cast<uint8_t>(id), angle, 0, 0);
+        if (id == 2) {
+            const bool ok = MoveArm(-1, -1, angle, -1, 150);
+            Serial.printf("{EVT,ARM,SERVO,%s}\n", ok ? "ISSUED" : "FAILED");
+        } else {
+            Servo_SetAngle(static_cast<uint8_t>(id), angle, 0, 0);
+        }
     } else if (frame.is("ARM", "ENABLE", 1)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         uint32_t enabled = 0;

@@ -259,6 +259,28 @@ bool Servo_QueryAngleMTurn(uint8_t servoId, float &currentAngle, uint32_t timeou
     return false;
 }
 
+bool Servo_ResetTurnCount(uint8_t servoId, float &newAngle) {
+    ServoBusGuard guard;
+    if (!guard.locked || servoId == SERVO_ID_BROADCAST) return false;
+
+    // 厂商要求重置圈数前先释放锁力。停止帧内容：ID、模式、功率低/高字节。
+    const uint8_t releaseContent[4] = {servoId, 0x10, 0, 0};
+    const uint8_t holdContent[4] = {servoId, 0x11, 0, 0};
+    const uint8_t resetContent[1] = {servoId};
+    sendPacket(FSUS_CMD_STOP, releaseContent, sizeof(releaseContent));
+    vTaskDelay(pdMS_TO_TICKS(10));
+    sendPacket(FSUS_CMD_RESET_TURNS, resetContent, sizeof(resetContent));
+    vTaskDelay(pdMS_TO_TICKS(10));
+    // 不论后续回读是否成功，都先恢复当前位置锁力。
+    sendPacket(FSUS_CMD_STOP, holdContent, sizeof(holdContent));
+    vTaskDelay(pdMS_TO_TICKS(10));
+    for (uint8_t attempt = 0; attempt < 3; ++attempt) {
+        if (attempt != 0) vTaskDelay(pdMS_TO_TICKS(30));
+        if (Servo_QueryAngleMTurn(servoId, newAngle, 100)) return true;
+    }
+    return false;
+}
+
 // 检测舵机通讯状态 (Ping)
 bool Servo_Ping(uint8_t servoId, uint32_t timeoutMs) {
     ServoBusGuard guard;

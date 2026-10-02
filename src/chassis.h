@@ -4,6 +4,11 @@
 #include <Arduino.h>
 #include <initializer_list>
 
+constexpr float ARM_HEIGHT_LIMIT_MM = 175.0f; // Maximum arm height (mm).
+// 2 号转台舵机的真实多圈角度边界，由线缆可运动范围决定。
+constexpr float TURRET_CABLE_MIN_DEG = -180.0f;
+constexpr float TURRET_CABLE_MAX_DEG = 360.0f;
+
 // 机器人位姿结构体(世界坐标, 单位 mm / 度)
 // 注: 定位(如何获得真实位姿)方案待团队定, 本模块只维护运动原语与理想位姿
 struct RobotPose {
@@ -79,6 +84,9 @@ void ResetDiscAlignmentPid();
 // @brief 机械臂移动到位.
 // 返回值表示所请求的控制命令是否全部成功下发，不代表机构已物理到位。
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
+
+// 开机圈数校验失败后锁住转台动作，直到修正姿态并重新上电。
+void DisableTurretMotionUntilRestart(const char* reason);
 
 // @brief 机械臂初始化归零位
 void InitArm();

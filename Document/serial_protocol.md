@@ -36,8 +36,8 @@
 | `{SetPose:x,y,theta}` | `{CMD,POSE,SET,x,y,theta}` | Debug | `{RSP,POSE,SET,ACK,x,y,theta}` |
 | `{GOTOpose:x,y,theta}` | `{CMD,POSE,GOTO_REL,x,y,theta}` | Debug | `{RSP,POSE,GOTO_REL,ACK,x,y,theta}` |
 | `{Movepose:dir,speed,stop}` | `{CMD,CHASSIS,MOVE,dir,speed,stop}` | Debug | `{RSP,CHASSIS,MOVE,ACK,dir,speed,stop}` |
-| `{MoveArm_1:h,l,speed}` | `{CMD,ARM,MOVE1,h,l,speed}` | Debug | `{RSP,ARM,MOVE1,ACK,h,l,speed}` |
-| `{MoveArm_2:turret,pawl,speed}` | `{CMD,ARM,MOVE2,turret,pawl,speed}` | Debug | `{RSP,ARM,MOVE2,ACK,turret,pawl,speed}` |
+| `{MoveArm_1:h,l,speed}` | `{CMD,ARM,MOVE1,h,l,speed}` | Debug | `{RSP,ARM,MOVE1,ACK,h,l,speed}`，随后 `{EVT,ARM,MOVE1,ISSUED}` 或 `FAILED` |
+| `{MoveArm_2:turret,pawl,speed}` | `{CMD,ARM,MOVE2,turret,pawl,speed}` | Debug | `{RSP,ARM,MOVE2,ACK,turret,pawl,speed}`，随后 `{EVT,ARM,MOVE2,ISSUED}` 或 `FAILED`；`ISSUED` 只表示指令已下发 |
 | `{SERVO:id,angle}` | `{CMD,ARM,SERVO,id,angle}` | Debug | `{RSP,ARM,SERVO,ACK,id,angle}` |
 | `{En_C:enable}` | `{CMD,ARM,ENABLE,enable}` | Debug | `{RSP,ARM,ENABLE,ACK,enable}` |
 | `{MaterialDemo}` / `2` / `3` | `{CMD,ARM,DEMO1}` / `2` / `3` | Debug | `{RSP,ARM,DEMO1,ACK}`，随后 `{EVT,ARM,DEMO1,DONE}` 或 `FAILED`；其他编号同理 |
@@ -52,14 +52,16 @@
 - `START_ZONE` 只能为 1 或 2。Debug 中设置后同步软件估计位姿；Release 中保留现有业务状态行为。
 - `ROUTE`：2～25 个节点，节点编号 0～24，5×5 蛇形地图中相邻节点必须物理上下或左右相邻。路径的第一个节点必须是小车实际所在节点。固件执行前再检查相邻性；上位机输入框仍可输入 `0-1-8`，发送时转换为逗号字段。
 - `ALIGN_DATA`：三个有限浮点值，依次为角度偏差（度）、视觉 X 与 Y 偏差（视觉单位）；20 Hz 连续输入时只保留最新一帧。停止对齐后收到有效反馈也不驱动电机。
+- 首轮圆盘自动流程：路径结束后固件自行开启单次对齐，再发 `START_REQUEST,DISC`；电脑仅需回传 `ALIGN_DATA`。成功时发 `ALIGN_DONE` 并禁用底盘闭环，随后发 `STOP_REQUEST,DISC`、`START_REQUEST,DISC_MATERIAL`。包含首帧等待的总限时为 15 秒，运动反馈断流限时为 300 ms；失败发 `ALIGN_FAILED,TIMEOUT`，主流程结束 DISC 请求并保持故障。手动 `ALIGN_START` / `ALIGN_STOP` 会取消自动等待，不能作为自动完成信号；手动连续对齐模式保留原有行为。
 - `COLOR`：有限数值；`CONFIRM`：无参数。二者仅供 Release 业务状态机使用。
 - `VISION START_REQUEST`：恰好一个模式参数，只允许 `DISC`、`DISC_MATERIAL`、`WORK_AREA`、`WORK_AREA_LOADED`、`CORNER`。未知模式回复 `RANGE`，缺参数或多参数回复 `FORMAT`，均不发送视觉请求事件。Debug 和 Release 均可调用，每次合法命令发送一次事件，不自动开启 PID 对齐或改变业务状态。
 - `VISION STOP_REQUEST`：模式、参数数量、运行模式及错误规则与 `START_REQUEST` 相同。每次合法命令仅请求结束指定视觉功能，先回复 ACK 再发出 STOP_REQUEST 事件；不自动停止 ESP32 的 PID 对齐，不改变业务状态。连续对齐需要单独发送 `{CMD,VISION,ALIGN_STOP}` 停车并清零 PID。
-- `POSE GET`：`x,y,theta,h,l` 是软件维护的理想/开环值，单位依次为 mm、mm、度、mm、mm；`turret,pawl` 是现场读取的 2 号、1 号舵机角度（度）。读取失败回复 `{RSP,POSE,GET,ERR,SERVO_READ,2}` 或 `1`，不会用旧值冒充实测。
-- `ARM MOVE2` 使用多圈绝对角度控制。输入角度限制为 ±360°；下发前读取舵机真实多圈角度，在相同物理朝向的多个目标中选择最近的一项。真实累计多圈目标可能超过 ±360°，不能按输入范围拦截；只检查舵机协议的 ±368640° 范围。多圈回读失败时跳过该舵机动作并输出 `[Arm] ERR`。搬运 Demo 遇到该失败会停止并报告 `FAILED`；失败后需人工确认物料位置。`POSE GET` 的角度仍是单圈回读，不能用它判断舵机已累计的圈数。
+- `POSE GET`：`x,y,theta,h,l` 是软件维护的理想/开环值，单位依次为 mm、mm、度、mm、mm；`turret` 是 2 号转台舵机现场读取的真实多圈角度，`pawl` 是 1 号夹爪舵机现场读取的单圈角度（度）。读取失败回复 `{RSP,POSE,GET,ERR,SERVO_READ,2}` 或 `1`，不会用旧值冒充实测。
+- `ARM MOVE2` 的转台线缆机械范围为真实多圈角度 **-180°～360°**。固件先读取真实多圈角度；若当前已越界或读取失败，跳过转台动作。否则仅从范围内的等效目标（相差 360°）中选择最近的一项，绝不向范围外下发转台目标。转台输入也限制为 -180°～360°；夹爪仍为 -360°～360°。搬运 Demo 遇到转台失败会停止并报告 `FAILED`，失败后需人工确认物料位置。调试 `SERVO` 指令的 2 号舵机走相同保护，成功时回复 `{EVT,ARM,SERVO,ISSUED}`；不允许广播 ID 254 绕过保护。
+- 转台开机参考位由使用者保证：**上电前必须实际处于 0°～180°且线缆未缠绕**。固件等待舵机启动，并对开机读数及重置后回读做有限重试。若开机多圈读数不在 0°～180°，固件只在单圈读数处于 0°～180°并与多圈余角吻合时，对 2 号舵机执行“停止并释放锁力 → 重置圈数 `0x11` → 当前位置恢复锁力 → 多圈回读验证”。例如多圈 817.3°、单圈 97.3°，成功后多圈约为 97.3°；整个过程不发送旋转目标。任何校验失败都会锁住自动转台动作，需检查机械姿态并重新上电；动作报错中的 `INITIAL_MULTI_READ`、`SINGLE_READ_OR_MISMATCH`、`RESET_VERIFY` 分别表示初始多圈读取失败、单圈读取或角度比对失败、重置后回读未验证。单圈角度相同无法证明线缆没有额外缠绕，因此开机参考位的物理保证不可省略。
 - `POSE SET`：x、y 为 0～2400 mm，theta 为有限角度。`GOTO_REL`：x、y 各为 ±3394.113 mm，theta 为 ±360 度；都是**相对移动量**，ACK 后执行动作。
 - `CHASSIS MOVE`：方向 `0` 前、`1` 后、`2` 左、`3` 右；速度 0～1000；`stop` 为 0 或 1。
-- `ARM MOVE1`：高度 `-1` 或 0～160 mm，伸出 `-1` 或 0～170 mm；`ARM MOVE2`：转台和夹爪角度各为 -360～360 度，`-1` 表示跳过该轴；两种动作速度均为 1～1000。`SERVO`：ID 0～254 整数，角度 -135～135 度。`ENABLE`：0 或 1。
+- `ARM MOVE1`：高度 `-1` 或 0～175 mm，伸出 `-1` 或 0～170 mm；`ARM MOVE2`：转台目标 -180～360 度、夹爪目标 -360～360 度，`-1` 表示跳过该轴；两种动作速度均为 1～1000。`SERVO`：ID 0～253 整数，角度 -135～135 度；ID 2 通过转台线缆保护。`ENABLE`：0 或 1。
 - 参数个数错误回复 `FORMAT`，越界回复 `RANGE`，模式不符回复 `MODE`，未知动作回复 `UNKNOWN_ACTION`；这些错误均不触发新运动。机械臂动作仍受现有未标定位姿安全门限制。
 
 ## 3. 主动事件与路径交互

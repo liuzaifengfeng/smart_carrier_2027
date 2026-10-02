@@ -7,9 +7,9 @@ from upper_computer import Parameter, ParameterPanel, parse_parameter
 
 class ValidationTests(unittest.TestCase):
     def test_float_limits_and_nonfinite(self):
-        p = Parameter(0, "高度", "100", 0, 160, False)
-        self.assertEqual(p.validate("160"), "160")
-        for value in ("161", "-1", "nan", "inf", "abc"):
+        p = Parameter(0, "高度", "100", 0, 175, False)
+        self.assertEqual(p.validate("175"), "175")
+        for value in ("176", "-1", "nan", "inf", "abc"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 p.validate(value)
 
@@ -18,10 +18,10 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(p.validate("1.0"), "1")
         with self.assertRaises(ValueError):
             p.validate("1.5")
-        p = parse_parameter(["VALUE", "1", "0", "高度", "nan", "0", "160", "0"])
+        p = parse_parameter(["VALUE", "1", "0", "高度", "nan", "0", "175", "0"])
         self.assertEqual(p.value, "nan")
         with self.assertRaises(ValueError):
-            parse_parameter(["VALUE", "1", "0", "高度", "1", "160", "0", "0"])
+            parse_parameter(["VALUE", "1", "0", "高度", "1", "175", "0", "0"])
 
 
 class PanelTests(unittest.TestCase):
@@ -37,7 +37,7 @@ class PanelTests(unittest.TestCase):
 
     def feed_values(self, values=("100", "1000")):
         seq = self.panel.sequence
-        self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq},0,搬运/高度,{values[0]},0,160,0}}")
+        self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq},0,搬运/高度,{values[0]},0,175,0}}")
         self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq},1,搬运/等待,{values[1]},1,60000,1}}")
         self.panel.receive(f"{{RSP,CFG,GET,END,{seq},2}}")
 
@@ -55,7 +55,7 @@ class PanelTests(unittest.TestCase):
     def test_read_requires_complete_directory(self):
         self.panel.read()
         seq = self.panel.sequence
-        self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq},0,高度,100,0,160,0}}")
+        self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq},0,高度,100,0,175,0}}")
         self.panel.receive(f"{{RSP,CFG,GET,END,{seq},2}}")
         self.assertFalse(self.panel.ready)
         self.assertIn("不完整", self.panel.status.get())

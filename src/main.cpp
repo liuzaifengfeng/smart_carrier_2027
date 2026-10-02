@@ -48,6 +48,7 @@
 uint32_t ALIGN_PID_MAX_SPEED_RPM = 20;  // 移动速度单位为转/分
 constexpr uint32_t ALIGN_FEEDBACK_TIMEOUT_MS = 300;
 constexpr uint32_t ALIGN_LOG_INTERVAL_MS = 500;
+constexpr uint32_t DISC_ALIGN_TIMEOUT_MS = 15000; // 包含等待首帧的时间。
 
 CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 
@@ -113,6 +114,7 @@ enum RobotState {
     STATE_READ_TASK,     // 读取任务码(二维码板 / 机载电脑)
     STATE_SCAN_FAILED,   // 扫码重试耗尽，保持停车，不进入抓取流程
     STATE_ROUTE_FAILED,  // 路径失败，不进入后续用户代码
+    STATE_ALIGN_FAILED,  // 自动对齐失败，停车等待处理
     STATE_GRAB_ROUND1,   // 第一批: 转盘抓取 3 个物料
     STATE_PLACE_COARSE1, // 第一批: 放到粗加工区
     STATE_PLACE_TEMP1,   // 第一批: 放到暂存区
@@ -203,21 +205,33 @@ typedef struct {
 QueueHandle_t xAlignmentQueue = NULL;
 SemaphoreHandle_t xAlignmentMotionMutex = NULL;
 volatile bool alignmentEnabled = false;
+enum class AutoAlignmentState { IDLE, WAITING, DONE, FAILED };
+AutoAlignmentState autoAlignmentState = AutoAlignmentState::IDLE;
+uint32_t autoAlignmentStartedMs = 0;
+
+static AutoAlignmentState getAutoAlignmentState() {
+    if (!xAlignmentMotionMutex) return AutoAlignmentState::FAILED;
+    xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY);
+    const auto state = autoAlignmentState;
+    xSemaphoreGive(xAlignmentMotionMutex);
+    return state;
+}
 
 // 参数提交与 PID 更新共用锁，避免一个控制周期读取到半套参数。
-static void setAlignmentEnabled(bool enable, bool acknowledge = false) {
-    alignmentEnabled = false;
-    if (xAlignmentQueue != NULL) {
-        xQueueReset(xAlignmentQueue);
-    }
+static void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false) {
     if (xAlignmentMotionMutex != NULL
             && xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
+        alignmentEnabled = false;
+        if (xAlignmentQueue != NULL) xQueueReset(xAlignmentQueue);
         OmniMove(0.0f, 0.0f, 0.0f, 0);
         ResetDiscAlignmentPid();
+        // 手动启停会取消业务等待；不允许旧的 DONE 推进新流程。
+        autoAlignmentState = automatic ? AutoAlignmentState::WAITING : AutoAlignmentState::IDLE;
+        autoAlignmentStartedMs = millis();
+        alignmentEnabled = enable;
         xSemaphoreGive(xAlignmentMotionMutex);
     }
 
-    alignmentEnabled = enable;
     if (acknowledge) {
         Serial.println(enable ? "{RSP,VISION,ALIGN_START,OK}" : "{RSP,VISION,ALIGN_STOP,OK}");
     }
@@ -267,6 +281,16 @@ void Task_VisualAlignment(void *pvParameters) {
     uint32_t lastLogMs = 0;
 
     for (;;) {
+        xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY);
+        if (autoAlignmentState == AutoAlignmentState::WAITING
+                && millis() - autoAlignmentStartedMs >= DISC_ALIGN_TIMEOUT_MS) {
+            OmniMove(0.0f, 0.0f, 0.0f, 0);
+            ResetDiscAlignmentPid();
+            alignmentEnabled = false;
+            autoAlignmentState = AutoAlignmentState::FAILED;
+            Serial.println("{EVT,VISION,ALIGN_FAILED,TIMEOUT}");
+        }
+        xSemaphoreGive(xAlignmentMotionMutex);
         if (!alignmentEnabled) {
             feedbackActive = false;
             alignedReported = false;
@@ -288,6 +312,10 @@ void Task_VisualAlignment(void *pvParameters) {
                         xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
                     OmniMove(0.0f, 0.0f, 0.0f, 0);
                     ResetDiscAlignmentPid();
+                    if (autoAlignmentState == AutoAlignmentState::WAITING) {
+                        autoAlignmentState = AutoAlignmentState::FAILED;
+                        alignmentEnabled = false;
+                    }
                     xSemaphoreGive(xAlignmentMotionMutex);
                 }
                 Serial.println("{EVT,VISION,ALIGN_FAILED,TIMEOUT}");
@@ -313,6 +341,13 @@ void Task_VisualAlignment(void *pvParameters) {
                     alignment.angleDeg, alignment.visualX, alignment.visualY,
                     dtSeconds, ALIGN_PID_MAX_SPEED_RPM
                 );
+                if (aligned && autoAlignmentState == AutoAlignmentState::WAITING) {
+                    // 自动流程为单次对齐，锁内停车并锁存结果，后续反馈不能重启底盘。
+                    alignmentEnabled = false;
+                    autoAlignmentState = AutoAlignmentState::DONE;
+                    Serial.println("{EVT,VISION,ALIGN_DONE}");
+                    alignedReported = true;
+                }
             }
             xSemaphoreGive(xAlignmentMotionMutex);
         }
@@ -440,6 +475,7 @@ static bool waitScannerCode(char *out, uint32_t len, uint32_t timeoutMs) {
 void Task_MainStateMachine(void *pvParameters) {
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     bool routeCompleted = false; // 每次创建主任务时，第一轮路径重新等待执行。
+    bool discMaterialRequested = false;
 
     while (1) {
         switch (currentState) {
@@ -556,6 +592,7 @@ void Task_MainStateMachine(void *pvParameters) {
 
         case STATE_SCAN_FAILED: // 扫码失败
         case STATE_ROUTE_FAILED: // 路径失败，同样保持故障状态
+        case STATE_ALIGN_FAILED:
             // 保持故障状态，避免下一轮状态机再次启动扫码或执行残留路径。
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
@@ -567,7 +604,7 @@ void Task_MainStateMachine(void *pvParameters) {
             // [TODO] 转盘同步/跟随, 逐次抓取, 每次抓完放上载物台
             // 规则: 每次抓1个; 物料必须放到机器人上才能抓下一个
             //       不允许手爪夹持运送
-            updateDisplay("DISPLAY", "DEBUG", "GRAB R1");// 第一批
+            updateDisplay("DISPLAY", "DEBUG", discMaterialRequested ? "WAIT DISC MATERIAL" : "GRAB R1");
             //调取接口获取路径, 并移动到目标位置
             if (!routeCompleted) {
                 if (!requestAndMoveNodePath(2, 14)) {
@@ -577,18 +614,39 @@ void Task_MainStateMachine(void *pvParameters) {
                     break; // 失败时跳过下面的用户代码
                 }
                 routeCompleted = true;
+                roundProgress = 0;
+                // 先清除旧反馈并开启单次闭环，再通知机载电脑发送 DISC 数据。
+                setAlignmentEnabled(true, false, true);
                 // 路径执行完后请求圆盘定位视觉；上位机应切到圆盘定位流程。
                 requestVisionStart(VisionStartMode::DISC);
 
-                // ===== 在这里填写路径执行完毕后只运行一次的用户代码 =====
-                // 到达圆盘并完成视觉对齐后，才可调用抓取接口：
-                // requestVisionStart(VisionStartMode::DISC_MATERIAL);
-                // LoadRoundFromDisc(currentTask.round1_colors);
             }
             // 走到这里时路径已执行成功，可继续轮询后续任务进度。
             //视觉对齐圆盘
+            if (!discMaterialRequested) {
+                const auto alignmentState = getAutoAlignmentState();
+                if (alignmentState == AutoAlignmentState::WAITING) break;
+                setAlignmentEnabled(false); // 清空残留反馈并保持停车。
+                requestVisionStop(VisionStartMode::DISC);
+                if (alignmentState != AutoAlignmentState::DONE) {
+                    updateDisplay("DISPLAY", "DEBUG", "DISC ALIGN ERR");
+                    if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
+                    currentState = STATE_ALIGN_FAILED;
+                    break;
+                }
+                xQueueReset(xVisualTaskQueue); // 丢弃定位阶段残留的颜色结果。
+                requestVisionStart(VisionStartMode::DISC_MATERIAL);
+                discMaterialRequested = true;
+                updateDisplay("DISPLAY", "DEBUG", "WAIT DISC MATERIAL");
+                // TODO: 接入旋转圆盘的目标颜色/取料时机反馈后逐件 MoveDiscToCargo。
+                // 不可直接 LoadRoundFromDisc：该函数不等待视觉，也不跟随转盘。
+            }
 
-            if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_PLACE_COARSE1; }//抓取3个物料后, 放置到粗加工区对应圆环
+            if (roundProgress >= 3) {
+                requestVisionStop(VisionStartMode::DISC_MATERIAL);
+                roundProgress = 0;
+                currentState = STATE_PLACE_COARSE1;
+            }
             break;
         }
 
@@ -661,9 +719,9 @@ void Task_MainStateMachine(void *pvParameters) {
 static void sendPoseQueryReply() {
     const RobotPose robot = currentPose;
     ArmPose arm = currentArm;
-    // 与 MoveArm 一致：2 号是舵盘，1 号是夹爪。保留原始实测角度（含负值）。
+    // 与 MoveArm 一致：2 号舵盘读取真实多圈角度，1 号夹爪读取单圈角度。
     // 读取失败不以命令目标/上次角度冒充实测值，也不改写运动目标 currentArm。
-    if (!Servo_QueryAngle(2, arm.turret_angle) || !isfinite(arm.turret_angle)) {
+    if (!Servo_QueryAngleMTurn(2, arm.turret_angle) || !isfinite(arm.turret_angle)) {
         Serial.println("{RSP,POSE,GET,ERR,SERVO_READ,2}");
         return;
     }
@@ -683,10 +741,59 @@ static void readStartupServoAngle(uint8_t servoId, float &storedAngle) {
     Serial.printf("[Servo] 开机角度读取开始: ID=%u\n",
                   static_cast<unsigned>(servoId));
     float measuredAngle = 0.0f;
-    if (!Servo_QueryAngle(servoId, measuredAngle) || !isfinite(measuredAngle)) {
+    bool readOk = false;
+    for (uint8_t attempt = 0; attempt < 3 && !readOk; ++attempt) {
+        if (attempt != 0) vTaskDelay(pdMS_TO_TICKS(30));
+        readOk = servoId == 2
+            ? Servo_QueryAngleMTurn(servoId, measuredAngle, 100)
+            : Servo_QueryAngle(servoId, measuredAngle, 100);
+    }
+    if (!readOk || !isfinite(measuredAngle)) {
+        if (servoId == 2) DisableTurretMotionUntilRestart("INITIAL_MULTI_READ");
         Serial.printf("[Servo] 开机角度读取失败: ID=%u, 保留原值=%.1f度, 未进行归一化\n",
                       static_cast<unsigned>(servoId), storedAngle);
         return; // 读取失败时保留原值，不把失败当作测得 0 度。
+    }
+
+    if (servoId == 2) {
+        storedAngle = measuredAngle;
+        if (storedAngle < 0.0f || storedAngle > 180.0f) {
+            // 用户约定：每次上电时转台物理上都停在 0~180 度。
+            // 只在单圈实测也符合该区间、且与多圈角度的余数一致时重置圈数。
+            float singleAngle = 0.0f;
+            float wrappedAngle = fmodf(measuredAngle, 360.0f);
+            if (wrappedAngle > 180.0f) wrappedAngle -= 360.0f;
+            if (wrappedAngle < -180.0f) wrappedAngle += 360.0f;
+            bool singleReadOk = false;
+            for (uint8_t attempt = 0; attempt < 3 && !singleReadOk; ++attempt) {
+                if (attempt != 0) vTaskDelay(pdMS_TO_TICKS(30));
+                singleReadOk = Servo_QueryAngle(2, singleAngle, 100);
+            }
+            if (!singleReadOk || !isfinite(singleAngle)
+                    || singleAngle < 0.0f || singleAngle > 180.0f
+                    || fabsf(singleAngle - wrappedAngle) > 3.0f) {
+                DisableTurretMotionUntilRestart("SINGLE_READ_OR_MISMATCH");
+                Serial.printf("[Servo] ERR: 转台单圈校验失败：多圈=%.1f度，余角=%.1f度，单圈读取%s，单圈=%.1f度；未重置圈数\n",
+                              measuredAngle, wrappedAngle, singleReadOk ? "成功" : "失败", singleAngle);
+                return;
+            }
+            float resetAngle = 0.0f;
+            if (!Servo_ResetTurnCount(2, resetAngle) || !isfinite(resetAngle)
+                    || resetAngle < 0.0f || resetAngle > 180.0f
+                    || fabsf(resetAngle - singleAngle) > 3.0f) {
+                DisableTurretMotionUntilRestart("RESET_VERIFY");
+                Serial.printf("[Servo] ERR: 转台圈数重置未验证成功；重置前=%.1f度，单圈=%.1f度，回读=%.1f度\n",
+                              measuredAngle, singleAngle, resetAngle);
+                return;
+            }
+            storedAngle = resetAngle;
+            Serial.printf("[Servo] 转台圈数已重置：%.1f -> %.1f度；未命令转台旋转\n",
+                          measuredAngle, storedAngle);
+        } else {
+            Serial.printf("[Servo] 转台实测多圈角度=%.1f度（线缆允许范围 -180~360 度），无需重置\n",
+                          storedAngle);
+        }
+        return;
     }
 
     float normalizedAngle = measuredAngle;
@@ -721,6 +828,8 @@ void setup() {
     currentArm = {0, 0, 0, 0}; // 升降/伸缩位置仍待标定，舵机角度由下方实读更新。
     // 与 MoveArm 的实际 ID 对应：2 号=转台，1 号=夹爪。
     // 在串口任务启动前读取，避免多个任务同时访问舵机总线。
+    // 给上电中的舵机留出启动时间；总线已初始化但舵机不一定立即应答。
+    vTaskDelay(pdMS_TO_TICKS(100));
     readStartupServoAngle(2, currentArm.turret_angle);
     readStartupServoAngle(1, currentArm.pawl_angle);
 

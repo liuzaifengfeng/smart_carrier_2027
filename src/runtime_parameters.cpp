@@ -1,4 +1,5 @@
 #include "runtime_parameters.h"
+#include "chassis.h"
 #include "serial_frame.h"
 #include "material_transfer.h"
 #include <math.h>
@@ -45,11 +46,12 @@ void add(const char *name, void *address, float minimum, float maximum, bool int
 void registerPose(const char *name, MaterialStationPose &pose) {
     char label[80];
     snprintf(label, sizeof(label), "%s/高度(mm)", name);
-    RegisterRuntimeFloat(label, pose.high, 0, 160);
+    RegisterRuntimeFloat(label, pose.high, 0, ARM_HEIGHT_LIMIT_MM);
     snprintf(label, sizeof(label), "%s/伸出(mm)", name);
     RegisterRuntimeFloat(label, pose.length, 0, 170);
     snprintf(label, sizeof(label), "%s/转台(deg)", name);
-    RegisterRuntimeFloat(label, pose.turretAngle, -360, 360);
+    RegisterRuntimeFloat(label, pose.turretAngle,
+                         TURRET_CABLE_MIN_DEG, TURRET_CABLE_MAX_DEG);
 }
 
 void initialize() {
@@ -63,8 +65,8 @@ void initialize() {
         snprintf(name, sizeof(name), "搬运/工作区%u", i + 1);
         registerPose(name, materialTransferLayout.workArea[i]);
     }
-    RegisterRuntimeFloat("搬运/安全高度(mm)", materialTransferLayout.approachHeight, 0, 160);
-    RegisterRuntimeFloat("搬运/二层高度增量(mm)", materialTransferLayout.secondLayerOffset, 0, 160);
+    RegisterRuntimeFloat("搬运/安全高度(mm)", materialTransferLayout.approachHeight, 0, ARM_HEIGHT_LIMIT_MM);
+    RegisterRuntimeFloat("搬运/二层高度增量(mm)", materialTransferLayout.secondLayerOffset, 0, ARM_HEIGHT_LIMIT_MM);
     // MoveArm 中舵机时间使用 (300-speed)*3，速度不得超过 300。
     RegisterRuntimeFloat("搬运/速度", materialTransferLayout.moveSpeed, 1, 300);
     RegisterRuntimeFloat("搬运/夹爪张开(deg)", materialTransferLayout.clawOpenAngle, -360, 360);
