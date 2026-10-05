@@ -17,6 +17,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
     static const char *const names[][2] = {
         {"SYS", "HELLO"}, {"SYS", "RELEASE"}, {"SYS", "READY"},
         {"SYS", "START"}, {"SYS", "HELP"},
+        {"LED", "SET"}, {"LED", "GET"},
         {"NAV", "START_ZONE"}, {"NAV", "ROUTE"},
         {"VISION", "ALIGN_START"}, {"VISION", "ALIGN_STOP"},
         {"VISION", "START_REQUEST"},
@@ -28,6 +29,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"ARM", "MOVE1"}, {"ARM", "MOVE2"}, {"ARM", "SERVO"},
         {"ARM", "ENABLE"}, {"ARM", "DEMO1"}, {"ARM", "DEMO2"}, {"ARM", "DEMO3"},
         {"ARM", "DEMO4"},
+        {"ARM", "INIT_START"}, {"ARM", "INIT_LOOK"},
         {"CFG", "GET"}, {"CFG", "BEGIN"}, {"CFG", "SET"}, {"CFG", "COMMIT"},
     };
     for (const auto &name : names) {
@@ -127,6 +129,17 @@ static void serialDispatch(const SerialFrame &frame) {
         serialReply(frame, "OK");
     } else if (frame.is("POSE", "GET", 0)) {
         sendPoseQueryReply();
+    } else if (frame.is("LED", "SET", 1) || frame.is("LED", "GET", 0)) {
+        uint32_t percent = 0;
+        const bool setting = strcmp(frame.fields[2], "SET") == 0;
+        if (setting && !serialUInt(frame.fields[3], percent, 100)) {
+            serialError(frame, "RANGE"); return;
+        }
+        if (!LedPwm_IsReady() || (setting && !LedPwm_SetBrightness(percent))) {
+            serialError(frame, "PWM"); return;
+        }
+        Serial.printf("{RSP,LED,%s,OK,%u}\n", frame.fields[2],
+                      static_cast<unsigned>(LedPwm_GetBrightness()));
     } else if (frame.is("NAV", "START_ZONE", 1)) {
         uint32_t zone = 0;
         if (!serialUInt(frame.fields[3], zone, 2) || zone < 1) {
@@ -218,6 +231,12 @@ static void serialDispatch(const SerialFrame &frame) {
         Serial.printf("{RSP,CHASSIS,MOVE,ACK,%u,%.3f,%u}\n",
                       static_cast<unsigned>(direction), speed, static_cast<unsigned>(stop));
         MovePose(direction, speed, stop != 0);
+    } else if (frame.is("ARM", "INIT_START", 0) || frame.is("ARM", "INIT_LOOK", 0)) {
+        if (!serialDebugMode) { serialError(frame, "MODE"); return; }
+        serialReply(frame, "ACK");
+        const bool ok = strcmp(frame.fields[2], "INIT_START") == 0
+            ? InitArm_start() : InitArm_look();
+        Serial.printf("{EVT,ARM,%s,%s}\n", frame.fields[2], ok ? "ISSUED" : "FAILED");
     } else if (frame.is("ARM", "MOVE1", 3) || frame.is("ARM", "MOVE2", 3)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         const bool first = strcmp(frame.fields[2], "MOVE1") == 0;

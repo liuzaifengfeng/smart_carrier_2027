@@ -13,6 +13,18 @@ from upper_computer import (
 
 
 class FrameTests(unittest.TestCase):
+    def test_lidar_scan_complete_uses_system_start(self):
+        self.assertEqual(build_debug_command("start", []), "{CMD,SYS,START}")
+        with self.assertRaises(ValueError):
+            build_debug_command("start", ["1"])
+
+    def test_arm_initialization_commands_have_no_parameters(self):
+        for name, action in (("InitArm_start", "INIT_START"), ("InitArm_look", "INIT_LOOK")):
+            with self.subTest(name=name):
+                self.assertEqual(build_debug_command(name, []), f"{{CMD,ARM,{action}}}")
+                with self.assertRaises(ValueError):
+                    build_debug_command(name, ["1"])
+
     def test_turret_cable_limits_in_debug_commands(self):
         self.assertEqual(
             build_debug_command("MoveArm_2", ["-180", "-1", "80"]),
@@ -107,6 +119,25 @@ class FrameTests(unittest.TestCase):
 
 
 class ConnectionGateTests(unittest.TestCase):
+    def test_lidar_scan_complete_button_sends_system_start(self):
+        app = UpperComputerApp.__new__(UpperComputerApp)
+        app.command_vars = {}
+        app.serial_link = Mock()
+        app.append_log = Mock()
+        app.send_command("start")
+        app.serial_link.send_line.assert_called_once_with("{CMD,SYS,START}")
+        app.append_log.assert_called_once_with("TX", "{CMD,SYS,START}")
+
+    def test_arm_initialization_buttons_send_expected_commands(self):
+        app = UpperComputerApp.__new__(UpperComputerApp)
+        app.command_vars = {}
+        app.serial_link = Mock()
+        app.append_log = Mock()
+        for name, action in (("InitArm_start", "INIT_START"), ("InitArm_look", "INIT_LOOK")):
+            app.send_command(name)
+            app.serial_link.send_line.assert_called_with(f"{{CMD,ARM,{action}}}")
+            app.append_log.assert_called_with("TX", f"{{CMD,ARM,{action}}}")
+
     def test_stop_button_and_reply_do_not_claim_vision_has_stopped(self):
         app = UpperComputerApp.__new__(UpperComputerApp)
         app.serial_link = Mock()

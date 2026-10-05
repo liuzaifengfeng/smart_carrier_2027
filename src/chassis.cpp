@@ -830,11 +830,24 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
 /**
  * @brief 机械臂初始化归零位
  */
-void InitArm() {
-    MoveArm(150,-1,-1,0,150);
+bool InitArm_start() {
+    if (!MoveArm(150,-1,-1,0,150)) return false;
     vTaskDelay(pdMS_TO_TICKS(3000));
-    MoveArm(-1, -1, -55, -1, 150);
+    if (!MoveArm(-1, -1, -55, -1, 150)) return false;
     vTaskDelay(pdMS_TO_TICKS(100));
-    MoveArm(150,40,-1,0,150);
+    if (!MoveArm(150,40,-1,0,150)) return false;
     vTaskDelay(pdMS_TO_TICKS(100));
+    return true;
+}
+
+/**
+ * @brief 机械臂初始化归视觉位
+ */
+bool InitArm_look() {
+    if (!MoveArm(170,-1,-1,0,150)) return false;
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    if (!MoveArm(-1, 0, 90, 80, 150)) return false;
+    vTaskDelay(pdMS_TO_TICKS(100));
+    if (!MoveArm(120,-1,-1,0,150)) return false;
+    return true;
 }

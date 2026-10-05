@@ -89,7 +89,8 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
 void DisableTurretMotionUntilRestart(const char* reason);
 
 // @brief 机械臂初始化归零位
-void InitArm();
+bool InitArm_start();
+bool InitArm_look();
 
 /**
  * @brief 按 0~24 号场地节点路径移动，只使用原地转向和向前直行。

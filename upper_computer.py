@@ -51,6 +51,24 @@ def parse_frame(line: str) -> tuple[str, ...] | None:
     return fields
 
 
+def build_led_command(percent: int | None = None) -> str:
+    if percent is None:
+        return build_frame("CMD", "LED", "GET")
+    if type(percent) is not int or not 0 <= percent <= 100:
+        raise ValueError("LED 亮度必须是 0～100 的整数")
+    return build_frame("CMD", "LED", "SET", percent)
+
+
+def parse_led_response(line: str) -> int | None:
+    fields = parse_frame(line)
+    if (fields is None or len(fields) != 5 or fields[:2] != ("RSP", "LED")
+            or fields[2] not in ("SET", "GET") or fields[3] != "OK"
+            or not fields[4].isascii() or not fields[4].isdigit()):
+        return None
+    percent = int(fields[4])
+    return percent if 0 <= percent <= 100 else None
+
+
 def parse_display_event(line: str) -> tuple[str, str] | None:
     """拆出显示类型和正文；其他串口日志、指令回复均不视为显示内容。"""
     fields = parse_frame(line)
@@ -639,7 +657,7 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
     """校验界面参数并生成 ESP32 当前支持的调试命令。"""
     if command == "help":
         return build_frame("CMD", "SYS", "HELP")
-    if command in ("MaterialDemo", "MaterialDemo2", "MaterialDemo3", "MaterialDemo4", "Mode:Release", "LidarPose"):
+    if command in ("MaterialDemo", "MaterialDemo2", "MaterialDemo3", "MaterialDemo4", "InitArm_start", "InitArm_look", "Mode:Release", "LidarPose", "start"):
         if raw_values:
             raise ValueError("该命令不需要参数")
         category, action = {
@@ -647,8 +665,11 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
             "MaterialDemo2": ("ARM", "DEMO2"),
             "MaterialDemo3": ("ARM", "DEMO3"),
             "MaterialDemo4": ("ARM", "DEMO4"),
+            "InitArm_start": ("ARM", "INIT_START"),
+            "InitArm_look": ("ARM", "INIT_LOOK"),
             "Mode:Release": ("SYS", "RELEASE"),
             "LidarPose": ("VISION", "LIDAR_POSE"),
+            "start": ("SYS", "START"),
         }[command]
         return build_frame("CMD", category, action)
     fields = COMMAND_FIELDS.get(command)
@@ -1702,6 +1723,28 @@ class UpperComputerApp:
         self.parameter_panel = ParameterPanel(notebook, self.serial_link.send_line, self.append_log)
         notebook.add(self.parameter_panel, text="参数")
 
+        led_tab = ttk.Frame(notebook, padding=12)
+        notebook.add(led_tab, text="LED 调光")
+        self.led_brightness = tk.IntVar(value=0)
+        self.led_status = tk.StringVar(value="尚未查询固件亮度")
+        ttk.Label(led_tab, text="LED 亮度 · GPIO5 / 2000 Hz",
+                  font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
+        tk.Scale(led_tab, from_=0, to=100, resolution=1, orient=tk.HORIZONTAL,
+                 variable=self.led_brightness, label="设置亮度（%）",
+                 length=350).pack(fill=tk.X, pady=12)
+        led_buttons = ttk.Frame(led_tab)
+        led_buttons.pack(fill=tk.X)
+        ttk.Button(led_buttons, text="应用亮度",
+                   command=lambda: self.send_led(self.led_brightness.get())).pack(side=tk.LEFT)
+        ttk.Button(led_buttons, text="关闭 LED",
+                   command=lambda: self.send_led(0)).pack(side=tk.LEFT, padx=6)
+        ttk.Button(led_buttons, text="查询亮度",
+                   command=self.send_led).pack(side=tk.LEFT)
+        ttk.Label(led_tab, textvariable=self.led_status, wraplength=390).pack(anchor="w", pady=12)
+        ttk.Label(led_tab, text="拖动滑块后点击应用。0% 关闭，100% 全亮。\n"
+                  "重启默认关闭；断开串口保持当前亮度。\n回读值为固件 PWM 设置值。",
+                  wraplength=390).pack(anchor="w")
+
         ttk.Label(vision_tab, text="请求机载视觉功能", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w", pady=(0, 10))
         for mode, label in VISION_START_REQUEST_LABELS.items():
             row = ttk.Frame(vision_tab)
@@ -1743,6 +1786,16 @@ class UpperComputerApp:
             text="调整到雷达扫描位姿",
             command=lambda: self.send_command("LidarPose"),
         ).pack(fill=tk.X, pady=(6, 0))
+        ttk.Button(
+            start_group,
+            text="雷达扫描完成（继续运行）",
+            command=lambda: self.send_command("start"),
+        ).pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(
+            start_group,
+            text="Release 模式下，扫描完成且小车等待 WAIT START 时点击；随后进入扫码行驶。",
+            foreground="#59636e", wraplength=420, justify=tk.LEFT,
+        ).pack(anchor="w", pady=(5, 0))
 
         self.current_vars = self._pose_editor(pose_tab, "当前理想姿态", (150.0, 150.0, 0.0))
         ttk.Button(pose_tab, text="手动校准理想位置", command=self.update_current).pack(
@@ -1904,6 +1957,22 @@ class UpperComputerApp:
             text="机械臂姿态预览",
             font=("Microsoft YaHei UI", 12, "bold"),
         ).pack(anchor="w", pady=(0, 5))
+        init_group = ttk.LabelFrame(arm_tab, text="机械臂初始化（Debug 模式）", padding=7)
+        init_group.pack(fill=tk.X, pady=(0, 8))
+        for column, (command, label) in enumerate((
+            ("InitArm_start", "起始姿态（InitArm_start）"),
+            ("InitArm_look", "观察姿态（InitArm_look）"),
+        )):
+            init_group.columnconfigure(column, weight=1)
+            ttk.Button(
+                init_group, text=label,
+                command=lambda name=command: self.send_command(name),
+            ).grid(row=0, column=column, sticky="ew", padx=3)
+        ttk.Label(
+            init_group, text="执行结果见串口日志；ISSUED 表示指令已下发，不代表实际到位。",
+            foreground="#59636e", wraplength=420,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
+
         demo_group = ttk.LabelFrame(arm_tab, text="物料搬运 Demo（Debug 模式）", padding=7)
         demo_group.pack(fill=tk.X, pady=(0, 8))
         demo_group.columnconfigure(0, weight=1)
@@ -2036,6 +2105,16 @@ class UpperComputerApp:
     def _command_group(self, parent: ttk.Frame, command: str) -> None:
         group = ttk.LabelFrame(parent, text=command, padding=7)
         group.pack(fill=tk.X, pady=(0, 6))
+        if command == "En_C":
+            group.configure(text="电机使能")
+            self.command_vars[command] = [tk.StringVar(value="1")]
+            for column, (label, enabled) in enumerate((("使能", True), ("失能", False))):
+                group.columnconfigure(column, weight=1)
+                ttk.Button(
+                    group, text=label,
+                    command=lambda value=enabled: self.send_motor_enable(value),
+                ).grid(row=0, column=column, sticky="ew", padx=3)
+            return
         variables: list[tk.StringVar] = []
         for row, (label, default) in enumerate(COMMAND_FIELDS[command]):
             variable = tk.StringVar(value=default)
@@ -2175,6 +2254,7 @@ class UpperComputerApp:
             self.connection_var.set("未安装 pyserial")
 
     def toggle_connection(self) -> None:
+        self.led_status.set("连接已变更，请重新查询亮度")
         self.parameter_panel.disconnected()
         self._cancel_protocol_timer()
         self._cancel_pose_query_timeout()
@@ -2227,6 +2307,27 @@ class UpperComputerApp:
             self.connect_button.configure(text="连接")
             self.connection_var.set("协议不匹配或设备无回复")
             self.append_log("WARN", "未收到 ESP32 串口协议 v2 确认；控制命令已禁用")
+
+    def send_led(self, percent: int | None = None) -> None:
+        try:
+            line = build_led_command(percent)
+            self.serial_link.send_line(line)
+        except (ValueError, RuntimeError, OSError) as exc:
+            self.led_status.set(f"LED 命令未发送：{exc}")
+            return
+        self.led_status.set("命令已发送，等待固件回读；若无回复请重新查询")
+        self.append_log("TX", line)
+
+    def _accept_led_response(self, text: str) -> None:
+        percent = parse_led_response(text)
+        if percent is not None:
+            self.led_status.set(f"固件回读：{percent}% · 2000 Hz")
+        elif text.startswith("{RSP,LED,"):
+            self.led_status.set(f"LED 命令被拒绝或回复无效：{text}")
+
+    def send_motor_enable(self, enabled: bool) -> None:
+        self.command_vars["En_C"][0].set("1" if enabled else "0")
+        self.send_command("En_C")
 
     def send_command(self, command: str) -> None:
         if command == "GOTOpose" and self.pending_target is not None:
@@ -2674,6 +2775,7 @@ class UpperComputerApp:
                         self.connection_var.set("ESP32 协议版本不匹配")
                     continue
                 self._accept_display_event(text)
+                self._accept_led_response(text)
                 self._accept_vision_start_request(text)
                 # 路径接收确认与执行完成是两个阶段，不能把 OK 当作到达。
                 route_status = {
@@ -2701,9 +2803,11 @@ class UpperComputerApp:
                         self.field.redraw()
                 if text.startswith("version:") or text in ("Debug mode", "Release mode"):
                     self.parameter_panel.disconnected()
+                    self.led_status.set("设备启动或模式改变，请重新查询亮度")
                 self._accept_target_echo(text)
                 self._accept_pose_response(text)
             if kind == "ERROR":
+                self.led_status.set("串口异常断开，亮度回读已失效")
                 self._cancel_protocol_timer()
                 self._cancel_pose_query_timeout()
                 self.parameter_panel.disconnected()

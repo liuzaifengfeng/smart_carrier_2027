@@ -18,9 +18,11 @@
 | 旧指令 | v2 指令 | 模式 | 成功回复 / 后续事件 |
 |---|---|---|---|
 | 无 | `{CMD,SYS,HELLO}` | 两者 | `{RSP,SYS,HELLO,OK,2}` |
+| 无 | `{CMD,LED,SET,percent}` | 两者 | `{RSP,LED,SET,OK,percent}`；亮度为 0～100 的整数 |
+| 无 | `{CMD,LED,GET}` | 两者 | `{RSP,LED,GET,OK,percent}`；读取固件 PWM 设置值 |
 | `{Mode:Release}` | `{CMD,SYS,RELEASE}` | Debug | `{RSP,SYS,RELEASE,OK}`；失败 `TIMER` / `TASK` |
 | `{ready}` | `{CMD,SYS,READY}` | Release | `{RSP,SYS,READY,OK}` |
-| `{start}` | `{CMD,SYS,START}` | Release | `{RSP,SYS,START,OK}` |
+| `{start}` | `{CMD,SYS,START}` | Release | `{RSP,SYS,START,OK}`；上位机“姿态 → 启动位置 → 雷达扫描完成（继续运行）”可代发，解除 `WAIT START` 等待并进入扫码行驶 |
 | `{help}` | `{CMD,SYS,HELP}` | 两者 | `{RSP,SYS,HELP,OK}`；帮助文字参见本文件 |
 | `{StartZone:1}` / `:2` | `{CMD,NAV,START_ZONE,1}` / `2` | 两者 | `{RSP,NAV,START_ZONE,OK,1}` / `2` |
 | `{way:0-1-8}` | `{CMD,NAV,ROUTE,0,1,8}` | 两者 | `{RSP,NAV,ROUTE,ACK,3}`，随后路径事件 |
@@ -37,6 +39,8 @@
 | `{GOTOpose:x,y,theta}` | `{CMD,POSE,GOTO_REL,x,y,theta}` | Debug | `{RSP,POSE,GOTO_REL,ACK,x,y,theta}` |
 | `{Movepose:dir,speed,stop}` | `{CMD,CHASSIS,MOVE,dir,speed,stop}` | Debug | `{RSP,CHASSIS,MOVE,ACK,dir,speed,stop}` |
 | `{MoveArm_1:h,l,speed}` | `{CMD,ARM,MOVE1,h,l,speed}` | Debug | `{RSP,ARM,MOVE1,ACK,h,l,speed}`，随后 `{EVT,ARM,MOVE1,ISSUED}` 或 `FAILED` |
+| 无（新增） | `{CMD,ARM,INIT_START}` | Debug | 调用 `InitArm_start()`；`{RSP,ARM,INIT_START,ACK}`，随后 `{EVT,ARM,INIT_START,ISSUED}` 或 `FAILED` |
+| 无（新增） | `{CMD,ARM,INIT_LOOK}` | Debug | 调用 `InitArm_look()`；`{RSP,ARM,INIT_LOOK,ACK}`，随后 `{EVT,ARM,INIT_LOOK,ISSUED}` 或 `FAILED` |
 | `{MoveArm_2:turret,pawl,speed}` | `{CMD,ARM,MOVE2,turret,pawl,speed}` | Debug | `{RSP,ARM,MOVE2,ACK,turret,pawl,speed}`，随后 `{EVT,ARM,MOVE2,ISSUED}` 或 `FAILED`；`ISSUED` 只表示指令已下发 |
 | `{SERVO:id,angle}` | `{CMD,ARM,SERVO,id,angle}` | Debug | `{RSP,ARM,SERVO,ACK,id,angle}` |
 | `{En_C:enable}` | `{CMD,ARM,ENABLE,enable}` | Debug | `{RSP,ARM,ENABLE,ACK,enable}` |
@@ -63,6 +67,7 @@
 - `CHASSIS MOVE`：方向 `0` 前、`1` 后、`2` 左、`3` 右；速度 0～1000；`stop` 为 0 或 1。
 - `ARM MOVE1`：高度 `-1` 或 0～175 mm，伸出 `-1` 或 0～170 mm；`ARM MOVE2`：转台目标 -180～360 度、夹爪目标 -360～360 度，`-1` 表示跳过该轴；两种动作速度均为 1～1000。`SERVO`：ID 0～253 整数，角度 -135～135 度；ID 2 通过转台线缆保护。`ENABLE`：0 或 1。
 - 参数个数错误回复 `FORMAT`，越界回复 `RANGE`，模式不符回复 `MODE`，未知动作回复 `UNKNOWN_ACTION`；这些错误均不触发新运动。机械臂动作仍受现有未标定位姿安全门限制。
+- `ARM INIT_START` / `INIT_LOOK` 不带参数，上位机“机械臂 → 机械臂初始化”提供两个按钮。前者目标为高度 150 mm、伸出 40 mm、转台 -55°、夹爪 0°；后者目标为高度 150 mm、伸出 0 mm、转台 90°、夹爪 80°。沿用固件动作顺序与延时，任一步下发失败即结束并报告 `FAILED`；`ACK` 仅表示接令，`ISSUED` 仅表示动作指令已下发，不证明物理到位。执行期间串口命令任务会等待该流程返回。
 
 ## 3. 主动事件与路径交互
 
@@ -91,7 +96,7 @@
 | `{EVT,VISION,START_REQUEST,WORK_AREA_LOADED}` | 粗加工区或暂存区的带物料工位定位视觉 | 准备从已有物料的工位取回或码放时 |
 | `{EVT,VISION,START_REQUEST,CORNER}` | 角点视觉识别 | 回家路径执行结束、准备确认初始启停区位置时 |
 
-五个模式值是固定 ASCII 标识，不附带区域编号或任务码。当前粗加工区和暂存区共用一套机械臂工位位姿；机载电脑需结合当前业务阶段区分所在区域。固件提供 `requestVisionStart(VisionStartMode)` 发送接口，当前 Release 流程只在首轮圆盘路径执行后自动发送 `DISC`；其余模式要等对应的导航、到位及视觉切换时机接入状态机后才会自动发送。仓库内调试上位机的“视觉”页提供五种请求按钮，显示发送、接令、请求事件及错误状态，同时保留原始日志，不包含相机算法。`CORNER` 本次定义的是启动请求；角点结果与自动返家完成判定尚未接入固件，不能把请求事件当作到达确认。
+五个模式值是固定 ASCII 标识，不附带区域编号或任务码。当前粗加工区和暂存区共用一套机械臂工位位姿；机载电脑需结合当前业务阶段区分所在区域。固件提供 `requestVisionStart(VisionStartMode)` 发送接口；当前 Release 流程已在首轮圆盘区自动切换 `DISC`/`DISC_MATERIAL`，并在第一批粗加工区自动切换 `WORK_AREA`/`WORK_AREA_LOADED`。其余阶段要等对应的导航、到位及视觉切换时机接入状态机后才会自动发送。仓库内调试上位机的“视觉”页提供五种请求按钮，显示发送、接令、请求事件及错误状态，同时保留原始日志，不包含相机算法。`CORNER` 本次定义的是启动请求；角点结果与自动返家完成判定尚未接入固件，不能把请求事件当作到达确认。
 
 上位机手动触发角点视觉的完整交互：
 
@@ -188,3 +193,9 @@ CFG 参数只在 RAM 中生效，重启恢复默认值。读取须停止视觉�
 1. 依据本页逐条修改仓库外发送端，并确认其能发送 HELLO、识别 v2 的 `RSP`/`EVT`、完整处理 CFG 事务和路径请求。
 2. 在测试环境先运行新上位机与新固件，核对串口输出和动作安全门。编译通过不代表实车串口或机械动作已验证。
 3. 外部发送端适配并测试完成后再切换实车固件；旧指令在 v2 固件中只会收到 `FRAME` 格式错误。
+
+## GPIO5 LED 调光
+
+GPIO5 接 AO3400 栅极，按低边 N 沟道开关、高电平导通驱动。LEDC 通道 0 使用 2000 Hz、12 位分辨率，亮度百分比线性映射占空比，0% 常低、100% 常高。该通道及共享定时器保留给此驱动。初始化默认关闭，不写入 Flash；串口断开和 Debug/Release 切换保持亮度。
+
+上位机“LED 调光”页拖动滑块后点击“应用亮度”，也可关闭或查询。例：`{CMD,LED,SET,50}` 设置 50%；`{CMD,LED,SET,0}` 关闭。每帧末尾发送换行。参数不合法返回 `ERR,RANGE`，数量错误返回 `ERR,FORMAT`，PWM 初始化失败返回 `ERR,PWM`，失败不改变亮度。旧固件可能返回 `ERR,UNKNOWN_ACTION`。`OK` 和查询仅表示软件 PWM 设置，不代表光强实测。

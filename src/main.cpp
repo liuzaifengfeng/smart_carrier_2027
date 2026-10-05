@@ -38,6 +38,7 @@
 #include "material_transfer.h"
 #include "runtime_parameters.h"
 #include "serial_frame.h"
+#include "led_pwm.h"
 
 // ================= 基础配置 =================
 #define LED_PIN 48
@@ -48,7 +49,11 @@
 uint32_t ALIGN_PID_MAX_SPEED_RPM = 20;  // 移动速度单位为转/分
 constexpr uint32_t ALIGN_FEEDBACK_TIMEOUT_MS = 300;
 constexpr uint32_t ALIGN_LOG_INTERVAL_MS = 500;
-constexpr uint32_t DISC_ALIGN_TIMEOUT_MS = 15000; // 包含等待首帧的时间。
+constexpr uint32_t AUTO_ALIGN_TIMEOUT_MS = 15000; // 包含等待首帧的时间。
+constexpr uint8_t SCAN_AREA_NODE = 2;
+constexpr uint8_t DISC_AREA_NODE = 14;
+// 粗加工区中心约为 (210, 1100)，对应当前 5x5 地图的 10 号节点。
+constexpr uint8_t COARSE_AREA_NODE = 10;
 
 CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 
@@ -115,6 +120,7 @@ enum RobotState {
     STATE_SCAN_FAILED,   // 扫码重试耗尽，保持停车，不进入抓取流程
     STATE_ROUTE_FAILED,  // 路径失败，不进入后续用户代码
     STATE_ALIGN_FAILED,  // 自动对齐失败，停车等待处理
+    STATE_TRANSFER_FAILED, // 搬运动作失败，保持停车等待处理
     STATE_GRAB_ROUND1,   // 第一批: 转盘抓取 3 个物料
     STATE_PLACE_COARSE1, // 第一批: 放到粗加工区
     STATE_PLACE_TEMP1,   // 第一批: 放到暂存区
@@ -208,6 +214,7 @@ volatile bool alignmentEnabled = false;
 enum class AutoAlignmentState { IDLE, WAITING, DONE, FAILED };
 AutoAlignmentState autoAlignmentState = AutoAlignmentState::IDLE;
 uint32_t autoAlignmentStartedMs = 0;
+uint32_t alignmentGeneration = 0; // 受运动锁保护，丢弃跨启停周期的已出队帧。
 
 static AutoAlignmentState getAutoAlignmentState() {
     if (!xAlignmentMotionMutex) return AutoAlignmentState::FAILED;
@@ -222,6 +229,7 @@ static void setAlignmentEnabled(bool enable, bool acknowledge = false, bool auto
     if (xAlignmentMotionMutex != NULL
             && xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
         alignmentEnabled = false;
+        ++alignmentGeneration;
         if (xAlignmentQueue != NULL) xQueueReset(xAlignmentQueue);
         OmniMove(0.0f, 0.0f, 0.0f, 0);
         ResetDiscAlignmentPid();
@@ -279,11 +287,19 @@ void Task_VisualAlignment(void *pvParameters) {
     bool feedbackActive = false;
     uint32_t lastFeedbackMs = 0;
     uint32_t lastLogMs = 0;
+    uint32_t previousGeneration = 0;
 
     for (;;) {
         xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY);
+        const uint32_t generation = alignmentGeneration;
+        if (generation != previousGeneration) {
+            feedbackActive = false;
+            alignedReported = false;
+            lastFeedbackMs = 0;
+            previousGeneration = generation;
+        }
         if (autoAlignmentState == AutoAlignmentState::WAITING
-                && millis() - autoAlignmentStartedMs >= DISC_ALIGN_TIMEOUT_MS) {
+                && millis() - autoAlignmentStartedMs >= AUTO_ALIGN_TIMEOUT_MS) {
             OmniMove(0.0f, 0.0f, 0.0f, 0);
             ResetDiscAlignmentPid();
             alignmentEnabled = false;
@@ -310,6 +326,10 @@ void Task_VisualAlignment(void *pvParameters) {
                 // 视觉断流时立即撤销所有速度，禁止沿最后一次命令继续运动。
                 if (xSemaphoreTake(
                         xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
+                    if (generation != alignmentGeneration || !alignmentEnabled) {
+                        xSemaphoreGive(xAlignmentMotionMutex);
+                        continue;
+                    }
                     OmniMove(0.0f, 0.0f, 0.0f, 0);
                     ResetDiscAlignmentPid();
                     if (autoAlignmentState == AutoAlignmentState::WAITING) {
@@ -336,7 +356,7 @@ void Task_VisualAlignment(void *pvParameters) {
 
         bool aligned = false;
         if (xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
-            if (alignmentEnabled) {
+            if (alignmentEnabled && generation == alignmentGeneration) {
                 aligned = AlignToDiscContinuous(
                     alignment.angleDeg, alignment.visualX, alignment.visualY,
                     dtSeconds, ALIGN_PID_MAX_SPEED_RPM
@@ -474,8 +494,10 @@ static bool waitScannerCode(char *out, uint32_t len, uint32_t timeoutMs) {
 // ================= 主状态机 =================
 void Task_MainStateMachine(void *pvParameters) {
     vTaskDelay(1000 / portTICK_PERIOD_MS);
-    bool routeCompleted = false; // 每次创建主任务时，第一轮路径重新等待执行。
+    bool discRouteCompleted = false; // 每次创建主任务时，第一轮路径重新等待执行。
     bool discMaterialRequested = false;
+    bool coarse1RouteCompleted = false;
+    bool coarse1VisionRequested = false;
 
     while (1) {
         switch (currentState) {
@@ -483,7 +505,7 @@ void Task_MainStateMachine(void *pvParameters) {
 
         case STATE_WAIT_START: // 等待开始区域
             Serial.println("TASK start");
-            InitArm();// 初始化机械臂
+            InitArm_start();// 初始化机械臂
             updateDisplay("DISPLAY", "DEBUG", "WAIT start_zone");
             while (currentStartZone == START_ZONE_UNKNOWN) vTaskDelay(100 / portTICK_PERIOD_MS);
             switch (currentStartZone)
@@ -515,7 +537,7 @@ void Task_MainStateMachine(void *pvParameters) {
 
         case STATE_READ_TASK: { // 读取任务码
             updateDisplay("DISPLAY", "DEBUG", "READ TASK");
-            InitArm();
+            InitArm_start();
             // 1. 每段最多估算 1300 mm；首次尝试 + 最多 3 次反向重试，共 4 段。
             constexpr float SCAN_MAX_DISTANCE_MM = 1300.0f;
             constexpr float SCAN_SPEED_RPM = 30.0f;
@@ -591,8 +613,12 @@ void Task_MainStateMachine(void *pvParameters) {
         }
 
         case STATE_SCAN_FAILED: // 扫码失败
+            Serial.println("SCAN_FAILED");
         case STATE_ROUTE_FAILED: // 路径失败，同样保持故障状态
-        case STATE_ALIGN_FAILED:
+            Serial.println("ROUTE_FAILED");
+        case STATE_ALIGN_FAILED:// 定位失败
+            Serial.println("ALIGN_FAILED");
+        case STATE_TRANSFER_FAILED:
             // 保持故障状态，避免下一轮状态机再次启动扫码或执行残留路径。
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
@@ -606,14 +632,14 @@ void Task_MainStateMachine(void *pvParameters) {
             //       不允许手爪夹持运送
             updateDisplay("DISPLAY", "DEBUG", discMaterialRequested ? "WAIT DISC MATERIAL" : "GRAB R1");
             //调取接口获取路径, 并移动到目标位置
-            if (!routeCompleted) {
-                if (!requestAndMoveNodePath(2, 14)) {
+            if (!discRouteCompleted) {
+                if (!requestAndMoveNodePath(SCAN_AREA_NODE, DISC_AREA_NODE)) {
                     updateDisplay("DISPLAY", "DEBUG", "ROUTE ERR");
                     if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);// 路径失败后, 停止定时器
                     currentState = STATE_ROUTE_FAILED;
                     break; // 失败时跳过下面的用户代码
                 }
-                routeCompleted = true;
+                discRouteCompleted = true;
                 roundProgress = 0;
                 // 先清除旧反馈并开启单次闭环，再通知机载电脑发送 DISC 数据。
                 setAlignmentEnabled(true, false, true);
@@ -642,61 +668,102 @@ void Task_MainStateMachine(void *pvParameters) {
                 // 不可直接 LoadRoundFromDisc：该函数不等待视觉，也不跟随转盘。
             }
 
-            if (roundProgress >= 3) {
-                requestVisionStop(VisionStartMode::DISC_MATERIAL);
+            if (roundProgress >= 3 || true) {//先跳过抓取物料
+
                 roundProgress = 0;
                 currentState = STATE_PLACE_COARSE1;
             }
+
+            vTaskDelay(pdMS_TO_TICKS(5000));
             break;
         }
 
+        // 第一批物料放置到粗加工区：导航至粗加工区 → 视觉对齐 → 放置物料 → 转入暂存区放置
         case STATE_PLACE_COARSE1:
+        {
             // 按 round1_pos 顺序放置到粗加工区对应圆环
             // 圆环评分: 1环15分 2环10分 3环7分 ... 越中心分越高
-            // 到达粗加工区并完成停车定位后调用：
-            // requestVisionStart(VisionStartMode::WORK_AREA);
-            // PlaceTaskCargoToWorkArea(currentTask.round1_pos, 1);
-            updateDisplay("DISPLAY", "DEBUG", "PLACE C1");
-            if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_PLACE_TEMP1; }
-            break;
-
-        case STATE_PLACE_TEMP1:
             // 从粗加工区取回3个, 按 round1_pos 放到暂存区
             // 在粗加工区取回：
-            // requestVisionStart(VisionStartMode::WORK_AREA_LOADED);
-            // RetrieveRoundToCargo(currentTask.round1_colors, currentTask.round1_pos);
+            updateDisplay("DISPLAY", "DEBUG",
+                          coarse1RouteCompleted ? "ALIGN COARSE1" : "GO COARSE1");
+
+            if (!coarse1RouteCompleted) {
+                // 离开圆盘前关闭物料识别，避免导航途中继续产生颜色结果。
+                requestVisionStop(VisionStartMode::DISC_MATERIAL);
+                xQueueReset(xVisualTaskQueue);
+                if (!requestAndMoveNodePath(DISC_AREA_NODE, COARSE_AREA_NODE)) {
+                    updateDisplay("DISPLAY", "DEBUG", "ROUTE ERR");
+                    if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
+                    currentState = STATE_ROUTE_FAILED;
+                    break;
+                }
+                coarse1RouteCompleted = true;
+                roundProgress = 0;
+                // 到达粗加工区后开启一次自动 PID 对齐；定位视觉只负责空工位。
+                setAlignmentEnabled(true, false, true);
+                requestVisionStart(VisionStartMode::WORK_AREA);
+                coarse1VisionRequested = true;
+                break;
+            }
+
+            if (coarse1VisionRequested) {
+                const auto alignmentState = getAutoAlignmentState();
+                if (alignmentState == AutoAlignmentState::WAITING) break;
+                setAlignmentEnabled(false);
+                requestVisionStop(VisionStartMode::WORK_AREA);
+                coarse1VisionRequested = false;
+                if (alignmentState != AutoAlignmentState::DONE) {
+                    updateDisplay("DISPLAY", "DEBUG", "COARSE ALIGN ERR");
+                    if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
+                    currentState = STATE_ALIGN_FAILED;
+                    break;
+                }
+            }
+
+            updateDisplay("DISPLAY", "DEBUG", "PLACE C1");
+            // 批量接口会按任务码将载物台 1~3 全部放到第一层；返回 true
+            // 只说明预设动作均已执行，不代表传感器确认物料实际放置成功。
+            if (!PlaceTaskCargoToWorkArea(currentTask.round1_pos, 1)) {
+                updateDisplay("DISPLAY", "DEBUG", "PLACE C1 ERR");
+                if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
+                currentState = STATE_TRANSFER_FAILED;
+                break;
+            }
+            roundProgress = 0;
+            requestVisionStart(VisionStartMode::WORK_AREA_LOADED);
+            currentState = STATE_PLACE_TEMP1;
+            break;
+        }
+
+        case STATE_PLACE_TEMP1:
+
             // 到达暂存区后复用相同工位位姿：
-            // PlaceTaskCargoToWorkArea(currentTask.round1_pos, 1);
             updateDisplay("DISPLAY", "DEBUG", "PLACE T1");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_GRAB_ROUND2; }
             break;
 
         case STATE_GRAB_ROUND2:
             // 同 round1, 抓第二批
-            // LoadRoundFromDisc(currentTask.round2_colors);
             updateDisplay("DISPLAY", "DEBUG", "GRAB R2");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_PLACE_COARSE2; }
             break;
 
         case STATE_PLACE_COARSE2:
             // 第二批放粗加工区
-            // PlaceTaskCargoToWorkArea(currentTask.round2_pos, 1);
             updateDisplay("DISPLAY", "DEBUG", "PLACE C2");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_STACK_TEMP2; }
             break;
 
         case STATE_STACK_TEMP2:
             // 第二批在暂存区码垛到第一批上方(颜色一致, 需平稳放置)
-            // 在粗加工区取回第二批后，到暂存区码放第二层：
-            // RetrieveRoundToCargo(currentTask.round2_colors, currentTask.round2_pos);
-            // PlaceTaskCargoToWorkArea(currentTask.round2_pos, 2);
             updateDisplay("DISPLAY", "DEBUG", "STACK T2");
             if (roundProgress >= 3) { roundProgress = 0; currentState = STATE_RETURN_HOME; }
             break;
 
         case STATE_RETURN_HOME:
             updateDisplay("DISPLAY", "DEBUG", "GO HOME");
-            // [TODO] 回到启停区, 停转盘...
+            // [TODO] 回到启停区
             // 回家路径执行结束后调用 requestVisionStart(VisionStartMode::CORNER)，
             // 等机载电脑确认角点定位结果后再进入 STATE_DONE；当前回家导航尚未实现。
             currentState = STATE_DONE;
@@ -815,7 +882,9 @@ static void readStartupServoAngle(uint8_t servoId, float &storedAngle) {
 
 // ================= setup  =================
 void setup() {
+    const bool ledPwmReady = LedPwm_Init();
     Serial.begin(115200);
+    if (!ledPwmReady) Serial.println("[LED] PWM initialization failed");
     Serial.printf("version: %s\n", VERSION);
     Servo_Init();    // 总线舵机初始化 (默认 Serial2: RX=16, TX=15, 115200bps)
     Emm_V5_Init();   // 电机初始化
@@ -853,6 +922,7 @@ void setup() {
         Serial.println("[Align] ERR: failed to create alignment queue or mutex");
     }
 
+    vTaskDelay(pdMS_TO_TICKS(3000));
     // 上电固定进入 Debug；串口发送 {CMD,SYS,RELEASE} 切换到正式模式。
     {
         Serial.println("Debug mode");
