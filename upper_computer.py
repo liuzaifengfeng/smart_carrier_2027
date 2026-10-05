@@ -59,14 +59,27 @@ def build_led_command(percent: int | None = None) -> str:
     return build_frame("CMD", "LED", "SET", percent)
 
 
-def parse_led_response(line: str) -> int | None:
+def build_led_frequency_command(hz: int) -> str:
+    if type(hz) is not int or not 100 <= hz <= 9000:
+        raise ValueError("LED 频率必须是 100～9000 Hz 的整数")
+    return build_frame("CMD", "LED", "FREQ", hz)
+
+
+def parse_led_response(line: str) -> tuple[int, int | None] | None:
     fields = parse_frame(line)
-    if (fields is None or len(fields) != 5 or fields[:2] != ("RSP", "LED")
-            or fields[2] not in ("SET", "GET") or fields[3] != "OK"
+    if (fields is None or len(fields) not in (5, 6) or fields[:2] != ("RSP", "LED")
+            or fields[2] not in ("SET", "GET", "FREQ") or fields[3] != "OK"
             or not fields[4].isascii() or not fields[4].isdigit()):
         return None
     percent = int(fields[4])
-    return percent if 0 <= percent <= 100 else None
+    if not 0 <= percent <= 100:
+        return None
+    if len(fields) == 5:
+        return (percent, None) if fields[2] != "FREQ" else None
+    if not fields[5].isascii() or not fields[5].isdigit():
+        return None
+    hz = int(fields[5])
+    return (percent, hz) if 100 <= hz <= 9000 else None
 
 
 def parse_display_event(line: str) -> tuple[str, str] | None:
@@ -91,6 +104,104 @@ VISION_START_REQUEST_LABELS = {
     "WORK_AREA_LOADED": "粗加工区／暂存区带物料定位",
     "CORNER": "角点视觉识别",
 }
+
+DISC_MATERIAL_COLORS = {
+    "1 红色": 1, "2 黄色": 2, "3 蓝色": 3,
+    "4 绿色": 4, "5 黑色": 5, "6 浅蓝色": 6,
+}
+
+
+def validate_task_code(code: str) -> str:
+    code = code.strip()
+    parts = code.split("+")
+    if len(parts) != 4 or any(len(part) != 3 or not part.isascii() or not part.isdigit() for part in parts):
+        raise ValueError("任务码格式应为 156+123+516+231：四组三位数，用 + 分隔")
+    if any(not all("1" <= digit <= "6" for digit in parts[i]) for i in (0, 2)):
+        raise ValueError("第一、三组颜色编号只能为 1～6")
+    if any(set(parts[i]) != {"1", "2", "3"} for i in (1, 3)):
+        raise ValueError("第二、四组位置码必须各包含 1、2、3，不能重复")
+    return code
+
+
+def build_task_code_command(code: str) -> str:
+    return build_frame("CMD", "TASK", "SET", validate_task_code(code))
+
+
+def parse_task_code_response(line: str) -> tuple[bool, str] | None:
+    fields = parse_frame(line)
+    if fields is None or len(fields) != 5 or fields[:3] != ("RSP", "TASK", "SET"):
+        return None
+    if fields[3] == "ERR":
+        return False, fields[4]
+    if fields[3] != "OK":
+        return None
+    try:
+        return True, validate_task_code(fields[4])
+    except ValueError:
+        return None
+
+
+def build_disc_color_command(color: int) -> str:
+    if type(color) is not int or not 1 <= color <= 6:
+        raise ValueError("颜色编号必须是 1～6 的整数")
+    return build_frame("CMD", "VISION", "COLOR", color)
+
+
+def build_disc_grab_command(cargo: int, color: int | None = None) -> str:
+    if type(cargo) is not int or not 1 <= cargo <= 3:
+        raise ValueError("载物台编号必须是 1～3 的整数")
+    if color is None:
+        return build_frame("CMD", "VISION", "GRAB", cargo)
+    build_disc_color_command(color)  # 共用颜色边界检查。
+    return build_frame("CMD", "VISION", "GRAB", color, cargo)
+
+
+def build_force_disc_grab_command(color: int, cargo: int) -> str:
+    build_disc_grab_command(cargo, color)  # 沿用颜色和载物台范围校验。
+    return build_frame("CMD", "VISION", "FORCE_GRAB", color, cargo)
+
+
+def parse_disc_material_response(line: str) -> tuple[str, str, int | None, int | None, str | None] | None:
+    fields = parse_frame(line)
+    if fields is None or len(fields) < 4 or fields[1] != "VISION":
+        return None
+    kind, _, action, status = fields[:4]
+    if action not in ("COLOR", "GRAB", "FORCE_GRAB"):
+        return None
+    if kind == "RSP" and status == "ERR" and len(fields) == 5:
+        return action, status, None, None, fields[4]
+    if kind == "RSP" and action == "COLOR" and status == "OK" and len(fields) == 4:
+        return action, status, None, None, None
+    if action == "COLOR" and kind == "EVT" and status in ("SKIP", "BLOCKED") and len(fields) == 7:
+        allowed = {"COLOR_MISMATCH"} if status == "SKIP" else {
+            "NO_TASK", "NOT_WAITING", "ROUND_COMPLETE", "ALIGN_ACTIVE", "NOT_READY", "OCCUPIED"}
+        if fields[6] not in allowed or not all(value.isascii() and value.isdigit() for value in fields[4:6]):
+            return None
+        color, cargo = map(int, fields[4:6])
+        if not 1 <= color <= 6 or not 0 <= cargo <= 3:
+            return None
+        return action, status, color, cargo, fields[6]
+    if action == "FORCE_GRAB" and kind == "EVT" and status == "WARN":
+        if len(fields) != 7 or fields[4] != "OCCUPIED":
+            return None
+        if not all(value.isascii() and value.isdigit() for value in fields[5:]):
+            return None
+        old_color, cargo = map(int, fields[5:])
+        if not 1 <= old_color <= 6 or not 1 <= cargo <= 3:
+            return None
+        return action, status, old_color, cargo, "OCCUPIED"
+    if (len(fields) != 6 or not (
+            (action in ("GRAB", "FORCE_GRAB") and kind == "RSP" and status == "ACK")
+            or (action == "GRAB" and kind == "EVT" and status in ("REQUESTED", "DONE", "FAILED"))
+            or (action == "FORCE_GRAB" and kind == "EVT" and status == "REQUESTED")
+            or (action == "COLOR" and kind == "EVT" and status in ("GRAB", "SKIP")))):
+        return None
+    if not all(value.isascii() and value.isdigit() for value in fields[4:]):
+        return None
+    color, cargo = map(int, fields[4:])
+    if not 1 <= color <= 6 or not (0 <= cargo <= 3 if action == "COLOR" and status == "SKIP" else 1 <= cargo <= 3):
+        return None
+    return action, status, color, cargo, None
 
 
 def build_vision_start_request_command(mode: str) -> str:
@@ -608,6 +719,8 @@ def gotopose_echo_matches(text: str, expected: Pose) -> bool:
 
 
 COMMAND_FIELDS = {
+    "MovePosition": (("X 位移 (mm)", "0"), ("Y 位移 (mm)", "0"),
+                     ("转角 (°，正值左转)", "0"), ("最大轮速 (RPM)", "80")),
     "GOTOpose": (("X 增量", "0"), ("Y 增量", "0"), ("θ 增量", "0")),
     "Movepose": (
         ("方向 0前 1后 2左 3右 4左转 5右转", "0"),
@@ -657,7 +770,7 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
     """校验界面参数并生成 ESP32 当前支持的调试命令。"""
     if command == "help":
         return build_frame("CMD", "SYS", "HELP")
-    if command in ("MaterialDemo", "MaterialDemo2", "MaterialDemo3", "MaterialDemo4", "InitArm_start", "InitArm_look", "Mode:Release", "LidarPose", "start"):
+    if command in ("MaterialDemo", "MaterialDemo2", "MaterialDemo3", "MaterialDemo4", "InitArm_start", "InitArm_look", "InitArm_look2", "Mode:Release", "LidarPose", "start"):
         if raw_values:
             raise ValueError("该命令不需要参数")
         category, action = {
@@ -667,6 +780,7 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
             "MaterialDemo4": ("ARM", "DEMO4"),
             "InitArm_start": ("ARM", "INIT_START"),
             "InitArm_look": ("ARM", "INIT_LOOK"),
+            "InitArm_look2": ("ARM", "INIT_LOOK2"),
             "Mode:Release": ("SYS", "RELEASE"),
             "LidarPose": ("VISION", "LIDAR_POSE"),
             "start": ("SYS", "START"),
@@ -695,10 +809,14 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
             require_range(index, minimum, maximum, f"{label}（或填 -1 跳过）")
 
     integer_indexes: set[int] = set()
-    if command == "GOTOpose":
+    if command in ("GOTOpose", "MovePosition"):
         require_range(0, -MAX_RELATIVE_MOVE_MM, MAX_RELATIVE_MOVE_MM, "X 增量")
         require_range(1, -MAX_RELATIVE_MOVE_MM, MAX_RELATIVE_MOVE_MM, "Y 增量")
         require_range(2, -360.0, 360.0, "θ 增量")
+        if command == "MovePosition":
+            require_range(3, 1.0, 5000.0, "最大轮速")
+            if abs(values[2]) == 360.0 and (values[0] != 0 or values[1] != 0):
+                raise ValueError("全圈旋转不能在单段圆弧中同时完成平移，请修改转角或分次移动")
     elif command == "Movepose":
         if values[0] not in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0):
             raise ValueError("方向只能填写 0～5（前、后、左移、右移、左转、右转）")
@@ -727,6 +845,7 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
               for index, value in enumerate(values)]
     category, action = {
         "GOTOpose": ("POSE", "GOTO_REL"),
+        "MovePosition": ("CHASSIS", "MOVE_POSITION"),
         "Movepose": ("CHASSIS", "MOVE"),
         "MoveArm_1": ("ARM", "MOVE1"),
         "MoveArm_2": ("ARM", "MOVE2"),
@@ -764,11 +883,15 @@ def build_start_zone_command(zone_name: str) -> str:
     return build_frame("CMD", "NAV", "START_ZONE", 1 if zone_name == "启停区1" else 2)
 
 
-def build_alignment_control_command(action: str) -> str:
+def build_alignment_control_command(action: str, mode: str | None = None) -> str:
     """生成连续视觉对齐任务的启停命令。"""
     normalized = action.strip().upper()
     if normalized not in {"START", "STOP"}:
         raise ValueError("对齐任务动作只能是 START 或 STOP")
+    if mode is not None:
+        if normalized != "START" or mode not in VISION_START_REQUEST_LABELS:
+            raise ValueError("仅开启对齐时可指定五种视觉模式之一")
+        return build_frame("CMD", "VISION", "ALIGN_START", mode)
     return build_frame("CMD", "VISION", "ALIGN_" + normalized)
 
 
@@ -1644,6 +1767,8 @@ class UpperComputerApp:
         self.arm_estimate = ArmPose(0.0, 0.0, 0.0, 0.0)
         self.arm_vars: dict[str, tk.StringVar] = {}
         self.pending_target: Pose | None = None
+        self.position_move_window = None
+        self.position_move_status = tk.StringVar(value="尚未发送位置移动指令")
         self.pending_relative_move: Pose | None = None
         self.pose_query_timer: str | None = None
         self.protocol_timer: str | None = None
@@ -1727,7 +1852,7 @@ class UpperComputerApp:
         notebook.add(led_tab, text="LED 调光")
         self.led_brightness = tk.IntVar(value=0)
         self.led_status = tk.StringVar(value="尚未查询固件亮度")
-        ttk.Label(led_tab, text="LED 亮度 · GPIO5 / 2000 Hz",
+        ttk.Label(led_tab, text="LED 亮度与频率 · GPIO5",
                   font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
         tk.Scale(led_tab, from_=0, to=100, resolution=1, orient=tk.HORIZONTAL,
                  variable=self.led_brightness, label="设置亮度（%）",
@@ -1738,13 +1863,32 @@ class UpperComputerApp:
                    command=lambda: self.send_led(self.led_brightness.get())).pack(side=tk.LEFT)
         ttk.Button(led_buttons, text="关闭 LED",
                    command=lambda: self.send_led(0)).pack(side=tk.LEFT, padx=6)
-        ttk.Button(led_buttons, text="查询亮度",
+        ttk.Button(led_buttons, text="查询状态",
                    command=self.send_led).pack(side=tk.LEFT)
+        frequency_row = ttk.Frame(led_tab)
+        frequency_row.pack(fill=tk.X, pady=(12, 0))
+        self.led_frequency = tk.StringVar(value="2000")
+        ttk.Label(frequency_row, text="频率（Hz）：").pack(side=tk.LEFT)
+        ttk.Spinbox(frequency_row, from_=100, to=9000, increment=100,
+                    textvariable=self.led_frequency, width=8).pack(side=tk.LEFT)
+        ttk.Button(frequency_row, text="应用频率",
+                   command=self.send_led_frequency).pack(side=tk.LEFT, padx=6)
         ttk.Label(led_tab, textvariable=self.led_status, wraplength=390).pack(anchor="w", pady=12)
         ttk.Label(led_tab, text="拖动滑块后点击应用。0% 关闭，100% 全亮。\n"
-                  "重启默认关闭；断开串口保持当前亮度。\n回读值为固件 PWM 设置值。",
+                  "频率范围 100～9000 Hz，单独应用并保持亮度。\n"
+                  "重启恢复关闭和 2000 Hz；断开串口保持设置。\n回读值为固件 PWM 配置，不是实测值。",
                   wraplength=390).pack(anchor="w")
 
+        task_group = ttk.LabelFrame(vision_tab, text="手动输入任务码", padding=7)
+        task_group.pack(fill=tk.X, pady=(0, 10))
+        self.task_code_input = tk.StringVar(value="")
+        self.task_code_status = tk.StringVar(value="格式示例：156+123+516+231")
+        task_entry = ttk.Entry(task_group, textvariable=self.task_code_input, width=22)
+        task_entry.grid(row=0, column=0, sticky="ew")
+        task_entry.bind("<Return>", lambda _event: self.send_task_code())
+        ttk.Button(task_group, text="下发任务码", command=self.send_task_code).grid(row=0, column=1, padx=(6, 0))
+        ttk.Label(task_group, textvariable=self.task_code_status, wraplength=380).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        task_group.columnconfigure(0, weight=1)
         ttk.Label(vision_tab, text="请求机载视觉功能", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w", pady=(0, 10))
         for mode, label in VISION_START_REQUEST_LABELS.items():
             row = ttk.Frame(vision_tab)
@@ -1756,8 +1900,23 @@ class UpperComputerApp:
                        command=lambda mode=mode: self.send_vision_start_request(mode)).pack(side=tk.RIGHT)
         ttk.Label(vision_tab, textvariable=self.vision_request_var,
                   foreground="#145a86", wraplength=400).pack(anchor="w", pady=(12, 6))
-        ttk.Label(vision_tab, text="小车收到命令后向机载电脑发出视觉请求。\n相机程序需处理对应事件；定位功能仍需单独开启连续对齐。",
+        ttk.Label(vision_tab, text="圆盘/工位/带物料/角点视觉同步启停连续对齐。\n相机程序需回传偏差；圆盘物料识别仅请求视觉。",
                   foreground="#59636e", wraplength=400, justify=tk.LEFT).pack(anchor="w")
+
+        disc_group = ttk.LabelFrame(vision_tab, text="圆盘物料回传与抓取", padding=7)
+        disc_group.pack(fill=tk.X, pady=(10, 0))
+        self.disc_color_var = tk.StringVar(value="1 红色")
+        self.disc_cargo_var = tk.StringVar(value="1")
+        self.disc_material_status = tk.StringVar(value="颜色按任务码判断；强制抓取无需任务码或开启视觉，结果查看物料日志。")
+        ttk.Combobox(disc_group, textvariable=self.disc_color_var,
+                     values=tuple(DISC_MATERIAL_COLORS), state="readonly", width=12).grid(row=0, column=0)
+        ttk.Label(disc_group, text="载物台：").grid(row=0, column=1, padx=(8, 0))
+        ttk.Combobox(disc_group, textvariable=self.disc_cargo_var,
+                     values=("1", "2", "3"), state="readonly", width=3).grid(row=0, column=2)
+        ttk.Button(disc_group, text="回传颜色", command=lambda: self.send_disc_material(False)).grid(row=1, column=0, pady=5)
+        ttk.Button(disc_group, text="按任务码抓取", command=lambda: self.send_disc_material(True)).grid(row=1, column=1, columnspan=2)
+        ttk.Button(disc_group, text="强制抓取", command=self.send_force_disc_grab).grid(row=2, column=0, columnspan=3, sticky="ew", pady=(0, 5))
+        ttk.Label(disc_group, textvariable=self.disc_material_status, wraplength=380).grid(row=3, column=0, columnspan=3, sticky="w")
 
         ttk.Label(pose_tab, text="姿态调试", font=("Microsoft YaHei UI", 16, "bold")).pack(
             anchor="w", pady=(0, 6)
@@ -1835,6 +1994,8 @@ class UpperComputerApp:
             wraplength=275,
         ).pack(anchor="w", pady=(16, 0))
 
+        ttk.Button(chassis_tab, text="麦轮位置移动（X / Y / 转角 / 速度）",
+                   command=self.open_position_move).pack(fill=tk.X, pady=(0, 6))
         for command in ("GOTOpose", "Movepose", "En_C"):
             self._command_group(chassis_tab, command)
 
@@ -1852,12 +2013,16 @@ class UpperComputerApp:
         ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
         align_group.columnconfigure(0, weight=1)
         align_group.columnconfigure(1, weight=1)
+        self.alignment_mode_var = tk.StringVar(value="DISC")
+        ttk.Combobox(align_group, textvariable=self.alignment_mode_var,
+                     values=tuple(VISION_START_REQUEST_LABELS), state="readonly",
+                     width=22).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 0))
         ttk.Label(
             align_group,
-            text="开启后接收 20 Hz {CMD,VISION,ALIGN_DATA,angle,x,y}；停止会立即停车并清除 PID。",
+            text="按所选模式的 X/Y/角度死区对齐，连续 5 帧满足才报告完成。停止会停车并清零。",
             foreground="#59636e",
             wraplength=280,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
         node_path_group = ttk.LabelFrame(chassis_tab, text="节点路径", padding=7)
         node_path_group.pack(fill=tk.X, pady=(0, 6))
@@ -1962,16 +2127,17 @@ class UpperComputerApp:
         for column, (command, label) in enumerate((
             ("InitArm_start", "起始姿态（InitArm_start）"),
             ("InitArm_look", "观察姿态（InitArm_look）"),
+            ("InitArm_look2", "观察姿态2（InitArm_look2）"),
         )):
-            init_group.columnconfigure(column, weight=1)
+            init_group.columnconfigure(column % 2, weight=1)
             ttk.Button(
                 init_group, text=label,
                 command=lambda name=command: self.send_command(name),
-            ).grid(row=0, column=column, sticky="ew", padx=3)
+            ).grid(row=column // 2, column=column % 2, sticky="ew", padx=3, pady=2)
         ttk.Label(
             init_group, text="执行结果见串口日志；ISSUED 表示指令已下发，不代表实际到位。",
             foreground="#59636e", wraplength=420,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
         demo_group = ttk.LabelFrame(arm_tab, text="物料搬运 Demo（Debug 模式）", padding=7)
         demo_group.pack(fill=tk.X, pady=(0, 8))
@@ -2102,9 +2268,55 @@ class UpperComputerApp:
         group.columnconfigure(1, weight=1)
         return variables  # type: ignore[return-value]
 
+    def open_position_move(self) -> None:
+        if self.position_move_window is not None:
+            self.position_move_window.deiconify()
+            self.position_move_window.lift()
+            return
+        window = tk.Toplevel(self.root)
+        self.position_move_window = window
+        window.title("麦轮相对位置移动")
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", window.withdraw)
+        content = ttk.Frame(window, padding=12)
+        content.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(content, text="以移动前车身坐标系为基准，平移与转向同步进行。\n"
+                  "仅 Debug 可用，执行时自动停止视觉对齐。混合运动走圆弧。",
+                  wraplength=390, justify=tk.LEFT).pack(anchor="w", pady=(0, 8))
+        self._command_group(content, "MovePosition")
+        ttk.Label(content, textvariable=self.position_move_status,
+                  wraplength=390, justify=tk.LEFT).pack(anchor="w", pady=6)
+        ttk.Label(content, text="执行期间串口控制任务等待，后续指令将在等待结束后处理。\n"
+                  "结果为开环估计；再次发送前请确认车辆已经停稳。",
+                  wraplength=390, foreground="#59636e", justify=tk.LEFT).pack(anchor="w")
+
+    def _accept_position_move_response(self, text: str) -> bool:
+        fields = parse_frame(text)
+        if fields is None or fields[1:3] != ("CHASSIS", "MOVE_POSITION"):
+            return False
+        if len(fields) == 8 and fields[:4] == ("RSP", "CHASSIS", "MOVE_POSITION", "ACK"):
+            try:
+                if not all(math.isfinite(float(value)) for value in fields[4:]):
+                    return False
+            except ValueError:
+                return False
+            message = "小车已接令，平移与转向执行中；尚未确认到位。"
+        elif fields == ("EVT", "CHASSIS", "MOVE_POSITION", "DONE", "ESTIMATED"):
+            message = "指令及估算等待已完成，实际到位需现场确认；可查询位姿回读理想值。"
+        elif fields == ("EVT", "CHASSIS", "MOVE_POSITION", "FAILED"):
+            message = "位置移动失败，请检查脉冲标定和混合转角，并查看串口日志。"
+        elif len(fields) == 5 and fields[:4] == ("RSP", "CHASSIS", "MOVE_POSITION", "ERR"):
+            message = f"位置移动被拒绝：{fields[4]}（MODE 表示需处于 Debug 模式）。"
+        else:
+            return False
+        self.position_move_status.set(message)
+        return True
+
     def _command_group(self, parent: ttk.Frame, command: str) -> None:
         group = ttk.LabelFrame(parent, text=command, padding=7)
         group.pack(fill=tk.X, pady=(0, 6))
+        if command == "MovePosition":
+            group.configure(text="相对位置与速度")
         if command == "En_C":
             group.configure(text="电机使能")
             self.command_vars[command] = [tk.StringVar(value="1")]
@@ -2124,7 +2336,8 @@ class UpperComputerApp:
                 row=row, column=1, sticky="ew", pady=2
             )
         group.columnconfigure(1, weight=1)
-        ttk.Button(group, text="发送", command=lambda name=command: self.send_command(name)).grid(
+        ttk.Button(group, text="执行同步移动" if command == "MovePosition" else "发送",
+                   command=lambda name=command: self.send_command(name)).grid(
             row=len(variables), column=0, columnspan=2, sticky="ew", pady=(5, 0)
         )
         self.command_vars[command] = variables
@@ -2319,21 +2532,36 @@ class UpperComputerApp:
         self.append_log("TX", line)
 
     def _accept_led_response(self, text: str) -> None:
-        percent = parse_led_response(text)
-        if percent is not None:
-            self.led_status.set(f"固件回读：{percent}% · 2000 Hz")
+        state = parse_led_response(text)
+        if state is not None:
+            percent, hz = state
+            frequency = f"{hz} Hz" if hz is not None else "旧固件未报告频率，请升级固件"
+            self.led_status.set(f"固件回读：{percent}% · {frequency}")
         elif text.startswith("{RSP,LED,"):
             self.led_status.set(f"LED 命令被拒绝或回复无效：{text}")
+
+    def send_led_frequency(self) -> None:
+        try:
+            raw = self.led_frequency.get().strip()
+            if not raw.isascii() or not raw.isdigit():
+                raise ValueError("LED 频率必须是 100～9000 Hz 的整数")
+            line = build_led_frequency_command(int(raw))
+            self.serial_link.send_line(line)
+        except (ValueError, RuntimeError, OSError) as exc:
+            self.led_status.set(f"LED 命令未发送：{exc}")
+            return
+        self.led_status.set("频率命令已发送，等待固件回读；若无回复请重新查询")
+        self.append_log("TX", line)
 
     def send_motor_enable(self, enabled: bool) -> None:
         self.command_vars["En_C"][0].set("1" if enabled else "0")
         self.send_command("En_C")
 
     def send_command(self, command: str) -> None:
-        if command == "GOTOpose" and self.pending_target is not None:
+        if command in ("GOTOpose", "MovePosition") and self.pending_target is not None:
             messagebox.showerror(
                 "命令未发送",
-                "姿态页目标仍在等待回显，请勿同时发送另一条 GOTOpose。",
+                "姿态页目标仍在等待回显，请勿同时发送另一条位置移动指令。",
                 parent=self.root,
             )
             return
@@ -2345,6 +2573,8 @@ class UpperComputerApp:
             messagebox.showerror("命令未发送", str(exc), parent=self.root)
             return
         self.append_log("TX", line)
+        if command == "MovePosition":
+            self.position_move_status.set("位置移动已发送，等待小车接令；回显不代表实际到位。")
 
     def send_vision_start_request(self, mode: str) -> None:
         self._send_vision_request(mode, True)
@@ -2364,10 +2594,99 @@ class UpperComputerApp:
         prefix = "命令已发送" if start else "结束命令已发送"
         self.vision_request_var.set(f"{prefix}：{VISION_START_REQUEST_LABELS[mode]}，等待小车接令")
 
+    def send_task_code(self) -> None:
+        try:
+            line = build_task_code_command(self.task_code_input.get())
+            self.serial_link.send_line(line)
+        except (ValueError, RuntimeError, OSError) as exc:
+            self.task_code_status.set(f"任务码未发送：{exc}")
+            return
+        self.append_log("TX", line)
+        self.task_code_status.set("任务码已发送，等待小车校验回读。")
+
+    def _accept_task_code_response(self, text: str) -> bool:
+        result = parse_task_code_response(text)
+        if result is None:
+            return False
+        ok, value = result
+        if ok:
+            self.task_code_var.set(value)
+            self.task_code_status.set(f"小车已确认任务码：{value}")
+        else:
+            self.task_code_status.set(f"小车拒绝任务码：{value}")
+        return True
+
+    def send_disc_material(self, grab: bool) -> None:
+        try:
+            color = DISC_MATERIAL_COLORS[self.disc_color_var.get()]
+            line = (build_disc_grab_command(int(self.disc_cargo_var.get()), color)
+                    if grab else build_disc_color_command(color))
+            self.serial_link.send_line(line)
+        except (KeyError, ValueError, RuntimeError, OSError) as exc:
+            self.disc_material_status.set(f"指令未发送：{exc}")
+            return
+        self.append_log("TX", line)
+        self.disc_material_status.set("指令已发送，等待抓取函数调用返回。" if grab else "颜色已发送，等待任务码判断抓取或跳过。")
+
+    def send_force_disc_grab(self) -> None:
+        try:
+            color = DISC_MATERIAL_COLORS[self.disc_color_var.get()]
+            cargo = int(self.disc_cargo_var.get())
+            line = build_force_disc_grab_command(color, cargo)
+            self.serial_link.send_line(line)
+        except (KeyError, ValueError, RuntimeError, OSError) as exc:
+            self.disc_material_status.set(f"强制抓取未发送：{exc}")
+            return
+        self.append_log("TX", line)
+        self.force_disc_grab_warning = ""
+        self.disc_material_status.set("强制抓取已发送，等待小车接令及函数调用返回。")
+
+    def _accept_disc_material_response(self, text: str) -> bool:
+        result = parse_disc_material_response(text)
+        if result is None:
+            return False
+        action, status, color, cargo, reason = result
+        if status == "ERR":
+            message = f"{action} 指令被拒绝：{reason}"
+        elif action == "FORCE_GRAB" and status == "ACK":
+            self.force_disc_grab_warning = ""
+            message = f"强制抓取已接令：颜色 {color} → 载物台 {cargo}，等待函数调用返回。"
+        elif action == "FORCE_GRAB" and status == "WARN":
+            self.force_disc_grab_warning = f"警告：载物台 {cargo} 已记录颜色 {color} 的物料，忽略占用并继续强制抓取。"
+            message = self.force_disc_grab_warning
+        elif action == "FORCE_GRAB":
+            message = (getattr(self, "force_disc_grab_warning", "")
+                       + f"强制抓取函数已调用并返回：颜色 {color} → 载物台 {cargo}；结果请查看物料日志，实际抓取成功需确认。")
+        elif action == "COLOR" and status == "GRAB":
+            message = f"颜色 {color} 匹配下一件任务：调用载物台 {cargo} 的抓取函数，结果请查看物料日志。"
+        elif action == "COLOR" and status == "SKIP":
+            message = (f"颜色 {color}：不抓取，与下一件任务颜色不匹配。" if reason == "COLOR_MISMATCH"
+                       else f"颜色 {color}：旧固件返回不抓取，未提供原因；请查看任务码、对齐状态和载物台占用。")
+        elif action == "COLOR" and status == "BLOCKED":
+            reasons = {"NO_TASK": "没有有效任务码，请先下发并等待确认",
+                       "NOT_WAITING": "当前不在抓取阶段", "ROUND_COMPLETE": "当前轮次已结束或进度无效",
+                       "ALIGN_ACTIVE": "连续对齐尚未停止，请先停止对齐",
+                       "NOT_READY": "圆盘导航和定位尚未完成",
+                       "OCCUPIED": f"载物台 {cargo} 已有物料；普通抓取拒绝占用，可用强制抓取入口"}
+            message = f"颜色 {color} 抓取被阻止：{reasons[reason]}。"
+        elif action == "COLOR":
+            message = "小车已收到颜色，等待任务码判断结果。"
+        elif status == "ACK":
+            message = f"已接令：颜色 {color} → 载物台 {cargo}，等待动作结果。"
+        elif status == "DONE":
+            message = f"颜色 {color} → 载物台 {cargo}：搬运序列完成，实际抓取成功需现场确认。"
+        elif status == "REQUESTED":
+            message = f"颜色 {color} → 载物台 {cargo}：抓取函数已调用并返回，不代表成功，结果请查看物料日志。"
+        else:
+            message = f"颜色 {color} → 载物台 {cargo}：抓取搬运失败，请检查位姿标定和机构状态。"
+        self.disc_material_status.set(message)
+        return True
+
     def send_alignment_control(self, action: str) -> None:
         """从 Debug 上位机显式开启或停止连续视觉对齐任务。"""
         try:
-            line = build_alignment_control_command(action)
+            mode = self.alignment_mode_var.get() if action.upper() == "START" else None
+            line = build_alignment_control_command(action, mode)
             self.serial_link.send_line(line)
         except (ValueError, RuntimeError, OSError) as exc:
             messagebox.showerror("对齐命令未发送", str(exc), parent=self.root)
@@ -2733,6 +3052,14 @@ class UpperComputerApp:
 
     def _accept_vision_start_request(self, text: str) -> bool:
         """展示主控的开启或结束请求；实际相机算法由机载电脑程序处理。"""
+        alignment_status = {
+            "{EVT,VISION,ALIGN_IGNORED,DISABLED}": "定位反馈被丢弃：底盘对齐未开启或已结束，请重新开启定位视觉或连续对齐。",
+            "{EVT,VISION,ALIGN_FAILED,TIMEOUT}": "底盘对齐超时或反馈断流，已请求停车；重新定位需再次开启。",
+            "{EVT,VISION,ALIGN_DONE}": "底盘对齐连续 5 帧已进入死区，当前帧已停车，连续闭环仍开启；实际到位需现场确认。",
+        }
+        if text in alignment_status:
+            self.vision_request_var.set(alignment_status[text])
+            return True
         stop_mode = parse_vision_stop_request(text)
         if stop_mode is not None:
             self.vision_request_var.set(f"请求结束：{VISION_START_REQUEST_LABELS[stop_mode]}")
@@ -2775,8 +3102,11 @@ class UpperComputerApp:
                         self.connection_var.set("ESP32 协议版本不匹配")
                     continue
                 self._accept_display_event(text)
+                self._accept_task_code_response(text)
                 self._accept_led_response(text)
+                self._accept_position_move_response(text)
                 self._accept_vision_start_request(text)
+                self._accept_disc_material_response(text)
                 # 路径接收确认与执行完成是两个阶段，不能把 OK 当作到达。
                 route_status = {
                     "{EVT,NAV,ROUTE_WAITING}": "小车正在等待路径节点命令。",

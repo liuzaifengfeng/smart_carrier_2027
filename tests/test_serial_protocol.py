@@ -13,13 +13,29 @@ from upper_computer import (
 
 
 class FrameTests(unittest.TestCase):
+    def test_alignment_feedback_status_does_not_claim_physical_arrival(self):
+        app = UpperComputerApp.__new__(UpperComputerApp)
+        app.vision_request_var = Mock()
+        for event, expected in (("ALIGN_IGNORED,DISABLED", "被丢弃"),
+                                ("ALIGN_FAILED,TIMEOUT", "断流"),
+                                ("ALIGN_DONE", "现场确认")):
+            with self.subTest(event=event):
+                self.assertTrue(app._accept_vision_start_request(f"{{EVT,VISION,{event}}}"))
+                self.assertIn(expected, app.vision_request_var.set.call_args.args[0])
+        app.vision_request_var.reset_mock()
+        for text in ("{CMD,VISION,ALIGN_DONE}", "{EVT,VISION,ALIGN_DONE,EXTRA}",
+                     "{EVT,VISION,ALIGN_IGNORED,OTHER}"):
+            self.assertFalse(app._accept_vision_start_request(text))
+        app.vision_request_var.set.assert_not_called()
+
     def test_lidar_scan_complete_uses_system_start(self):
         self.assertEqual(build_debug_command("start", []), "{CMD,SYS,START}")
         with self.assertRaises(ValueError):
             build_debug_command("start", ["1"])
 
     def test_arm_initialization_commands_have_no_parameters(self):
-        for name, action in (("InitArm_start", "INIT_START"), ("InitArm_look", "INIT_LOOK")):
+        for name, action in (("InitArm_start", "INIT_START"), ("InitArm_look", "INIT_LOOK"),
+                             ("InitArm_look2", "INIT_LOOK2")):
             with self.subTest(name=name):
                 self.assertEqual(build_debug_command(name, []), f"{{CMD,ARM,{action}}}")
                 with self.assertRaises(ValueError):
@@ -133,7 +149,8 @@ class ConnectionGateTests(unittest.TestCase):
         app.command_vars = {}
         app.serial_link = Mock()
         app.append_log = Mock()
-        for name, action in (("InitArm_start", "INIT_START"), ("InitArm_look", "INIT_LOOK")):
+        for name, action in (("InitArm_start", "INIT_START"), ("InitArm_look", "INIT_LOOK"),
+                             ("InitArm_look2", "INIT_LOOK2")):
             app.send_command(name)
             app.serial_link.send_line.assert_called_with(f"{{CMD,ARM,{action}}}")
             app.append_log.assert_called_with("TX", f"{{CMD,ARM,{action}}}")

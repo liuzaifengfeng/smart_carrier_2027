@@ -139,6 +139,11 @@ bool RetrieveRoundToCargo(
 // 示例：StackRoundToWorkArea(currentTask.round2_pos);
 bool StackRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]);
 
+// 圆盘抓取接口
+// force=true 时，载物台占用仅警告并继续；其余校验保留。
+// true 表示预设动作执行完成并已登记物料；不代表传感器确认实物。
+bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force = false);
+
 
 
 #endif // MATERIAL_TRANSFER_H

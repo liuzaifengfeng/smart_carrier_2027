@@ -2,6 +2,7 @@
 #include "Emm_V5.h"
 #include "servo.h"
 #include "runtime_parameters.h"
+#include <float.h>
 
 // 理想位姿(由主控维护; 真实位姿的获取方案待定)
 //车体位姿——X坐标、Y坐标、Theta角度
@@ -44,8 +45,15 @@ constexpr float ROUTE_ANGLE_EPSILON_DEG = 0.01f;       // 小于该角度时不�
 
 // ================= 连续视觉对齐 PID 参数 =================
 // 输出均为 -1~1 的归一化车身速度权重，实际轮速由调用方传入的 speedRpm 决定。
-float ALIGN_POSITION_TOLERANCE = 3.0f;// 位置误差单位为视觉输出值
-float ALIGN_ANGLE_TOLERANCE_DEG = 0.2f;// 角度误差单位为度
+// 顺序对应 VisionStartMode；各行独立调整，X/Y 为视觉单位，角度为度。
+VisionAlignmentDeadzone ALIGN_DEADZONES[] = {
+    {8.0f, 8.0f, 0.5f}, // DISC 圆盘对齐
+    {3.0f, 3.0f, 0.2f}, // DISC_MATERIAL 圆盘物料对齐
+    {3.0f, 3.0f, 0.2f}, // WORK_AREA
+    {3.0f, 3.0f, 0.2f}, // WORK_AREA_LOADED
+    {3.0f, 3.0f, 0.2f}, // CORNER
+};
+AlignmentFrameWaiter s_alignmentWaiter;
 constexpr float ALIGN_DT_MIN_SECONDS = 0.02f;// 时间步长单位为秒
 constexpr float ALIGN_DT_MAX_SECONDS = 0.30f;// 时间步长单位为秒
 constexpr uint16_t OMNI_MIN_MOVING_RPM = 1;// 最小移动速度单位为转/分
@@ -66,7 +74,7 @@ PidController s_alignVisualXPid = {
     0.03f, 0.0005f, 0.0f, 200.0f, 0.0f, 0.0f, false
 };
 PidController s_alignVisualYPid = {
-    0.02f, 0.0005f, 0.0f, 200.0f, 0.0f, 0.0f, false
+    0.02f, 0.0005f, 0.0f, 300.0f, 0.0f, 0.0f, false
 };
 PidController s_alignAnglePid = {
     0.05f, 0.0005f, 0.0f, 20.0f, 0.0f, 0.0f, false
@@ -315,8 +323,16 @@ void RegisterChassisParameters() {
             RegisterRuntimeFloat(name, *values[j], 0, j == 3 ? 100000 : 100);
         }
     }
-    RegisterRuntimeFloat("对齐/位置容差", ALIGN_POSITION_TOLERANCE, 0, 1000);
-    RegisterRuntimeFloat("对齐/角度容差(deg)", ALIGN_ANGLE_TOLERANCE_DEG, 0, 180);
+    const char *modes[] = {"DISC", "DISC_MATERIAL", "WORK_AREA", "WORK_AREA_LOADED", "CORNER"};
+    for (uint8_t i = 0; i < 5; ++i) {
+        char name[80];
+        snprintf(name, sizeof(name), "对齐/%s/X死区", modes[i]);
+        RegisterRuntimeFloat(name, ALIGN_DEADZONES[i].visualX, 0, 1000);
+        snprintf(name, sizeof(name), "对齐/%s/Y死区", modes[i]);
+        RegisterRuntimeFloat(name, ALIGN_DEADZONES[i].visualY, 0, 1000);
+        snprintf(name, sizeof(name), "对齐/%s/角度死区(deg)", modes[i]);
+        RegisterRuntimeFloat(name, ALIGN_DEADZONES[i].angleDeg, 0, 180);
+    }
     RegisterRuntimeUInt("底盘/停车稳定时间(ms)", ROUTE_SETTLE_TIME_MS, 0, 10000);
     float *pulses[] = {&X_PULSE, &Y_PULSE, &THETA_PULSE, &HEIGHT_PULSE, &LENGTH_PULSE};
     const char *names[] = {"标定/X脉冲每毫米", "标定/Y脉冲每毫米", "标定/旋转脉冲每度",
@@ -411,7 +427,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
         }
         
         if(turret_angle != -1) {
-            Servo_SetAngleMTurn(2, safeTurretTarget, (300-speed)*3, 4000);
+            Servo_SetAngleMTurn(2, safeTurretTarget, (300-speed)*3, 5000);
             currentArm.turret_angle = safeTurretTarget;
         }
 
@@ -431,7 +447,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
                         Serial.println("[Arm] ERR: gripper multi-turn target out of servo range");
                         return false;
                     }
-                    Servo_SetAngleMTurn(1, nearestAngle, (300-speed)*3, 4000);
+                    Servo_SetAngleMTurn(1, nearestAngle, (300-speed)*3, 5000);
                     currentArm.pawl_angle = pawl_angle;
                 }
             }
@@ -659,6 +675,103 @@ void OmniMove(float xVelocity, float yVelocity, float rotationVelocity,
     Emm_V5_Synchronous_motion(0);
 }
 
+bool MovePosition(float x, float y, float theta, float speed) {
+    // 完整验证后才下发命令，避免四轮只装载了一部分参数。
+    if (!isfinite(x) || !isfinite(y) || !isfinite(theta)
+            || !isfinite(speed) || speed < 1.0f || speed > 5000.0f
+            || !isfinite(X_PULSE) || X_PULSE <= 0.0f
+            || !isfinite(Y_PULSE) || Y_PULSE <= 0.0f
+            || !isfinite(THETA_PULSE) || THETA_PULSE <= 0.0f
+            || !isfinite(currentPose.x) || !isfinite(currentPose.y)
+            || !isfinite(currentPose.theta)) {
+        Serial.println("[MovePosition] ERR: invalid pose, speed or calibration");
+        return false;
+    }
+
+    // SE(2) 指数映射的逆：x/y 是起始车身系中的终点位移。
+    // 转动过程中车身系也在转动，不能直接把终点 x/y 当作累计车身位移。
+    const double angle = static_cast<double>(theta) * PI / 180.0;
+    double bodyX = x;
+    double bodyY = y;
+    if (fabs(angle) > 1.0e-6 && (x != 0.0f || y != 0.0f)) {
+        const double a = sin(angle) / angle;
+        const double b = (1.0 - cos(angle)) / angle;
+        const double determinant = a * a + b * b;
+        if (determinant < 1.0e-10) {
+            Serial.println("[MovePosition] ERR: translation with full-turn rotation is singular");
+            return false;
+        }
+        bodyX = (a * x + b * y) / determinant;
+        bodyY = (-b * x + a * y) / determinant;
+    }
+
+    const double px = bodyX * X_PULSE;
+    const double py = bodyY * Y_PULSE;
+    const double pr = static_cast<double>(theta) * THETA_PULSE;
+    // 与 GotoPose/OmniMove 相同的电机 1~4 符号约定，正脉冲使用 dir=1。
+    const double wheelPulses[4] = {-px + py + pr, -px - py + pr,
+                                   px + py + pr,  px - py + pr};
+    uint32_t pulses[4];
+    uint16_t wheelRpm[4];
+    uint32_t maximumPulses = 0;
+    for (size_t i = 0; i < 4; ++i) {
+        const double rounded = floor(fabs(wheelPulses[i]) + 0.5);
+        if (!isfinite(rounded) || rounded > UINT32_MAX) {
+            Serial.println("[MovePosition] ERR: pulse count overflow");
+            return false;
+        }
+        pulses[i] = static_cast<uint32_t>(rounded);
+        if (pulses[i] > maximumPulses) maximumPulses = pulses[i];
+    }
+    if (maximumPulses == 0) return true; // 小于脉冲分辨率，不虚增理想位姿。
+
+    const uint16_t maximumRpm = static_cast<uint16_t>(lroundf(speed));
+    double waitMs = 0.0;
+    for (size_t i = 0; i < 4; ++i) {
+        // 各轮按行程比例分配转速；整数 RPM 会带来少量完成时间差。
+        wheelRpm[i] = pulses[i] == 0 ? 0 : static_cast<uint16_t>(fmax(
+            1.0, floor(static_cast<double>(pulses[i]) * maximumRpm / maximumPulses + 0.5)));
+        if (wheelRpm[i] != 0) {
+            waitMs = fmax(waitMs, static_cast<double>(pulses[i]) * 60000.0
+                          / (MOTOR_PULSES_PER_REVOLUTION * wheelRpm[i]));
+        }
+    }
+    waitMs = ceil(waitMs) + ROUTE_SETTLE_TIME_MS;
+    const double heading = normalizeHeading(currentPose.theta) * PI / 180.0;
+    const double targetX = currentPose.x + x * cos(heading) - y * sin(heading);
+    const double targetY = currentPose.y + x * sin(heading) + y * cos(heading);
+    if (waitMs > UINT32_MAX || !isfinite(targetX) || !isfinite(targetY)
+            || fabs(targetX) > FLT_MAX || fabs(targetY) > FLT_MAX) {
+        Serial.println("[MovePosition] ERR: duration or target pose overflow");
+        return false;
+    }
+
+    for (uint8_t motor = 1; motor <= 4; ++motor) {
+        // acc=0 直接启动，避免相同加速度档位破坏不同轮速的行程比例。
+        if (pulses[motor - 1] == 0) {
+            // 合成后不需转动的轮子同步停车，避免发送零转速位置命令。
+            Emm_V5_Stop_Now(motor, true);
+        } else {
+            Emm_V5_Pos_Control(motor, wheelPulses[motor - 1] >= 0.0 ? 1 : 0,
+                               wheelRpm[motor - 1], 0, pulses[motor - 1], false, true);
+        }
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
+    }
+    Emm_V5_Synchronous_motion(0);
+    uint32_t remainingMs = static_cast<uint32_t>(waitMs);
+    while (remainingMs > 0) {
+        const uint32_t chunkMs = remainingMs > 1000 ? 1000 : remainingMs;
+        vTaskDelay(pdMS_TO_TICKS(chunkMs));
+        remainingMs -= chunkMs;
+    }
+    currentPose.x = static_cast<float>(targetX);
+    currentPose.y = static_cast<float>(targetY);
+    currentPose.theta = normalizeHeading(normalizeHeading(currentPose.theta)
+                                        + normalizeHeading(theta));
+    Serial.println("[MovePosition] Commands sent and estimated wait elapsed; arrival not verified");
+    return true;
+}
+
 void ResetDiscAlignmentPid() {
     resetPid(s_alignVisualXPid);
     resetPid(s_alignVisualYPid);
@@ -677,9 +790,29 @@ void ResetDiscAlignmentPid() {
 bool AlignToDiscContinuous(float angleErrorDeg, float visualXError,
                            float visualYError, float dtSeconds,
                            uint16_t speedRpm) {
+    return AlignToVisionContinuous(VisionStartMode::DISC, angleErrorDeg,
+                                  visualXError, visualYError, dtSeconds, speedRpm);
+}
+
+void ResetAlignmentWait() {
+    s_alignmentWaiter.reset();
+}
+
+bool WaitForAlignment(VisionStartMode mode, float angleErrorDeg,
+                      float visualXError, float visualYError,
+                      float dtSeconds, uint16_t speedRpm) {
+    const bool withinDeadzone = AlignToVisionContinuous(
+        mode, angleErrorDeg, visualXError, visualYError, dtSeconds, speedRpm);
+    return s_alignmentWaiter.update(mode, withinDeadzone);
+}
+
+bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg,
+                             float visualXError, float visualYError,
+                             float dtSeconds, uint16_t speedRpm) {
     if (!isfinite(angleErrorDeg) || !isfinite(visualXError)
             || !isfinite(visualYError) || !isfinite(dtSeconds)
-            || dtSeconds <= 0.0f || speedRpm == 0 || speedRpm > 5000) {
+            || dtSeconds <= 0.0f || speedRpm == 0 || speedRpm > 5000
+            || static_cast<uint8_t>(mode) >= 5) {
         OmniMove(0.0f, 0.0f, 0.0f, 0);
         ResetDiscAlignmentPid();
         Serial.println("[Align PID] ERR: invalid feedback, dt, or speed");
@@ -690,15 +823,16 @@ bool AlignToDiscContinuous(float angleErrorDeg, float visualXError,
         dtSeconds, ALIGN_DT_MIN_SECONDS, ALIGN_DT_MAX_SECONDS
     );
 
-    const bool angleAligned = fabsf(angleErrorDeg) < ALIGN_ANGLE_TOLERANCE_DEG;// 角度误差是否小于阈值
-    const bool xAligned = fabsf(visualXError) < ALIGN_POSITION_TOLERANCE;// 视觉 X 误差是否小于阈值
-    const bool yAligned = fabsf(visualYError) < ALIGN_POSITION_TOLERANCE;// 视觉 Y 误差是否小于阈值
+    const auto &deadzone = ALIGN_DEADZONES[static_cast<uint8_t>(mode)];
+    const bool angleAligned = fabsf(angleErrorDeg) <= deadzone.angleDeg;
+    const bool xAligned = fabsf(visualXError) <= deadzone.visualX;
+    const bool yAligned = fabsf(visualYError) <= deadzone.visualY;
 
     //bool angleAligned = 1;// 测试用，直接对齐角度
     //bool xAligned = 1;// 测试用，直接对齐视觉 X
     //bool yAligned = 1;// 测试用，直接对齐视觉 Y
 
-    if (angleAligned && xAligned && yAligned) {// 对齐成功
+    if (IsWithinAlignmentDeadzone(deadzone, angleErrorDeg, visualXError, visualYError)) {
         OmniMove(0.0f, 0.0f, 0.0f, 0);
         ResetDiscAlignmentPid();
         return true;
@@ -849,5 +983,15 @@ bool InitArm_look() {
     if (!MoveArm(-1, 0, 90, 80, 150)) return false;
     vTaskDelay(pdMS_TO_TICKS(100));
     if (!MoveArm(120,-1,-1,0,150)) return false;
+    return true;
+}
+
+/**
+ * @brief 机械臂初始化归视觉位
+ */
+bool InitArm_look2() {
+    if (!MoveArm(170,-1,-1,0,150)) return false;
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    if (!MoveArm(-1, 0, 90, 80, 150)) return false;
     return true;
 }

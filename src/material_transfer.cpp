@@ -334,22 +334,22 @@ bool PrepareLidarScanPose(uint8_t startZoneCode) {
         case 1:
             Serial.println("[LidarPose] start zone 1");
             GotoPose(125, 0, 0, true);
-            MoveArm(150, 100, -1, -1, 150);
-            waitForArm(3);
-            GotoPose(0, 100, 0, true);
-            MoveArm(-1, 100, 45, -1, 150);
+            MoveArm(150, 100, -1, -1, 200);
             waitForArm(2);
-            MoveArm(0, 100, -1, -1, 150);
+            GotoPose(0, 100, 0, true);
+            MoveArm(-1, 100, 45, -1, 200);
+            waitForArm(1);
+            MoveArm(0, 100, -1, -1, 200);
 
             break;
 
         case 2:
             Serial.println("[LidarPose] start zone 2");
             GotoPose(125, 0, 0, true);
-            MoveArm(150, 100, -1, -1, 150);
-            waitForArm(3);
+            MoveArm(150, 100, -1, -1, 200);
+            waitForArm(2);
             GotoPose(0, -100, 0, true);
-            MoveArm(0, 100, 135, -1, 150);
+            MoveArm(0, 100, 135, -1, 200);
             break;
 
         default:
@@ -499,4 +499,45 @@ bool RetrieveRoundToCargo(
 
 bool StackRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]) {
     return PlaceTaskCargoToWorkArea(positionCodes, 2);
+}
+
+// 圆盘抓取并放入指定载物台。
+bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force) {
+    // 在底盘和机械臂动作前检查编号、占用及放料位姿，避免抓起后无处放置。
+    if (!isMaterialCodeValid(materialCode) || !isStationCodeValid(cargoCode)) {
+        Serial.println("[Material] ERR: invalid material/cargo code");
+        return false;
+    }
+    CargoPlatform &cargo = cargoPlatforms[cargoCode - 1];
+    if (cargo.material != MATERIAL_NONE) {
+        if (!force) {
+            Serial.println("[Material] ERR: cargo platform is occupied");
+            return false;
+        }
+        Serial.printf("{EVT,VISION,FORCE_GRAB,WARN,OCCUPIED,%u,%u}\n",
+                      static_cast<unsigned>(cargo.material), cargoCode);
+        Serial.printf("[Material] WARN: cargo %u already contains material %u; force grab continues\n",
+                      cargoCode, static_cast<unsigned>(cargo.material));
+    }
+    const MaterialStationPose &destination = materialTransferLayout.cargo[cargoCode - 1];
+    if (!isLayoutParameterValid() || !isPoseValid(destination)) {
+        Serial.println("[Material] ERR: transfer poses are not calibrated");
+        return false;
+    }
+
+   // GotoPose(-50, 0, 0, true);
+    if (!MoveArm( 110 ,0, 90 ,90 , 150)) return false;
+    waitForArm();
+    if (!MoveArm( 80 ,0, 90 ,30 , 150)) return false;
+    waitForArm(0.5);
+    if (!MoveArm( 80 ,0, 90 ,-5 , 150)) return false;
+    waitForArm();
+    if (!MoveArm( 160 ,0, -1 ,-1 , 200)) return false;
+    waitForArm();
+
+    if (!placeAt(destination, destination.high)) return false;
+    cargo.material = static_cast<MaterialType>(materialCode);
+    Serial.printf("[Material] disc -> cargo %u, material %u placed\n",
+                  cargoCode, materialCode);
+    return true;
 }

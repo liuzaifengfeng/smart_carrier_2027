@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <initializer_list>
+#include "vision_alignment.h"
 
 constexpr float ARM_HEIGHT_LIMIT_MM = 175.0f; // Maximum arm height (mm).
 // 2 号转台舵机的真实多圈角度边界，由线缆可运动范围决定。
@@ -44,8 +45,21 @@ void MovePose(int direction, float speed, bool stop);
 // @param x 目标 X 位移 (mm)
 // @param y 目标 Y 位移 (mm)
 // @param theta 目标航向 (0-360, 度)
-// @param isRelative 相对移动 / 绝对移动(需定位)
+// @param isRelative 1相对移动 / 0绝对移动(需定位)
 void GotoPose(float x, float y, float theta, bool isRelative);
+
+/**
+ * @brief 相对位置移动：四轮位置命令同步启动，平移与旋转同时完成。
+ * @param x 起始车身坐标系 X 位移 (mm)，正方向沿用 GotoPose
+ * @param y 起始车身坐标系 Y 位移 (mm)，正方向沿用 GotoPose
+ * @param theta 本次转角 (deg)，正值左转；可为负值
+ * @param speed 最大轮速 (RPM)，1~5000，驱动器按整数 RPM 执行
+ * 阻塞当前任务至估算时间结束。混合运动沿恒定车身速度的圆弧到达终点；
+ * 全圈旋转同时平移等无法用单段圆弧表示的请求返回 false。
+ * 调用期间须独占底盘，不能同时使用 MovePose/OmniMove/视觉对齐。
+ * @return true 命令已下发并等待结束（开环估计），false 参数无效或超范围。
+ */
+bool MovePosition(float x, float y, float theta, float speed);
 
 /**
  * @brief 麦克纳姆轮全向速度控制。
@@ -81,6 +95,18 @@ bool AlignToDiscContinuous(float angleErrorDeg, float visualXError,
 // 清除连续对齐 PID 的积分/微分历史；不会自行发送停车命令。
 void ResetDiscAlignmentPid();
 
+// 通用单帧 PID：按模式使用独立 X/Y/角度死区，true 只代表这一帧进入死区。
+bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg,
+                             float visualXError, float visualYError,
+                             float dtSeconds, uint16_t speedRpm = 80);
+
+// 非阻塞等待：仅在新帧到达时调用，同时更新 PID；连续 5 帧进入死区返回 true。
+// 调用方应在启停、断流、反馈丢帧或无效反馈时调用 ResetAlignmentWait。
+bool WaitForAlignment(VisionStartMode mode, float angleErrorDeg,
+                      float visualXError, float visualYError,
+                      float dtSeconds, uint16_t speedRpm = 80);
+void ResetAlignmentWait();
+
 // @brief 机械臂移动到位.
 // 返回值表示所请求的控制命令是否全部成功下发，不代表机构已物理到位。
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
@@ -91,6 +117,7 @@ void DisableTurretMotionUntilRestart(const char* reason);
 // @brief 机械臂初始化归零位
 bool InitArm_start();
 bool InitArm_look();
+bool InitArm_look2();
 
 /**
  * @brief 按 0~24 号场地节点路径移动，只使用原地转向和向前直行。
