@@ -244,19 +244,21 @@ void commandSynchronizedRotation(float angle, uint16_t speedRpm,
     waitForPhysicalMotion(pulses, speedRpm, acceleration);
 }
 
-// 下发四轮同步向前直行命令，然后等待车辆完全停稳。
-void commandSynchronizedForward(float distance, uint16_t speedRpm,
+// 下发四轮同步车身 Y 轴直行命令；负距离为后退。
+void commandSynchronizedStraight(float distance, uint16_t speedRpm,
                                 uint8_t acceleration) {
-    // 只使用车头向前方向，因此统一使用 X_PULSE 作为前进距离标定系数。
+    // 沿用原前进标定 X_PULSE，后退仅反转四轮方向，不做横向平移。
     uint32_t pulses =
-        static_cast<uint32_t>(lroundf(distance * X_PULSE));
+        static_cast<uint32_t>(lroundf(fabsf(distance) * X_PULSE));
     // 与 MovePose(0, ...) 使用相同的“车头向前”电机方向。
     constexpr uint8_t FORWARD_DIRECTIONS[4] = {1, 0, 1, 0};
 
     // 先把相同的距离、速度和加速度装载到四个电机。
     for (uint8_t motor = 1; motor <= 4; ++motor) {
         Emm_V5_Pos_Control(
-            motor, FORWARD_DIRECTIONS[motor - 1], speedRpm, acceleration,
+            motor, distance < 0.0f ? 1 - FORWARD_DIRECTIONS[motor - 1]
+                                  : FORWARD_DIRECTIONS[motor - 1],
+            speedRpm, acceleration,
             pulses, false, true
         );
         vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
@@ -266,7 +268,7 @@ void commandSynchronizedForward(float distance, uint16_t speedRpm,
     waitForPhysicalMotion(pulses, speedRpm, acceleration);
 }
 
-// 执行一段已经简化好的节点移动：先原地转向，再向前直行。
+// 执行一段已经简化好的节点移动：选择转角较小的前进/后退朝向，再直行。
 bool executeNodeSegment(uint8_t startNode, uint8_t endNode,
                         uint16_t speedRpm, uint8_t acceleration) {
     NodePosition start;
@@ -281,8 +283,15 @@ bool executeNodeSegment(uint8_t startNode, uint8_t endNode,
     // atan2 根据 X/Y 差值求出目标方向：+X 为 0 度，+Y 为 90 度。
     float targetHeading =
         normalizeHeading(atan2f(deltaY, deltaX) * 180.0f / PI);
-    // 选择不超过 180 度的最短转向。
+    // 车身 Y+ 或 Y- 都能沿本段移动；选择转动较少的一种，等角时优先前进。
     float turn = shortestTurn(currentPose.theta, targetHeading);
+    const float reverseHeading = normalizeHeading(targetHeading + 180.0f);
+    const float reverseTurn = shortestTurn(currentPose.theta, reverseHeading);
+    const bool reverse = fabsf(reverseTurn) < fabsf(turn);
+    if (reverse) {
+        targetHeading = reverseHeading;
+        turn = reverseTurn;
+    }
 
     Serial.printf(
         "[Route] Node %u -> %u, distance %.0f mm, target heading %.0f deg\n",
@@ -298,9 +307,9 @@ bool executeNodeSegment(uint8_t startNode, uint8_t endNode,
     }
     currentPose.theta = targetHeading;
 
-    // 第二步：车头沿目标方向向前移动，不使用麦克纳姆轮横向平移。
-    Serial.printf("[Route] Moving forward %.0f mm\n", distance);
-    commandSynchronizedForward(distance, speedRpm, acceleration);
+    // 第二步：只沿车身 Y 轴前进或后退，不使用麦克纳姆轮横向平移。
+    Serial.printf("[Route] Moving %s %.0f mm\n", reverse ? "backward" : "forward", distance);
+    commandSynchronizedStraight(reverse ? -distance : distance, speedRpm, acceleration);
     // 当前没有外部定位反馈，因此运动结束后更新的是“理想位姿”。
     currentPose.x = end.x;
     currentPose.y = end.y;
@@ -427,7 +436,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
         }
         
         if(turret_angle != -1) {
-            Servo_SetAngleMTurn(2, safeTurretTarget, (300-speed)*3, 5000);
+            Servo_SetAngleMTurn(2, safeTurretTarget, (300-speed)*3, 0);
             currentArm.turret_angle = safeTurretTarget;
         }
 
@@ -447,7 +456,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
                         Serial.println("[Arm] ERR: gripper multi-turn target out of servo range");
                         return false;
                     }
-                    Servo_SetAngleMTurn(1, nearestAngle, (300-speed)*3, 5000);
+                    Servo_SetAngleMTurn(1, nearestAngle, (300-speed)*3, 0);
                     currentArm.pawl_angle = pawl_angle;
                 }
             }
@@ -675,7 +684,8 @@ void OmniMove(float xVelocity, float yVelocity, float rotationVelocity,
     Emm_V5_Synchronous_motion(0);
 }
 
-bool MovePosition(float x, float y, float theta, float speed) {
+bool MovePosition(float x, float y, float theta, float speed,
+                  bool (*shouldStop)()) {
     // 完整验证后才下发命令，避免四轮只装载了一部分参数。
     if (!isfinite(x) || !isfinite(y) || !isfinite(theta)
             || !isfinite(speed) || speed < 1.0f || speed > 5000.0f
@@ -746,6 +756,7 @@ bool MovePosition(float x, float y, float theta, float speed) {
         return false;
     }
 
+    if (shouldStop != nullptr && shouldStop()) return false;
     for (uint8_t motor = 1; motor <= 4; ++motor) {
         // acc=0 直接启动，避免相同加速度档位破坏不同轮速的行程比例。
         if (pulses[motor - 1] == 0) {
@@ -760,7 +771,16 @@ bool MovePosition(float x, float y, float theta, float speed) {
     Emm_V5_Synchronous_motion(0);
     uint32_t remainingMs = static_cast<uint32_t>(waitMs);
     while (remainingMs > 0) {
-        const uint32_t chunkMs = remainingMs > 1000 ? 1000 : remainingMs;
+        if (shouldStop != nullptr && shouldStop()) {
+            for (uint8_t motor = 1; motor <= 4; ++motor) {
+                Emm_V5_Stop_Now(motor, true);
+                vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
+            }
+            Emm_V5_Synchronous_motion(0);
+            return false;
+        }
+        const uint32_t pollMs = shouldStop != nullptr ? 10 : 1000;
+        const uint32_t chunkMs = remainingMs > pollMs ? pollMs : remainingMs;
         vTaskDelay(pdMS_TO_TICKS(chunkMs));
         remainingMs -= chunkMs;
     }
@@ -875,7 +895,7 @@ bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg,
 }
 
 /**
- * @brief 按节点序号路径移动，只原地转向和向前直行。
+ * @brief 按节点序号路径移动，只原地转向和沿车身 Y 轴前后直行。
  */
 bool MoveNodePath(const uint8_t *path, size_t pathLength,
                   uint16_t speedRpm, uint8_t acceleration) {
@@ -965,8 +985,8 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
  * @brief 机械臂初始化归零位
  */
 bool InitArm_start() {
-    if (!MoveArm(150,-1,-1,0,150)) return false;
-    vTaskDelay(pdMS_TO_TICKS(3000));
+    if (!MoveArm(160,-1,-1,0,150)) return false;
+    vTaskDelay(pdMS_TO_TICKS(2000));
     if (!MoveArm(-1, -1, -55, -1, 150)) return false;
     vTaskDelay(pdMS_TO_TICKS(100));
     if (!MoveArm(150,40,-1,0,150)) return false;
@@ -990,7 +1010,7 @@ bool InitArm_look() {
  * @brief 机械臂初始化归视觉位
  */
 bool InitArm_look2() {
-    if (!MoveArm(170,-1,-1,0,150)) return false;
+    if (!MoveArm(170,-1,-1,-1,150)) return false;
     vTaskDelay(pdMS_TO_TICKS(2000));
     if (!MoveArm(-1, 0, 90, 80, 150)) return false;
     return true;

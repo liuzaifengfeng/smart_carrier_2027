@@ -74,12 +74,12 @@ TASK SET 在 Debug 可修改任务码并重置抓取进度为 0；开启 DISC_MA
 - `START_ZONE` 只能为 1 或 2。Debug 中设置后同步软件估计位姿；Release 中保留现有业务状态行为。
 - `ROUTE`：2～25 个节点，节点编号 0～24，5×5 蛇形地图中相邻节点必须物理上下或左右相邻。路径的第一个节点必须是小车实际所在节点。固件执行前再检查相邻性；上位机输入框仍可输入 `0-1-8`，发送时转换为逗号字段。
 - `ALIGN_DATA`：三个有限浮点值，依次为角度偏差（度）、视觉 X 与 Y 偏差（视觉单位）；20 Hz 连续输入时只保留最新一帧。停止对齐后收到有效反馈也不驱动电机，并最多每秒回传一次 `{EVT,VISION,ALIGN_IGNORED,DISABLED}`；反馈不会自行重启运动。
-- 首轮圆盘自动流程：路径结束后固件开启连续对齐，再发 `START_REQUEST,DISC`；电脑仅需回传 `ALIGN_DATA`。连续 5 帧达标时发 `ALIGN_DONE`，主流程随后发 `STOP_REQUEST,DISC` 停止对齐，再发 `START_REQUEST,DISC_MATERIAL`。包含首帧等待的首次达标限时为 15 秒，运动反馈断流限时为 300 ms；等待失败发 `ALIGN_FAILED,TIMEOUT`，主流程结束 DISC 请求并保持故障。手动 `ALIGN_START` / `ALIGN_STOP` 会取消业务等待，不能作为自动完成信号。
+- 首轮圆盘自动流程：路径结束后固件开启连续对齐，再发 `START_REQUEST,DISC`；电脑仅需回传 `ALIGN_DATA`。连续 5 帧达标时发 `ALIGN_DONE`，主流程随后发 `STOP_REQUEST,DISC` 停止对齐，再发 `START_REQUEST,DISC_MATERIAL`。包含首帧等待的首次达标限时为 15 秒，300 ms 断流停车/失败分支暂时注释，断流期间保持最后一次轮速；等待失败发 `ALIGN_FAILED,TIMEOUT`，主流程结束 DISC 请求并保持故障。手动 `ALIGN_START` / `ALIGN_STOP` 会取消业务等待，不能作为自动完成信号。
 - `COLOR`：整数 1～6，依次为红、黄、蓝、绿、黑、浅蓝。DISC_MATERIAL 运行时，每条颜色反馈按当前轮次任务码判断：第一轮使用 round1_colors，第二轮使用 round2_colors，只与下标 roundProgress 对应的下一件颜色比较。匹配且当前抓取阶段已准备、底盘对齐停止、目标载物台为空时，发送 `{EVT,VISION,COLOR,GRAB,color,cargo}` 并调用 `GrabDiscMaterial(color,cargo)`。仅颜色不匹配时发送 `{EVT,VISION,COLOR,SKIP,color,cargo,COLOR_MISMATCH}`；状态阻止时发送 `{EVT,VISION,COLOR,BLOCKED,color,cargo,reason}`，reason 为 NO_TASK、NOT_WAITING、ROUND_COMPLETE、ALIGN_ACTIVE、NOT_READY 或 OCCUPIED。cargo 为 roundProgress+1，无有效进度时为 0；有有效任务和进度时，拒绝日志还打印 received、expected、cargo、reason。上位机兼容旧固件六字段 SKIP，但会提示旧回复未提供原因。`CONFIRM` 仍仅 Release 接令入队，不执行抓取。
 - `GRAB`：保留显式任务校验抓取入口。cargo 为 1～3；单参数使用最近 COLOR，双参数为 color,cargo。须开启物料视觉、停止底盘对齐、进入有效任务码的抓取阶段，颜色及载物台顺序须匹配，载物台须为空。拒绝原因保留 NOT_ACTIVE、ALIGN_ACTIVE、NO_COLOR、NOT_WAITING、ORDER、COLOR_MISMATCH、OCCUPIED；非法参数为 RANGE，参数数量错误为 FORMAT。Debug 不绕过任务码校验。
 - Release 首轮还要求主流程已完成圆盘导航及定位，再进入物料识别等待；提前手动开启 DISC_MATERIAL 不绕过准备条件。COLOR 此时报告 BLOCKED,NOT_READY，显式 GRAB 回复 NOT_WAITING。Debug 手动测试不要求该准备状态，但仍检查对齐停止和载物台为空。
 - 有效 GRAB 先回复 `{RSP,VISION,GRAB,ACK,color,cargo}`；COLOR 匹配先发送 COLOR,GRAB 决策。两者共用抓取完成路径：`GrabDiscMaterial` 返回 true 后发送 `{EVT,VISION,GRAB,DONE,color,cargo}` 并推进 roundProgress；返回 false 后发送 FAILED，保留进度和目标颜色。true 表示预设动作完成且已登记载物台颜色，不代表传感器确认实物。第三件成功后关闭 DISC_MATERIAL；Release 主流程进入下一放料阶段，Debug 保留完成进度。上位机兼容旧 REQUESTED 回复，但它不表示完成。强制入口不推进任务进度。
-- `VISION START_REQUEST`：恰好一个模式参数，只允许 `DISC`、`DISC_MATERIAL`、`WORK_AREA`、`WORK_AREA_LOADED`、`CORNER`。未知模式回复 `RANGE`，缺参数或多参数回复 `FORMAT`，均不发送视觉请求事件。Debug 和 Release 均可调用。`DISC` / `WORK_AREA` / `WORK_AREA_LOADED` / `CORNER` 在发送启动事件前清空旧反馈并同步开启连续 PID 对齐，电脑只需发送 `ALIGN_DATA`；首次连续 5 帧达标限时 15 秒，运动反馈断流限时 300 ms，达标后连续闭环仍开启。`DISC_MATERIAL` 仅发送视觉请求。重复开启定位会重置等待计数；手动请求不主动切换业务阶段。
+- `VISION START_REQUEST`：恰好一个模式参数，只允许 `DISC`、`DISC_MATERIAL`、`WORK_AREA`、`WORK_AREA_LOADED`、`CORNER`。未知模式回复 `RANGE`，缺参数或多参数回复 `FORMAT`，均不发送视觉请求事件。Debug 和 Release 均可调用。`DISC` / `WORK_AREA` / `WORK_AREA_LOADED` / `CORNER` 在发送启动事件前清空旧反馈并同步开启连续 PID 对齐，电脑只需发送 `ALIGN_DATA`；首次连续 5 帧达标限时 15 秒，300 ms 断流停车/失败分支暂时注释，断流期间保持最后一次轮速，达标后连续闭环仍开启。`DISC_MATERIAL` 仅发送视觉请求。重复开启定位会重置等待计数；手动请求不主动切换业务阶段。
 - `VISION STOP_REQUEST`：模式、参数数量、运行模式及错误规则与 `START_REQUEST` 相同。先回复 ACK，再同步停止属于 `DISC` / `WORK_AREA` / `WORK_AREA_LOADED` / `CORNER` 对应模式的底盘对齐，清零 PID 和等待计数，再发出 STOP_REQUEST 事件。结束旧模式不会停止随后开启的另一定位模式。`DISC_MATERIAL` 仅请求结束视觉。无模式 `ALIGN_START` 的连续对齐用 `{CMD,VISION,ALIGN_STOP}` 停车；显式指定上述四种模式的手动连续对齐也可通过对应 STOP_REQUEST 停止。
 - `POSE GET`：`x,y,theta,h,l` 是软件维护的理想/开环值，单位依次为 mm、mm、度、mm、mm；`turret` 是 2 号转台舵机现场读取的真实多圈角度，`pawl` 是 1 号夹爪舵机现场读取的单圈角度（度）。读取失败回复 `{RSP,POSE,GET,ERR,SERVO_READ,2}` 或 `1`，不会用旧值冒充实测。
 - `ARM MOVE2` 的转台线缆机械范围为真实多圈角度 **-180°～360°**。固件先读取真实多圈角度；若当前已越界或读取失败，跳过转台动作。否则仅从范围内的等效目标（相差 360°）中选择最近的一项，绝不向范围外下发转台目标。转台输入也限制为 -180°～360°；夹爪仍为 -360°～360°。搬运 Demo 遇到转台失败会停止并报告 `FAILED`，失败后需人工确认物料位置。调试 `SERVO` 指令的 2 号舵机走相同保护，成功时回复 `{EVT,ARM,SERVO,ISSUED}`；不允许广播 ID 254 绕过保护。
@@ -92,6 +92,10 @@ TASK SET 在 Debug 可修改任务码并重置抓取进度为 0；开启 DISC_MA
 - `ARM INIT_START` / `INIT_LOOK` / `INIT_LOOK2` 不带参数，上位机“机械臂 → 机械臂初始化”提供三个按钮。起始姿态目标为高度 150 mm、伸出 40 mm、转台 -55°、夹爪 0°；观察姿态最终为高度 120 mm、伸出 0 mm、转台 90°、夹爪 0°。观察姿态2调用 `InitArm_look2()`：先升到 170 mm、夹爪设为 0°，等待 2 秒，再收回伸出至 0 mm、转台转至 90°、夹爪打开至 80°，速度均为 150。沿用固件动作顺序与延时，任一步下发失败即结束并报告 `FAILED`；`ACK` 仅表示接令，`ISSUED` 仅表示动作指令已下发，不证明物理到位。执行期间串口命令任务会等待该流程返回。
 
 ## 3. 主动事件与路径交互
+
+首轮自动抓取及恢复观察姿态期间，COLOR 仍回复 `{RSP,VISION,COLOR,OK}`，但丢弃颜色且不触发抓取；OK 只表示接收。`look2` 完成后，处理恢复请求到达时已积压的数据至完整帧边界就重新允许颜色判断，不等待串口完全空闲。诊断日志 `[DISC] Color handling resumed: expected=..., cargo=...` 表示已恢复下一件处理，后续匹配颜色才触发 `COLOR,GRAB`。
+
+`{CMD,NAV,ROUTE,...}` 执行时，每段只沿车身 Y 轴前进或后退，需要时先原地转向，不做车身左右平移。前进与后退选择转角较小者，等角时优先前进，反向路段可保持车头朝向直接后退。同向共线节点合并，前后折返保留中间节点并先停车再换方向；`ROUTE_DONE,ESTIMATED` 仍只表示指令下发及估算等待结束。
 
 | 旧回复或事件 | v2 事件 / 回复 | 含义 |
 |---|---|---|
@@ -221,3 +225,5 @@ CFG 参数只在 RAM 中生效，重启恢复默认值。读取须停止视觉�
 GPIO5 接 AO3400 栅极，按低边 N 沟道开关、高电平导通驱动。LEDC 通道 0 默认使用 2000 Hz、12 位分辨率，频率可调范围 100～9000 Hz。亮度百分比线性映射占空比，0% 常低、100% 常高（这两个端点没有周期性脉冲）。该通道及共享定时器保留给此驱动。重启恢复关闭和 2000 Hz，不写入 Flash；串口断开和 Debug/Release 切换保持设置。
 
 上位机“LED 调光”页拖动滑块后点击“应用亮度”，输入频率后点击“应用频率”，也可关闭或查询。例：`{CMD,LED,SET,50}` 设置 50%；`{CMD,LED,FREQ,3500}` 改为 3500 Hz 并保持亮度；`{CMD,LED,SET,0}` 关闭并保留频率。每帧末尾发送换行。回复的 hz 是定时器配置回读值，可能与请求值有取整差异。参数不合法返回 `ERR,RANGE`，数量错误返回 `ERR,FORMAT`，PWM 配置失败返回 `ERR,PWM`；频率配置失败时尝试恢复，恢复失败则关闭输出并锁定 PWM 故障。旧固件可能返回 `ERR,UNKNOWN_ACTION`，旧版仅亮度回复仍可显示但标注未报告频率。新固件回复新增频率字段，外部解析器需同步适配。`OK` 和查询仅表示软件 PWM 设置，不代表波形或光强实测。
+
+临时调试修改：`Task_VisualAlignment` 中 300 ms 断流触发停车和 `ALIGN_FAILED,TIMEOUT` 的分支已注释。队列单次等待仍为 300 ms，恢复反馈后帧间隔达到 300 ms 仍清零连续达标计数；这两处不会因断流报告失败。首次对齐 15 秒总超时、显式停止和无效反馈处理保留。手动 `ALIGN_START` 没有首次达标总超时，断流后须显式停止。

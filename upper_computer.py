@@ -15,6 +15,7 @@ import threading
 import tkinter as tk
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime
 from tkinter import messagebox, scrolledtext, ttk
 
 try:
@@ -907,7 +908,7 @@ def build_pose_calibration_command(pose: Pose) -> str:
 class SerialLink:
     """通过后台线程读取 pyserial，所有界面更新交给 Tk 主线程。"""
 
-    def __init__(self, events: queue.Queue[tuple[str, str]]) -> None:
+    def __init__(self, events: queue.Queue[tuple[str, str, datetime]]) -> None:
         self.events = events
         self._port = None
         self._reader: threading.Thread | None = None
@@ -975,10 +976,10 @@ class SerialLink:
                 data = self._port.readline()
                 if data:
                     text = data.decode("utf-8", errors="replace").rstrip("\r\n")
-                    self.events.put(("RX", text))
+                    self.events.put(("RX", text, datetime.now()))
         except Exception as exc:
             if not self._stop.is_set():
-                self.events.put(("ERROR", f"串口读取失败：{exc}"))
+                self.events.put(("ERROR", f"串口读取失败：{exc}", datetime.now()))
         finally:
             self._stop.set()
 
@@ -1761,13 +1762,12 @@ class UpperComputerApp:
         root.title("智能搬运车调试上位机 - 有线串口")
         root.geometry("1180x780")
         root.minsize(940, 650)
-        self.serial_events: queue.Queue[tuple[str, str]] = queue.Queue()
+        self.serial_events: queue.Queue[tuple[str, str, datetime]] = queue.Queue()
         self.serial_link = SerialLink(self.serial_events)
         self.command_vars: dict[str, list[tk.StringVar]] = {}
         self.arm_estimate = ArmPose(0.0, 0.0, 0.0, 0.0)
         self.arm_vars: dict[str, tk.StringVar] = {}
         self.pending_target: Pose | None = None
-        self.position_move_window = None
         self.position_move_status = tk.StringVar(value="尚未发送位置移动指令")
         self.pending_relative_move: Pose | None = None
         self.pose_query_timer: str | None = None
@@ -1994,9 +1994,9 @@ class UpperComputerApp:
             wraplength=275,
         ).pack(anchor="w", pady=(16, 0))
 
-        ttk.Button(chassis_tab, text="麦轮位置移动（X / Y / 转角 / 速度）",
-                   command=self.open_position_move).pack(fill=tk.X, pady=(0, 6))
-        for command in ("GOTOpose", "Movepose", "En_C"):
+        # Movepose 参数继续供键盘遥控使用，底盘页改为同步位置移动。
+        self.command_vars["Movepose"] = [tk.StringVar(value=value) for value in ("0", "80", "0")]
+        for command in ("GOTOpose", "MovePosition", "En_C"):
             self._command_group(chassis_tab, command)
 
         align_group = ttk.LabelFrame(chassis_tab, text="视觉 PID 对齐", padding=7)
@@ -2085,10 +2085,12 @@ class UpperComputerApp:
         ).pack(anchor="center")
         ttk.Label(
             speed_group,
-            text="范围 10～300，与“底盘 → Movepose → 速度”输入框同步",
+            text="范围 10～300 RPM，可输入速度或使用左 / 右 Shift 调整",
             foreground="#59636e",
             wraplength=275,
         ).pack(anchor="center", pady=(6, 0))
+        ttk.Entry(speed_group, textvariable=self.command_vars["Movepose"][1],
+                  width=12, justify=tk.CENTER).pack(anchor="center", pady=(6, 0))
 
         self.keyboard_drive_status_var = tk.StringVar(
             value="已就绪：点击非输入框区域后即可使用键盘"
@@ -2241,6 +2243,9 @@ class UpperComputerApp:
         ttk.Button(log_tab, text="发送原始命令", command=self.send_raw_command).grid(
             row=1, column=1, padx=(5, 0), pady=(8, 0)
         )
+        ttk.Button(log_tab, text="清日志", command=self.clear_log).grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0)
+        )
 
         self.refresh_ports()
         self.root.after(60, self.poll_serial_events)
@@ -2268,28 +2273,6 @@ class UpperComputerApp:
         group.columnconfigure(1, weight=1)
         return variables  # type: ignore[return-value]
 
-    def open_position_move(self) -> None:
-        if self.position_move_window is not None:
-            self.position_move_window.deiconify()
-            self.position_move_window.lift()
-            return
-        window = tk.Toplevel(self.root)
-        self.position_move_window = window
-        window.title("麦轮相对位置移动")
-        window.transient(self.root)
-        window.protocol("WM_DELETE_WINDOW", window.withdraw)
-        content = ttk.Frame(window, padding=12)
-        content.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(content, text="以移动前车身坐标系为基准，平移与转向同步进行。\n"
-                  "仅 Debug 可用，执行时自动停止视觉对齐。混合运动走圆弧。",
-                  wraplength=390, justify=tk.LEFT).pack(anchor="w", pady=(0, 8))
-        self._command_group(content, "MovePosition")
-        ttk.Label(content, textvariable=self.position_move_status,
-                  wraplength=390, justify=tk.LEFT).pack(anchor="w", pady=6)
-        ttk.Label(content, text="执行期间串口控制任务等待，后续指令将在等待结束后处理。\n"
-                  "结果为开环估计；再次发送前请确认车辆已经停稳。",
-                  wraplength=390, foreground="#59636e", justify=tk.LEFT).pack(anchor="w")
-
     def _accept_position_move_response(self, text: str) -> bool:
         fields = parse_frame(text)
         if fields is None or fields[1:3] != ("CHASSIS", "MOVE_POSITION"):
@@ -2316,7 +2299,30 @@ class UpperComputerApp:
         group = ttk.LabelFrame(parent, text=command, padding=7)
         group.pack(fill=tk.X, pady=(0, 6))
         if command == "MovePosition":
-            group.configure(text="相对位置与速度")
+            group.configure(text="麦轮位置移动（相对位移）")
+            labels = ("X (mm)", "Y (mm)", "转角 (°)", "轮速 (RPM)")
+            variables = []
+            for index, ((_, default), label) in enumerate(zip(COMMAND_FIELDS[command], labels)):
+                row, column = divmod(index, 2)
+                variable = tk.StringVar(value=default)
+                variables.append(variable)
+                ttk.Label(group, text=f"{label}：").grid(row=row, column=column * 2,
+                                                         sticky="w", pady=2)
+                ttk.Entry(group, textvariable=variable, width=8).grid(
+                    row=row, column=column * 2 + 1, sticky="ew", pady=2, padx=(0, 5))
+            group.columnconfigure(1, weight=1)
+            group.columnconfigure(3, weight=1)
+            ttk.Button(group, text="执行同步移动", command=lambda: self.send_command(command)).grid(
+                row=2, column=0, columnspan=4, sticky="ew", pady=(5, 0))
+            ttk.Label(group, text="起始车身坐标系，正角左转；仅 Debug。混合运动走圆弧。\n"
+                      "执行时停止视觉对齐，后续串口指令等待；结果为开环估计。",
+                      wraplength=420, foreground="#59636e", justify=tk.LEFT).grid(
+                row=3, column=0, columnspan=4, sticky="w", pady=(5, 0))
+            ttk.Label(group, textvariable=self.position_move_status,
+                      wraplength=420, justify=tk.LEFT).grid(
+                row=4, column=0, columnspan=4, sticky="w", pady=(5, 0))
+            self.command_vars[command] = variables
+            return
         if command == "En_C":
             group.configure(text="电机使能")
             self.command_vars[command] = [tk.StringVar(value="1")]
@@ -2336,7 +2342,7 @@ class UpperComputerApp:
                 row=row, column=1, sticky="ew", pady=2
             )
         group.columnconfigure(1, weight=1)
-        ttk.Button(group, text="执行同步移动" if command == "MovePosition" else "发送",
+        ttk.Button(group, text="发送",
                    command=lambda name=command: self.send_command(name)).grid(
             row=len(variables), column=0, columnspan=2, sticky="ew", pady=(5, 0)
         )
@@ -2983,9 +2989,16 @@ class UpperComputerApp:
         self.append_log("TX", line)
         self.raw_command_var.set("")
 
-    def append_log(self, kind: str, text: str) -> None:
+    def clear_log(self) -> None:
         self.log_text.configure(state=tk.NORMAL)
-        self.log_text.insert(tk.END, f"[{kind}] {text}\n")
+        self.log_text.delete("1.0", tk.END)
+        self.log_text.configure(state=tk.DISABLED)
+
+    def append_log(self, kind: str, text: str, timestamp: datetime | None = None) -> None:
+        timestamp = timestamp if timestamp is not None else datetime.now()
+        prefix = f"[{timestamp.time().isoformat(timespec='milliseconds')}] [{kind}] "
+        self.log_text.configure(state=tk.NORMAL)
+        self.log_text.insert(tk.END, "".join(prefix + line + "\n" for line in (text.splitlines() or [""])))
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
 
@@ -3084,10 +3097,10 @@ class UpperComputerApp:
     def poll_serial_events(self) -> None:
         while True:
             try:
-                kind, text = self.serial_events.get_nowait()
+                kind, text, timestamp = self.serial_events.get_nowait()
             except queue.Empty:
                 break
-            self.append_log(kind, text)
+            self.append_log(kind, text, timestamp)
             if kind == "RX":
                 fields = parse_frame(text)
                 if fields is not None and fields[:4] == ("RSP", "SYS", "HELLO", "OK"):

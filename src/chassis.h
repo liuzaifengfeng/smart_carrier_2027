@@ -59,7 +59,10 @@ void GotoPose(float x, float y, float theta, bool isRelative);
  * 调用期间须独占底盘，不能同时使用 MovePose/OmniMove/视觉对齐。
  * @return true 命令已下发并等待结束（开环估计），false 参数无效或超范围。
  */
-bool MovePosition(float x, float y, float theta, float speed);
+// shouldStop 可在等待期间轮询外部事件；返回 true 时立即停车并返回 false，
+// 中断时不将理想位姿更新为目标点。省略回调时保持原有行为。
+bool MovePosition(float x, float y, float theta, float speed,
+                  bool (*shouldStop)() = nullptr);
 
 /**
  * @brief 麦克纳姆轮全向速度控制。
@@ -120,10 +123,12 @@ bool InitArm_look();
 bool InitArm_look2();
 
 /**
- * @brief 按 0~24 号场地节点路径移动，只使用原地转向和向前直行。
+ * @brief 按 0~24 号场地节点路径移动，只使用原地转向和车身 Y 轴前后直行。
  *
  * 路径首项表示小车当前所在节点；相邻输入节点必须在 5x5 蛇形节点图中上下或左右相邻。
  * 连续同向且共线的多段路径会自动合并，例如 1-2-3 合并为 1-3。
+ * 每段选择前进/后退中转角较小的朝向，等角时优先前进；不做车身横向平移。
+ * 反向路段先停车再换方向；后退时理想航向保持车头朝向，不改成行进方向。
  * 本函数会按脉冲数、目标转速和加速度档位估算完成时间，并物理阻塞调用任务。
  *
  * @param path         节点序号数组，例如 {0, 1, 8, 7}

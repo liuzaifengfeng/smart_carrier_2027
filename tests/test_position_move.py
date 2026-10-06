@@ -45,17 +45,15 @@ class PositionMoveTests(unittest.TestCase):
         app.serial_link.send_line.assert_called_once_with("{CMD,CHASSIS,MOVE_POSITION,200,100,30,80}")
         self.assertIn("等待", app.position_move_status.set.call_args.args[0])
 
-    def test_real_dialog_button_and_reopening_preserve_inputs(self):
+    def test_embedded_position_controls_send_four_arguments(self):
         root = tk.Tk()
         root.withdraw()
         try:
             app = self.app()
             app.root = root
-            app.position_move_window = None
             app.position_move_status = tk.StringVar(root)
-            app.open_position_move()
-            window = app.position_move_window
-            window.withdraw()
+            panel = ttk.Frame(root)
+            app._command_group(panel, "MovePosition")
             values = ("200", "100", "30", "80")
             for var, value in zip(app.command_vars["MovePosition"], values):
                 var.set(value)
@@ -65,15 +63,12 @@ class PositionMoveTests(unittest.TestCase):
                     yield child
                     yield from descendants(child)
 
-            button = next(widget for widget in descendants(window)
+            button = next(widget for widget in descendants(panel)
                           if isinstance(widget, ttk.Button)
                           and widget.cget("text") == "执行同步移动")
             button.invoke()
             app.serial_link.send_line.assert_called_once_with(
                 "{CMD,CHASSIS,MOVE_POSITION,200,100,30,80}")
-            app.open_position_move()
-            window.withdraw()
-            self.assertIs(app.position_move_window, window)
             self.assertEqual(tuple(var.get() for var in app.command_vars["MovePosition"]), values)
         finally:
             root.destroy()

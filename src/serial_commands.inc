@@ -1,7 +1,6 @@
-// 由 main.cpp 在业务状态与动作函数之后包含。仅此任务读取 Serial0。
+// 由 robot_runtime.cpp 在业务状态与动作函数之后包含。仅此任务读取 Serial0。
 #include <float.h>
 static bool serialDebugMode = true;
-
 static void serialReply(const SerialFrame &frame, const char *status) {
     Serial.printf("{RSP,%s,%s,%s}\n", frame.fields[1], frame.fields[2], status);
 }
@@ -94,7 +93,7 @@ static void serialRelease(const SerialFrame &frame) {
     if (!serialDebugMode) { serialError(frame, "MODE"); return; }
     if (discMaterialActive) requestVisionStop(VisionStartMode::DISC_MATERIAL);
     setAlignmentEnabled(false);
-    xHomeTimer = xTimerCreate("HomeTimer", pdMS_TO_TICKS(300000), pdFALSE,
+    xHomeTimer = xTimerCreate("HomeTimer", pdMS_TO_TICKS(3000000), pdFALSE,// 3000s 后强制返回起停区
                              NULL, vHomeTimerCallback);
     if (!xHomeTimer) { serialError(frame, "TIMER"); return; }
     currentState = STATE_WAIT_START;
@@ -117,10 +116,26 @@ static void serialRelease(const SerialFrame &frame) {
 // 普通 COLOR/GRAB 共用完成路径，避免接令或失败也推进任务。
 static void serialExecuteTaskGrab(uint8_t color, uint8_t cargo) {
     const int progress = roundProgress;
+    const bool automaticRound1 = !serialDebugMode && currentState == STATE_GRAB_ROUND1;
+    if (automaticRound1) {
+        // 相机保持识别，只屏蔽主控的颜色处理，避免每件之间反复切换视觉模式。
+        firstDiscGrabReady = false;
+        discMessageResumeRequested = false;
+    }
     discMaterialColor = 0;
     const bool completed = GrabDiscMaterial(color, cargo);
     const int next = AdvanceDiscGrabProgress(progress, cargo, completed);
     Serial.printf("{EVT,VISION,GRAB,%s,%u,%u}\n", completed ? "DONE" : "FAILED", color, cargo);
+    if (automaticRound1 && !completed) {
+        // 可能已执行部分动作，禁止下一帧颜色自动重试同一次抓取。
+        requestVisionStop(VisionStartMode::DISC_MATERIAL);
+        updateDisplay("DISPLAY", "Release", "DISC GRAB ERR");
+        if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
+        if (currentState == STATE_GRAB_ROUND1) currentState = STATE_TRANSFER_FAILED;
+        return;
+    }
+    // 动作执行期间若已超时切换主状态，不发布旧流程的进度。
+    if (automaticRound1 && currentState != STATE_GRAB_ROUND1) return;
     if (next != progress) {
         // 先关闭识别，再发布第三件完成，避免主流程已导航时仍有颜色入队。
         if (next == 3) requestVisionStop(VisionStartMode::DISC_MATERIAL);
@@ -328,6 +343,12 @@ static void serialDispatch(const SerialFrame &frame) {
             serialError(frame, "RANGE"); return;
         }
         if (!discMaterialActive) { serialError(frame, "NOT_ACTIVE"); return; }
+        // 抓取、放料及恢复观察姿态期间丢弃颜色，不更新缓存，也不触发抓取。
+        // 仍按协议确认收帧；恢复处理后只使用新收到的颜色。
+        if (!serialDebugMode && currentState == STATE_GRAB_ROUND1 && !firstDiscGrabReady) {
+            serialReply(frame, "OK");
+            return;
+        }
         discMaterialColor = static_cast<uint8_t>(color);
         serialReply(frame, "OK");
         serialDiscColorDecision(static_cast<uint8_t>(color));
@@ -476,9 +497,35 @@ void Task_Serial_CMD(void *pvParameters) {
     size_t length = 0;
     bool overflow = false;
     bool invalid = false;
+    bool discResumeDraining = false;
+    size_t discOldBytesRemaining = 0;
+    // 固定旧数据的边界，持续新来帧不能无限延长屏蔽时间。
+    // 旧数据仍正常分发（COLOR 在未 ready 时丢弃），非颜色指令不受影响。
+    const auto resumeDiscAtFrameBoundary = [&]() {
+        if (discMessageResumeRequested && !discResumeDraining) {
+            discOldBytesRemaining = static_cast<size_t>(Serial.available());
+            discResumeDraining = true;
+            discMessageResumeRequested = false;
+        }
+        if (!discResumeDraining || discOldBytesRemaining != 0
+                || length != 0 || overflow || invalid) return;
+        discResumeDraining = false;
+        discMaterialColor = 0;
+        const int progress = roundProgress;
+        if (!serialDebugMode && currentState == STATE_GRAB_ROUND1
+                && discMaterialActive && progress >= 0 && progress < 3) {
+            firstDiscGrabReady = true;
+            Serial.printf("[DISC] Color handling resumed: expected=%d, cargo=%d\n",
+                          currentTask.round1_colors[progress], progress + 1);
+        }
+    };
     for (;;) {
+        resumeDiscAtFrameBoundary();
         while (Serial.available() > 0) {
+            // 请求可能在读取持续数据期间到达；先记录旧缓存再读下一字节。
+            resumeDiscAtFrameBoundary();
             const char c = static_cast<char>(Serial.read());
+            if (discResumeDraining && discOldBytesRemaining > 0) --discOldBytesRemaining;
             if (c == '\n' || c == '\r') {
                 // 2. 完整行到达后才解析。过长或含 NUL 的整行直接拒绝。
                 if (overflow) Serial.println("{RSP,SYS,FRAME,ERR,TOO_LONG}");
@@ -500,6 +547,8 @@ void Task_Serial_CMD(void *pvParameters) {
                 else overflow = true; // 丢弃整行剩余字节，不执行截断后的命令。
             }
         }
+        // 无新数据时也可以恢复；持续数据时由上面的帧边界检查恢复。
+        resumeDiscAtFrameBoundary();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
