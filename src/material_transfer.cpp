@@ -103,24 +103,22 @@ bool pickAt(const MaterialStationPose &pose) {
     waitForArm();
     if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1,
                  materialTransferLayout.moveSpeed)) return false;
-    waitForArm();
+    waitForArm(2);
     return true;
 }
 
 // 放置物料
+//@param pose 目标位置  
+//@param targetHeight 目标高度
 bool placeAt(const MaterialStationPose &pose, float targetHeight) {
     // 放置顺序：夹持物料到目标上方 -> 下降 -> 张开夹爪 -> 提升到安全高度。
     if (!moveAbove(pose, materialTransferLayout.clawClosedAngle)) return false;
-    if (!MoveArm(targetHeight, -1, -1, materialTransferLayout.clawClosedAngle,
-                 materialTransferLayout.moveSpeed)) return false;
+    if (!MoveArm(targetHeight, -1, -1, materialTransferLayout.clawClosedAngle,  materialTransferLayout.moveSpeed)) return false;
+    waitForArm(1.5);
+    if (!MoveArm(-1, -1, -1, materialTransferLayout.clawOpenAngle,  materialTransferLayout.moveSpeed)) return false;
     waitForArm();
-    waitForArm();
-    if (!MoveArm(-1, -1, -1, materialTransferLayout.clawOpenAngle,
-                 materialTransferLayout.moveSpeed)) return false;
-    waitForArm();
-    if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1,
-                 materialTransferLayout.moveSpeed)) return false;
-    waitForArm();
+    if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1, materialTransferLayout.moveSpeed)) return false;
+    waitForArm(2);
     return true;
 }
 
@@ -188,8 +186,7 @@ bool MoveDiscToCargo(uint8_t materialCode, uint8_t cargoCode) {
 
     Serial.printf("[Material] disc -> cargo %u, material %u\n", cargoCode, materialCode);
     // 先从圆盘抓起，再放到指定载物台；完成后才更新载物台状态。
-    if (!pickAt(materialTransferLayout.disc)
-            || !placeAt(destination, destination.high)) return false;
+    if (!pickAt(materialTransferLayout.disc) || !placeAt(destination, destination.high)) return false;
     cargo.material = static_cast<MaterialType>(materialCode);
     return true;
 }
@@ -525,15 +522,14 @@ bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force) {
         return false;
     }
 
-   // GotoPose(-50, 0, 0, true);
-    if (!MoveArm( 110 ,0, 90 ,90 , 150)) return false;
-    waitForArm();
-    if (!MoveArm( 80 ,0, 90 ,30 , 150)) return false;
+    if (!MoveArm( 110 ,0, 90 ,90 , 250)) return false;
+    waitForArm(1.5);
+    if (!MoveArm( 80 ,0, 90 ,30 , 250)) return false;
     waitForArm(0.5);
-    if (!MoveArm( 80 ,0, 90 ,-5 , 150)) return false;
+    if (!MoveArm( 80 ,0, 90 ,-5 , 250)) return false;
     waitForArm();
-    if (!MoveArm( 160 ,0, -1 ,-1 , 200)) return false;
-    waitForArm();
+    if (!MoveArm( 150 ,0, -1 ,-1 , 280)) return false;
+    waitForArm(2);
 
     if (!placeAt(destination, destination.high)) return false;
     cargo.material = static_cast<MaterialType>(materialCode);

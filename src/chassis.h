@@ -6,6 +6,8 @@
 #include "vision_alignment.h"
 
 constexpr float ARM_HEIGHT_LIMIT_MM = 175.0f; // Maximum arm height (mm).
+// 总任务超时后锁止 MoveArm 的后续发令，上电/重新进入 Release 才清除。
+extern volatile bool taskMotionAborted;
 // 2 号转台舵机的真实多圈角度边界，由线缆可运动范围决定。
 constexpr float TURRET_CABLE_MIN_DEG = -180.0f;
 constexpr float TURRET_CABLE_MAX_DEG = 360.0f;
@@ -121,6 +123,7 @@ void DisableTurretMotionUntilRestart(const char* reason);
 bool InitArm_start();
 bool InitArm_look();
 bool InitArm_look2();
+bool InitArm_look3();
 
 /**
  * @brief 按 0~24 号场地节点路径移动，只使用原地转向和车身 Y 轴前后直行。
@@ -129,12 +132,15 @@ bool InitArm_look2();
  * 连续同向且共线的多段路径会自动合并，例如 1-2-3 合并为 1-3。
  * 每段选择前进/后退中转角较小的朝向，等角时优先前进；不做车身横向平移。
  * 反向路段先停车再换方向；后退时理想航向保持车头朝向，不改成行进方向。
+ * 指定 finalHeading 时，最后一段优先最小化终点转角，平行时前进/后退直接到达。
+ * 横竖路径配合 0/90/180/270 度终点朝向：平行时不补转，垂直时到达后补转 90 度。
  * 本函数会按脉冲数、目标转速和加速度档位估算完成时间，并物理阻塞调用任务。
  *
  * @param path         节点序号数组，例如 {0, 1, 8, 7}
  * @param pathLength   数组中的节点数量，可变长度且至少为 2
  * @param speedRpm     电机目标转速，范围 1~5000 RPM
  * @param acceleration EMM V5 加速度档位，0 表示直接启动
+ * @param finalHeading 终点车头的场地角度，默认 NaN 不约束；有限角度归一化到 0~360 度
  * @return true 路径有效且全部运动指令已执行；false 参数或路径无效
  */
 constexpr uint8_t FIELD_GRID_SIZE = 5;
@@ -142,13 +148,14 @@ constexpr uint8_t FIELD_NODE_COUNT = 25;
 constexpr size_t MAX_NODE_PATH_LENGTH = 25;
 
 bool MoveNodePath(const uint8_t *path, size_t pathLength,
-                  uint16_t speedRpm = 80, uint8_t acceleration = 50);
+                  uint16_t speedRpm = 80, uint8_t acceleration = 50,
+                  float finalHeading = NAN);
 
 // 可直接写 MoveNodePath({0, 1, 8, 7})，节点数量由初始化列表自动传入。
 inline bool MoveNodePath(std::initializer_list<uint8_t> path,
                          uint16_t speedRpm = 80,
-                         uint8_t acceleration = 50) {
-    return MoveNodePath(path.begin(), path.size(), speedRpm, acceleration);
+                         uint8_t acceleration = 50, float finalHeading = NAN) {
+    return MoveNodePath(path.begin(), path.size(), speedRpm, acceleration, finalHeading);
 }
 
 

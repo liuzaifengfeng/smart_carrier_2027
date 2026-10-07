@@ -97,6 +97,7 @@ static void serialRelease(const SerialFrame &frame) {
                              NULL, vHomeTimerCallback);
     if (!xHomeTimer) { serialError(frame, "TIMER"); return; }
     currentState = STATE_WAIT_START;
+    taskMotionAborted = false;
     firstDiscGrabReady = false;
     enableRun = false;
     if (xTaskCreate(Task_MainStateMachine, "Task_MainStateMachine", 16384,
@@ -116,8 +117,10 @@ static void serialRelease(const SerialFrame &frame) {
 // 普通 COLOR/GRAB 共用完成路径，避免接令或失败也推进任务。
 static void serialExecuteTaskGrab(uint8_t color, uint8_t cargo) {
     const int progress = roundProgress;
-    const bool automaticRound1 = !serialDebugMode && currentState == STATE_GRAB_ROUND1;
-    if (automaticRound1) {
+    const RobotState grabState = currentState;
+    const bool automaticGrab = !serialDebugMode
+        && (grabState == STATE_GRAB_ROUND1 || grabState == STATE_GRAB_ROUND2);
+    if (automaticGrab) {
         // 相机保持识别，只屏蔽主控的颜色处理，避免每件之间反复切换视觉模式。
         firstDiscGrabReady = false;
         discMessageResumeRequested = false;
@@ -126,16 +129,16 @@ static void serialExecuteTaskGrab(uint8_t color, uint8_t cargo) {
     const bool completed = GrabDiscMaterial(color, cargo);
     const int next = AdvanceDiscGrabProgress(progress, cargo, completed);
     Serial.printf("{EVT,VISION,GRAB,%s,%u,%u}\n", completed ? "DONE" : "FAILED", color, cargo);
-    if (automaticRound1 && !completed) {
+    if (automaticGrab && !completed) {
         // 可能已执行部分动作，禁止下一帧颜色自动重试同一次抓取。
         requestVisionStop(VisionStartMode::DISC_MATERIAL);
-        updateDisplay("DISPLAY", "Release", "DISC GRAB ERR");
+        updateDisplay("DISPLAY", "DEBUG", "DISC GRAB ERR");
         if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
-        if (currentState == STATE_GRAB_ROUND1) currentState = STATE_TRANSFER_FAILED;
+        if (currentState == grabState) currentState = STATE_TRANSFER_FAILED;
         return;
     }
     // 动作执行期间若已超时切换主状态，不发布旧流程的进度。
-    if (automaticRound1 && currentState != STATE_GRAB_ROUND1) return;
+    if (automaticGrab && currentState != grabState) return;
     if (next != progress) {
         // 先关闭识别，再发布第三件完成，避免主流程已导航时仍有颜色入队。
         if (next == 3) requestVisionStop(VisionStartMode::DISC_MATERIAL);
@@ -150,7 +153,7 @@ static void serialDiscColorDecision(uint8_t color) {
         : state == STATE_GRAB_ROUND1 || serialDebugMode ? currentTask.round1_colors : nullptr;
     const uint8_t cargo = progress >= 0 && progress < 3 ? progress + 1 : 0;
     const auto decision = EvaluateDiscColor(colors, progress, color, currentTask.valid,
-        alignmentEnabled, serialDebugMode || state != STATE_GRAB_ROUND1 || firstDiscGrabReady,
+        alignmentEnabled, serialDebugMode || firstDiscGrabReady,
         cargo != 0 && cargoPlatforms[cargo - 1].material != MATERIAL_NONE);
     if (decision == DiscColorDecision::GRAB) {
         Serial.printf("{EVT,VISION,COLOR,GRAB,%u,%u}\n", color, cargo);
@@ -191,7 +194,7 @@ static void serialDiscGrab(const SerialFrame &frame) {
     const RobotState grabState = serialDebugMode ? STATE_GRAB_ROUND1 : currentState;
     {
         if ((grabState != STATE_GRAB_ROUND1 && grabState != STATE_GRAB_ROUND2)
-                || (!serialDebugMode && grabState == STATE_GRAB_ROUND1 && !firstDiscGrabReady)
+                || (!serialDebugMode && !firstDiscGrabReady)
                 || roundProgress < 0 || roundProgress >= 3) {
             serialError(frame, "NOT_WAITING"); return;
         }
@@ -292,11 +295,21 @@ static void serialDispatch(const SerialFrame &frame) {
         else { serialError(frame, "RANGE"); return; }
         // 两种运行模式都允许请求切换；ACK 仅表示接令，事件才表示主控已发出请求。
         Serial.printf("{RSP,VISION,%s,ACK,%s}\n", frame.fields[2], name);
-        if (strcmp(frame.fields[2], "START_REQUEST") == 0) requestVisionStart(mode);
-        else requestVisionStop(mode);
+        if (strcmp(frame.fields[2], "START_REQUEST") == 0) {
+            if (mode == VisionStartMode::WORK_AREA || mode == VisionStartMode::WORK_AREA_LOADED) {
+                const RobotState startingState = currentState;
+                setAlignmentEnabled(false);
+                const bool looked = InitArm_look();
+                if (!looked || taskMotionAborted || currentState != startingState) {
+                    Serial.printf("{EVT,VISION,START_FAILED,%s,ARM}\n", name);
+                    return;
+                }
+            }
+            requestVisionStart(mode);
+        } else requestVisionStop(mode);
     } else if (frame.is("VISION", "ALIGN_START", 0)
                || frame.is("VISION", "ALIGN_START", 1)) {
-        VisionStartMode mode = VisionStartMode::NONE; // 旧命令沿用 DISC 死区。
+        VisionStartMode mode = VisionStartMode::NONE; // 自动期间沿用当前模式；否则旧命令使用 DISC。
         if (frame.count == 4) {
             const char *name = frame.fields[3];
             if (strcmp(name, "DISC") == 0) mode = VisionStartMode::DISC;
@@ -345,7 +358,9 @@ static void serialDispatch(const SerialFrame &frame) {
         if (!discMaterialActive) { serialError(frame, "NOT_ACTIVE"); return; }
         // 抓取、放料及恢复观察姿态期间丢弃颜色，不更新缓存，也不触发抓取。
         // 仍按协议确认收帧；恢复处理后只使用新收到的颜色。
-        if (!serialDebugMode && currentState == STATE_GRAB_ROUND1 && !firstDiscGrabReady) {
+        if (!serialDebugMode
+                && (currentState == STATE_GRAB_ROUND1 || currentState == STATE_GRAB_ROUND2)
+                && !firstDiscGrabReady) {
             serialReply(frame, "OK");
             return;
         }
@@ -512,11 +527,13 @@ void Task_Serial_CMD(void *pvParameters) {
         discResumeDraining = false;
         discMaterialColor = 0;
         const int progress = roundProgress;
-        if (!serialDebugMode && currentState == STATE_GRAB_ROUND1
+        if (!serialDebugMode
+                && (currentState == STATE_GRAB_ROUND1 || currentState == STATE_GRAB_ROUND2)
                 && discMaterialActive && progress >= 0 && progress < 3) {
             firstDiscGrabReady = true;
             Serial.printf("[DISC] Color handling resumed: expected=%d, cargo=%d\n",
-                          currentTask.round1_colors[progress], progress + 1);
+                          (currentState == STATE_GRAB_ROUND2 ? currentTask.round2_colors
+                                                               : currentTask.round1_colors)[progress], progress + 1);
         }
     };
     for (;;) {

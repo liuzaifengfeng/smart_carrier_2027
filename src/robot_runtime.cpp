@@ -1,4 +1,5 @@
 #include "robot_runtime.h"
+#include "alignment_start_policy.h"
 
 // ================= 基础配置 =================
 
@@ -28,7 +29,7 @@ portMUX_TYPE taskCodeMux = portMUX_INITIALIZER_UNLOCKED;
 // 机器帧使用 {CMD/RSP/EVT,类别,动作,...}\n，详见 Document/serial_protocol.md。
 
 // ================= 业务状态 =================
-RobotState currentState = STATE_WAIT_START;
+volatile RobotState currentState = STATE_WAIT_START;
 
 // 共享业务变量(由机载电脑指令/任务更新)
 volatile bool nano_ready = false;       // 机载电脑就绪
@@ -36,7 +37,7 @@ volatile StartZone currentStartZone = START_ZONE_UNKNOWN; // 当前启停区,由
 volatile bool taskReceived = false;// 已拿到任务码
 volatile int  roundProgress = 0;   // 当前轮次已抓/放物料数 0-3
 volatile bool discMaterialActive = false;
-volatile bool firstDiscGrabReady = false; // 首轮导航和定位完成后才允许业务抓取。
+volatile bool firstDiscGrabReady = false; // 当前轮导航、定位和观察恢复完成后才允许业务抓取。
 volatile bool discMessageResumeRequested = false;
 uint8_t discMaterialColor = 0; // 最近一次 COLOR；每次启停或抓取后失效。
 volatile bool enableRun = false;   // 一键启动触发
@@ -47,9 +48,17 @@ portMUX_TYPE nodePathMux = portMUX_INITIALIZER_UNLOCKED;
 uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH] = {0};
 size_t nodePathLen = 0;
 
-static bool executeNodePathWithStatus(const uint8_t *path, size_t count) {
+static bool executeNodePathWithStatus(const uint8_t *path, size_t count, float finalHeading = NAN) {
     Serial.println("{EVT,NAV,ROUTE_RUNNING}");
-    const bool success = MoveNodePath(path, count);
+    if (!isfinite(finalHeading) && path != nullptr && count > 0) {
+        switch (path[count - 1]) {
+            case DISC_AREA_NODE: finalHeading = DISC_AREA_HEADING; break;
+            case COARSE_AREA_NODE: finalHeading = COARSE_AREA_HEADING; break;
+            case TEMP_AREA_NODE: finalHeading = TEMP_AREA_HEADING; break;
+            default: break;
+        }
+    }
+    const bool success = MoveNodePath(path, count, 80, 50, finalHeading);
     // DONE 表示指令和预计等待已结束，不是电机/视觉实测到位。
     Serial.println(success ? "{EVT,NAV,ROUTE_DONE,ESTIMATED}" : "{EVT,NAV,ROUTE_FAILED,EXECUTION}");
     return success;
@@ -62,7 +71,7 @@ static bool executeNodePathWithStatus(const uint8_t *path, size_t count) {
  * 3. 调用者必须检查返回值，失败时不能继续用户代码。
  * 等待仍受现有总任务超时保护，不再固定等待 10 秒。
  */
-bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode) {
+bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode, float finalHeading) {
     portENTER_CRITICAL(&nodePathMux);
     nodePathState = NodePathState::WAITING;
     nodePathLen = 0;
@@ -89,7 +98,7 @@ bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode) {
     if (path[0] != startNode || path[count - 1] != endNode) {
         Serial.println("{EVT,NAV,ROUTE_FAILED,ENDPOINT}");
     } else {
-        success = executeNodePathWithStatus(path, count);
+        success = executeNodePathWithStatus(path, count, finalHeading);
     }
     portENTER_CRITICAL(&nodePathMux);
     nodePathState = success ? NodePathState::DONE : NodePathState::FAILED;
@@ -125,6 +134,21 @@ void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic,
             xSemaphoreGive(xAlignmentMotionMutex);
             return;
         }
+        if (enable && !automatic) {
+            // 在同一运动锁内判定，保护 WAITING/DONE 以及尚未被主任务处理的 FAILED。
+            const auto action = DecideAlignmentStart(
+                autoAlignmentState != AutoAlignmentState::IDLE,
+                autoAlignmentState == AutoAlignmentState::FAILED,
+                alignmentOwner, owner);
+            if (action != AlignmentStartAction::RESET) {
+                xSemaphoreGive(xAlignmentMotionMutex);
+                if (acknowledge) Serial.println(action == AlignmentStartAction::KEEP
+                    ? "{RSP,VISION,ALIGN_START,OK}"
+                    : "{RSP,VISION,ALIGN_START,ERR,BUSY}");
+                // 不清空反馈，不重置 PID、代次、连续帧计数、完成状态或超时起点。
+                return;
+            }
+        }
         alignmentEnabled = false;
         alignmentOwner = enable ? owner : VisionStartMode::NONE;
         ++alignmentGeneration;
@@ -132,7 +156,7 @@ void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic,
         OmniMove(0.0f, 0.0f, 0.0f, 0);
         ResetDiscAlignmentPid();
         ResetAlignmentWait();
-        // 手动启停会取消业务等待；不允许旧的 DONE 推进新流程。
+        // 手动停止仍取消业务等待；重复启动已在上方保护自动状态。
         autoAlignmentState = automatic ? AutoAlignmentState::WAITING : AutoAlignmentState::IDLE;
         autoAlignmentStartedMs = millis();
         alignmentEnabled = enable;
@@ -364,18 +388,30 @@ void requestVisionStart(VisionStartMode mode) { requestVisionFunction(mode, true
 // 定位功能同时结束其底盘闭环；事件不表示相机已经停止。
 void requestVisionStop(VisionStartMode mode) { requestVisionFunction(mode, false); }
 
-// 超时兜底: 任一环节卡死则放弃本轮, 回启停区
+// 总超时可能发生在任意路段或搬运中，位置和持料状态未知，停机等待人工处理。
 void vHomeTimerCallback(TimerHandle_t xTimer) {
     if (currentState != STATE_DONE) {
-        Serial.println("[TIMER] Timeout! Abort round, return home");
+        taskMotionAborted = true;
+        currentState = STATE_TIMEOUT_FAILED;
+        firstDiscGrabReady = false;
+        requestVisionStop(VisionStartMode::DISC_MATERIAL);
+        requestVisionStop(VisionStartMode::DISC);
+        requestVisionStop(VisionStartMode::WORK_AREA);
+        requestVisionStop(VisionStartMode::WORK_AREA_LOADED);
+        requestVisionStop(VisionStartMode::CORNER);
+        setAlignmentEnabled(false);
         portENTER_CRITICAL(&nodePathMux);
         nodePathState = NodePathState::FAILED;
         portEXIT_CRITICAL(&nodePathMux);
-        Serial.println("{EVT,NAV,ROUTE_FAILED,TIMEOUT}");
         if (xTask_MainStateMachine_Handle != NULL)
             vTaskSuspend(xTask_MainStateMachine_Handle);
-        // [TODO] 收缩机械臂到安全姿态 + 回启停区
-        currentState = STATE_RETURN_HOME;
+        // 主任务在暂停前可能从失败的 MoveArm 返回，重新锁存总超时故障。
+        currentState = STATE_TIMEOUT_FAILED;
+        // 停止六个步进电机，保留夹爪位置，避免未知持料时松手。
+        for (uint8_t motor = 1; motor <= 6; ++motor) Emm_V5_Stop_Now(motor, false);
+        updateDisplay("DISPLAY", "DEBUG", "TASK TIMEOUT");
+        Serial.println("{EVT,NAV,ROUTE_FAILED,TIMEOUT}");
+        Serial.println("[TIMER] Task timeout: stopped; manual recovery required");
     }
 }
 

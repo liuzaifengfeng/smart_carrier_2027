@@ -25,16 +25,16 @@ struct FakeSerial {
     template<class... Args>
     constexpr void printf(const char*, Args...) { ++logs; }
 };
-enum State { STATE_GRAB_ROUND1, OTHER };
+enum State { STATE_GRAB_ROUND1, STATE_GRAB_ROUND2, OTHER };
 constexpr bool check(int mode) {
     FakeSerial Serial{20};
     bool discMessageResumeRequested = true, discResumeDraining = false;
     size_t discOldBytesRemaining = 0, length = 0;
     bool overflow = false, invalid = false, firstDiscGrabReady = false;
     bool serialDebugMode = mode == 3, discMaterialActive = mode != 4;
-    int currentState = mode == 5 ? OTHER : STATE_GRAB_ROUND1;
+    int currentState = mode == 5 ? OTHER : mode == 7 ? STATE_GRAB_ROUND2 : STATE_GRAB_ROUND1;
     int roundProgress = mode == 6 ? 3 : 1, discMaterialColor = 4;
-    struct { int round1_colors[3]; } currentTask{{4, 1, 2}};
+    struct { int round1_colors[3]; int round2_colors[3]; } currentTask{{4, 1, 2}, {6, 5, 3}};
 LOGIC
     resumeDiscAtFrameBoundary();
     if (!discResumeDraining || discOldBytesRemaining != 20 || firstDiscGrabReady) return false;
@@ -54,7 +54,7 @@ LOGIC
     if ((mode == 1 || mode == 2) && (!discResumeDraining || firstDiscGrabReady)) return false;
     overflow = invalid = false;
     resumeDiscAtFrameBoundary();
-    bool allowed = mode < 3;
+    bool allowed = mode < 3 || mode == 7;
     if (discResumeDraining || discMessageResumeRequested || discMaterialColor != 0
             || firstDiscGrabReady != allowed || Serial.logs != (allowed ? 1 : 0)) return false;
     resumeDiscAtFrameBoundary();
@@ -67,6 +67,7 @@ static_assert(check(3), "debug does not resume automatic grab");
 static_assert(check(4), "stopped vision does not resume");
 static_assert(check(5), "changed task state does not resume");
 static_assert(check(6), "completed round does not resume");
+static_assert(check(7), "round two resumes under continuous input");
 '''.replace("LOGIC", actual_logic)
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory) / "disc_resume.cpp"

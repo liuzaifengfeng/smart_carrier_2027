@@ -1756,12 +1756,61 @@ class ArmCanvas(tk.Canvas):
         )
 
 
+class ScrollableTab(ttk.Frame):
+    """控制页独立滚动，内容尺寸不再撑大整个 Notebook。"""
+
+    def __init__(self, master: tk.Misc, padding: int = 8, **kwargs: object) -> None:
+        super().__init__(master, **kwargs)
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.canvas = tk.Canvas(self, width=460, height=400, highlightthickness=0)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        vertical = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.canvas.yview)
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        horizontal.grid(row=1, column=0, sticky="ew")
+        self.canvas.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+        self.content = ttk.Frame(self.canvas, padding=padding)
+        self.content_window = self.canvas.create_window(0, 0, window=self.content, anchor="nw")
+        self.content.bind("<Configure>", self._update_region)
+        self.canvas.bind("<Configure>", self._resize_content)
+
+    def _update_region(self, _event: tk.Event | None = None) -> None:
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _resize_content(self, event: tk.Event) -> None:
+        self.canvas.itemconfigure(
+            self.content_window, width=max(event.width, self.content.winfo_reqwidth())
+        )
+        self._update_region()
+
+    @staticmethod
+    def scroll_mousewheel(event: tk.Event) -> str | None:
+        widget = event.widget
+        # 表格、日志和数值选择控件保留自身的滚轮行为。
+        if widget.winfo_class() in ("Text", "Treeview", "TCombobox", "Spinbox", "TSpinbox", "Scale", "TScale"):
+            return None
+        while widget is not None:
+            if isinstance(widget, ScrollableTab):
+                delta = int(event.delta)
+                if delta:
+                    units = -int(delta / 120) if abs(delta) >= 120 else (-1 if delta > 0 else 1)
+                    view = widget.canvas.xview_scroll if event.state & 0x0001 else widget.canvas.yview_scroll
+                    view(units, "units")
+                    return "break"
+                return None
+            widget = getattr(widget, "master", None)
+        return None
+
+
 class UpperComputerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title("智能搬运车调试上位机 - 有线串口")
-        root.geometry("1180x780")
-        root.minsize(940, 650)
+        width = min(1180, max(1, root.winfo_screenwidth() - 40))
+        height = min(780, max(1, root.winfo_screenheight() - 100))
+        root.geometry(f"{width}x{height}")
+        root.minsize(min(740, width), min(480, height))
         self.serial_events: queue.Queue[tuple[str, str, datetime]] = queue.Queue()
         self.serial_link = SerialLink(self.serial_events)
         self.command_vars: dict[str, list[tk.StringVar]] = {}
@@ -1830,26 +1879,32 @@ class UpperComputerApp:
         self.field = FieldCanvas(container)
         self.field.grid(row=1, column=0, sticky="nsew", padx=(0, 12))
 
-        notebook = ttk.Notebook(container, width=460)
+        notebook = ttk.Notebook(container, width=500)
         notebook.grid(row=1, column=1, sticky="ns")
-        pose_tab = ttk.Frame(notebook, padding=12)
-        chassis_tab = ttk.Frame(notebook, padding=8)
-        arm_tab = ttk.Frame(notebook, padding=8)
-        keyboard_tab = ttk.Frame(notebook, padding=12, takefocus=True)
-        self.keyboard_tab = keyboard_tab
+        pose_page = ScrollableTab(notebook, padding=12)
+        chassis_page = ScrollableTab(notebook)
+        arm_page = ScrollableTab(notebook)
+        keyboard_page = ScrollableTab(notebook, padding=12, takefocus=True)
+        pose_tab = pose_page.content
+        chassis_tab = chassis_page.content
+        arm_tab = arm_page.content
+        keyboard_tab = keyboard_page.content
+        self.keyboard_tab = keyboard_page
         log_tab = ttk.Frame(notebook, padding=8)
-        vision_tab = ttk.Frame(notebook, padding=12)
-        notebook.add(pose_tab, text="姿态")
-        notebook.add(chassis_tab, text="底盘")
-        notebook.add(arm_tab, text="机械臂")
-        notebook.add(keyboard_tab, text="键盘控制")
+        vision_page = ScrollableTab(notebook, padding=12)
+        vision_tab = vision_page.content
+        notebook.add(pose_page, text="姿态")
+        notebook.add(chassis_page, text="底盘")
+        notebook.add(arm_page, text="机械臂")
+        notebook.add(keyboard_page, text="键盘控制")
         notebook.add(log_tab, text="日志")
-        notebook.add(vision_tab, text="视觉")
+        notebook.add(vision_page, text="视觉")
         self.parameter_panel = ParameterPanel(notebook, self.serial_link.send_line, self.append_log)
         notebook.add(self.parameter_panel, text="参数")
 
-        led_tab = ttk.Frame(notebook, padding=12)
-        notebook.add(led_tab, text="LED 调光")
+        led_page = ScrollableTab(notebook, padding=12)
+        led_tab = led_page.content
+        notebook.add(led_page, text="LED 调光")
         self.led_brightness = tk.IntVar(value=0)
         self.led_status = tk.StringVar(value="尚未查询固件亮度")
         ttk.Label(led_tab, text="LED 亮度与频率 · GPIO5",
@@ -1876,6 +1931,7 @@ class UpperComputerApp:
         ttk.Label(led_tab, textvariable=self.led_status, wraplength=390).pack(anchor="w", pady=12)
         ttk.Label(led_tab, text="拖动滑块后点击应用。0% 关闭，100% 全亮。\n"
                   "频率范围 100～9000 Hz，单独应用并保持亮度。\n"
+                  "故障时补光灯每 500 ms 亮灭，亮度回读为设定值；退出故障恢复设置。\n"
                   "重启恢复关闭和 2000 Hz；断开串口保持设置。\n回读值为固件 PWM 配置，不是实测值。",
                   wraplength=390).pack(anchor="w")
 
@@ -2252,6 +2308,7 @@ class UpperComputerApp:
         self.root.bind("<KeyPress>", self._on_keyboard_key_press, add="+")
         self.root.bind("<KeyRelease>", self._on_keyboard_key_release, add="+")
         self.root.bind("<FocusOut>", self._on_window_focus_out, add="+")
+        self.root.bind("<MouseWheel>", ScrollableTab.scroll_mousewheel, add="+")
         notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed, add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -3066,6 +3123,9 @@ class UpperComputerApp:
     def _accept_vision_start_request(self, text: str) -> bool:
         """展示主控的开启或结束请求；实际相机算法由机载电脑程序处理。"""
         alignment_status = {
+            "{EVT,VISION,START_FAILED,WORK_AREA,ARM}": "工位定位未启动：look 观察姿态动作失败或被中断，请检查机械臂。",
+            "{EVT,VISION,START_FAILED,WORK_AREA_LOADED,ARM}": "带物料工位定位未启动：look 观察姿态动作失败或被中断，请检查机械臂。",
+            "{RSP,VISION,ALIGN_START,ERR,BUSY}": "对齐启动被拒绝：当前自动对齐等待或结果受到保护，本次命令未改变对齐状态。",
             "{EVT,VISION,ALIGN_IGNORED,DISABLED}": "定位反馈被丢弃：底盘对齐未开启或已结束，请重新开启定位视觉或连续对齐。",
             "{EVT,VISION,ALIGN_FAILED,TIMEOUT}": "底盘对齐超时或反馈断流，已请求停车；重新定位需再次开启。",
             "{EVT,VISION,ALIGN_DONE}": "底盘对齐连续 5 帧已进入死区，当前帧已停车，连续闭环仍开启；实际到位需现场确认。",

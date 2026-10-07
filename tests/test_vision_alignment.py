@@ -8,6 +8,14 @@ from upper_computer import (
 
 
 class VisionAlignmentTests(unittest.TestCase):
+    def test_busy_response_explains_automatic_state_is_preserved(self):
+        app = UpperComputerApp.__new__(UpperComputerApp)
+        app.vision_request_var = Mock()
+        self.assertTrue(app._accept_vision_start_request("{RSP,VISION,ALIGN_START,ERR,BUSY}"))
+        message = app.vision_request_var.set.call_args.args[0]
+        self.assertIn("被拒绝", message)
+        self.assertIn("未改变对齐状态", message)
+
     def test_explicit_mode_and_legacy_commands(self):
         self.assertEqual(build_alignment_control_command("START"), "{CMD,VISION,ALIGN_START}")
         self.assertEqual(build_alignment_control_command("stop"), "{CMD,VISION,ALIGN_STOP}")
