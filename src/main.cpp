@@ -793,7 +793,7 @@ void Task_MainStateMachine(void *pvParameters) {
             if (currentStartZone == START_ZONE_1) {
                 GotoPose(-70, 0, 0, true);
                 vTaskDelay(1000 / portTICK_PERIOD_MS);
-                GotoPose(0, 200, 0, true);
+                GotoPose(0, -200, 0, true);
                 vTaskDelay(1000 / portTICK_PERIOD_MS);
             } else if (currentStartZone == START_ZONE_2) {
                 GotoPose(-70, 0, 0, true);
