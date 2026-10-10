@@ -1,6 +1,24 @@
 // 由 robot_runtime.cpp 在业务状态与动作函数之后包含。仅此任务读取 Serial0。
 #include <float.h>
+#include "debug_release_button.h"
 static bool serialDebugMode = true;
+static DebugReleaseButton bootReleaseButton;
+static portMUX_TYPE bootReleaseMux = portMUX_INITIALIZER_UNLOCKED;
+
+// loop独立采样，串口任务执行阻塞动作时也能识别并忽略按键。
+void PollDebugBootButton() {
+    const bool pressed = digitalRead(BOOT0_PIN) == LOW;
+    const uint32_t nowMs = millis();
+    portENTER_CRITICAL(&bootReleaseMux);
+    bootReleaseButton.update(pressed, nowMs);
+    portEXIT_CRITICAL(&bootReleaseMux);
+}
+
+static void serialBootSetIdle(bool idle) {
+    portENTER_CRITICAL(&bootReleaseMux);
+    bootReleaseButton.setIdle(serialDebugMode && idle);
+    portEXIT_CRITICAL(&bootReleaseMux);
+}
 static void serialReply(const SerialFrame &frame, const char *status) {
     Serial.printf("{RSP,%s,%s,%s}\n", frame.fields[1], frame.fields[2], status);
 }
@@ -112,6 +130,18 @@ static void serialRelease(const SerialFrame &frame) {
     FastLED.show();
     Serial.println("Release mode");
     serialReply(frame, "OK");
+}
+
+static void serialBootReleaseAtIdle(bool idle) {
+    portENTER_CRITICAL(&bootReleaseMux);
+    bootReleaseButton.setIdle(serialDebugMode && idle);
+    const bool requested = bootReleaseButton.takeRequest();
+    portEXIT_CRITICAL(&bootReleaseMux);
+    if (!requested) return;
+    // 与串口命令同一个任务、同一个入口，避免并发创建定时器/主状态机。
+    char command[] = "{CMD,SYS,RELEASE}";
+    SerialFrame frame;
+    if (parseSerialFrame(command, frame)) serialRelease(frame);
 }
 
 // 普通 COLOR/GRAB 共用完成路径，避免接令或失败也推进任务。
@@ -278,8 +308,8 @@ static void serialDispatch(const SerialFrame &frame) {
             serialError(frame, "RANGE"); return;
         }
         currentStartZone = static_cast<StartZone>(zone);
-        if (serialDebugMode) currentPose = zone == 1 ? RobotPose{2250, 150, 180}
-                                                      : RobotPose{150, 150, 0};
+        if (serialDebugMode) currentPose = zone == 1 ? RobotPose{2250, 150, START_ZONE_HEADING}
+                                                      : RobotPose{150, 150, START_ZONE_HEADING};
         Serial.printf("{RSP,NAV,START_ZONE,OK,%u}\n", static_cast<unsigned>(zone));
     } else if (frame.starts("NAV", "ROUTE")) {
         serialRoute(frame);
@@ -539,6 +569,8 @@ void Task_Serial_CMD(void *pvParameters) {
     for (;;) {
         resumeDiscAtFrameBoundary();
         while (Serial.available() > 0) {
+            // 收帧/分发期间不是空闲；同时取消尚未处理的按键请求。
+            serialBootSetIdle(false);
             // 请求可能在读取持续数据期间到达；先记录旧缓存再读下一字节。
             resumeDiscAtFrameBoundary();
             const char c = static_cast<char>(Serial.read());
@@ -566,6 +598,7 @@ void Task_Serial_CMD(void *pvParameters) {
         }
         // 无新数据时也可以恢复；持续数据时由上面的帧边界检查恢复。
         resumeDiscAtFrameBoundary();
+        serialBootReleaseAtIdle(length == 0 && !overflow && !invalid && Serial.available() == 0);
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

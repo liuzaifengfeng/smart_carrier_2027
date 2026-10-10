@@ -20,9 +20,9 @@ MaterialTransferLayout materialTransferLayout = {
     },
     170.0f, // approachHeight，按物料实际高度修改
     60.0f,  // secondLayerOffset，按物料实际高度修改
-    150.0f, // moveSpeed
+    250.0f, // moveSpeed
     50.0f,   // clawOpenAngle
-    -3.0f,  // clawClosedAngle
+    -5.0f,  // clawClosedAngle
     1000,   // motionWaitMs
 };
 
@@ -97,13 +97,13 @@ bool pickAt(const MaterialStationPose &pose) {
     if (!moveAbove(pose, materialTransferLayout.clawOpenAngle)) return false;
     if (!MoveArm(pose.high, -1, -1, materialTransferLayout.clawOpenAngle,
                  materialTransferLayout.moveSpeed)) return false;
-    waitForArm(2);
+    waitForArm(1.5);
     if (!MoveArm(-1, -1, -1, materialTransferLayout.clawClosedAngle,
                  materialTransferLayout.moveSpeed)) return false;
     waitForArm();
     if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1,
                  materialTransferLayout.moveSpeed)) return false;
-    waitForArm(2);
+    waitForArm(1.5);
     return true;
 }
 
@@ -331,10 +331,10 @@ bool PrepareLidarScanPose(uint8_t startZoneCode) {
         case 1:
             Serial.println("[LidarPose] start zone 1");
             GotoPose(125, 0, 0, true);
-            MoveArm(150, 100, -1, -1, 200);
+            MoveArm(170, 100, -1, -1, 200);
             waitForArm(2);
             GotoPose(0, 100, 0, true);
-            MoveArm(-1, 100, 45, -1, 200);
+            MoveArm(-1, -1, 45, -1, 200);
             waitForArm(1);
             MoveArm(0, 100, -1, -1, 200);
 
@@ -343,9 +343,11 @@ bool PrepareLidarScanPose(uint8_t startZoneCode) {
         case 2:
             Serial.println("[LidarPose] start zone 2");
             GotoPose(125, 0, 0, true);
-            MoveArm(150, 100, -1, -1, 200);
+            MoveArm(170, 100, -1, -1, 200);
             waitForArm(2);
             GotoPose(0, -100, 0, true);
+            MoveArm(-1, 100, -1, -1, 200);
+            waitForArm(1);
             MoveArm(0, 100, 135, -1, 200);
             break;
 
@@ -522,14 +524,12 @@ bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force) {
         return false;
     }
 
-    if (!MoveArm( 110 ,0, 90 ,90 , 250)) return false;
-    waitForArm(1.5);
-    if (!MoveArm( 80 ,0, 90 ,30 , 250)) return false;
-    waitForArm(0.5);
+    if (!MoveArm( 80 ,0, 90 ,90 , 250)) return false;
+    waitForArm(1);
     if (!MoveArm( 80 ,0, 90 ,-5 , 250)) return false;
+    waitForArm(0.5);
+    if (!MoveArm( 150 ,0, -1 ,-1 , 250)) return false;
     waitForArm();
-    if (!MoveArm( 150 ,0, -1 ,-1 , 280)) return false;
-    waitForArm(2);
 
     if (!placeAt(destination, destination.high)) return false;
     cargo.material = static_cast<MaterialType>(materialCode);

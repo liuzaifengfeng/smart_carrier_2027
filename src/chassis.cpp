@@ -3,6 +3,7 @@
 #include "servo.h"
 #include "runtime_parameters.h"
 #include "node_route_heading.h"
+#include "robot_runtime.h"
 volatile bool taskMotionAborted = false;
 #include <float.h>
 
@@ -32,17 +33,17 @@ struct NodePosition {
 // 从底向上、从左到右：0~4、9~5、10~14、19~15、20~24。
 // 沿用项目 X 向右、Y 向上；中心间距 480 mm。
 NodePosition NODE_POSITIONS[FIELD_NODE_COUNT] = {
-    {380.0f, 240.0f}, {720.0f, 240.0f}, {1200.0f, 240.0f}, {1680.0f, 240.0f}, {2160.0f, 240.0f},
-    {2160.0f, 720.0f}, {1680.0f, 720.0f}, {1200.0f, 720.0f}, {720.0f, 720.0f}, {380.0f, 720.0f},
-    {380.0f, 1200.0f}, {720.0f, 1200.0f}, {1200.0f, 1200.0f}, {1680.0f, 1200.0f}, {2160.0f, 1200.0f},
-    {2160.0f, 1680.0f}, {1680.0f, 1680.0f}, {1200.0f, 1680.0f}, {720.0f, 1680.0f}, {380.0f, 1680.0f},
-    {380.0f, 2020.0f}, {720.0f, 2020.0f}, {1200.0f, 2020.0f}, {1680.0f, 2020.0f}, {2160.0f, 2020.0f},
+    {310.0f, 240.0f}, {720.0f, 240.0f}, {1200.0f, 240.0f}, {1680.0f, 240.0f}, {2090.0f, 240.0f},
+    {2090.0f, 720.0f}, {1680.0f, 720.0f}, {1200.0f, 720.0f}, {720.0f, 720.0f}, {310.0f, 720.0f},
+    {310.0f, 1200.0f}, {720.0f, 1200.0f}, {1200.0f, 1200.0f}, {1680.0f, 1200.0f}, {2090.0f, 1200.0f},
+    {2090.0f, 1680.0f}, {1680.0f, 1680.0f}, {1200.0f, 1680.0f}, {720.0f, 1680.0f}, {310.0f, 1680.0f},
+    {310.0f, 2020.0f}, {720.0f, 2020.0f}, {1200.0f, 2020.0f}, {1680.0f, 2020.0f}, {2090.0f, 2020.0f},
 };
 
 constexpr uint32_t MOTOR_PULSES_PER_REVOLUTION = 3200; // 16 细分时，电机转一圈的脉冲数
 constexpr uint32_t MOTOR_COMMAND_GAP_MS = 5;           // 连续发送两条电机命令的间隔
-constexpr double MOTOR_MOTION_TIME_MARGIN = 1.30;      // 运动估算增加 30% 等待余量
-uint32_t ROUTE_SETTLE_TIME_MS = 250;         // 每次运动结束后的停车稳定时间
+constexpr double MOTOR_MOTION_TIME_MARGIN = 1.00;      // 运动估算增加 30% 等待余量
+uint32_t ROUTE_SETTLE_TIME_MS = 100;         // 每次运动结束后的停车稳定时间
 constexpr float ROUTE_ANGLE_EPSILON_DEG = 0.01f;       // 小于该角度时不再执行转向
 
 // ================= 连续视觉对齐 PID 参数 =================
@@ -370,7 +371,7 @@ void RegisterChassisParameters() {
  */
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
     if (taskMotionAborted) return false;
-    int acc = 200;
+    int acc = 220;
     float safeTurretTarget = 0.0f;
     if (turret_angle != -1.0f) {
         if (s_turretStartupReferenceFault) {
@@ -412,36 +413,36 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
     }
 
         if (taskMotionAborted) return false;
-        if (currentArm.high - high != 0 && high != -1) {
-            if( high < 0 || high > ARM_HEIGHT_LIMIT_MM){//行程保护
+        // 绝对坐标以开机清零位置为原点；方向 1 表示原有升高/伸出正方向。
+        // 即使目标等于缓存也重新发令，缓存不是驱动器实际位置反馈。
+        if (high != -1) {
+            if(!isfinite(high) || high < 0 || high > ARM_HEIGHT_LIMIT_MM){//行程保护
                 Serial.println("high out of range");
                 return false;
             } else {
-                uint8_t dir = (currentArm.high - high > 0) ? 0 : 1;
-                uint32_t pulses = (uint32_t)(fabsf(currentArm.high - high) * HEIGHT_PULSE);
-                Emm_V5_Pos_Control(5, dir, speed*3, acc, pulses, 0, 0);
-                vTaskDelay(pdMS_TO_TICKS(100));
+                uint32_t pulses = (uint32_t)(high * HEIGHT_PULSE);
+                Emm_V5_Pos_Control(5, 1, speed*3, acc, pulses, true, false);
+                vTaskDelay(pdMS_TO_TICKS(10));
                 currentArm.high = high;
             }
         }
 
         if (taskMotionAborted) return false;
-        if (currentArm.length - length != 0 && length != -1) {
-            if( length < 0 || length > 170){//行程保护
+        if (length != -1) {
+            if(!isfinite(length) || length < 0 || length > 170){//行程保护
                 Serial.println("length out of range");
                 return false;
             } else {
-                uint8_t dir = (currentArm.length - length > 0) ? 0 : 1;
-                uint32_t pulses = (uint32_t)(fabsf(currentArm.length - length) * LENGTH_PULSE);
-                Emm_V5_Pos_Control(6, dir, speed, acc, pulses, 0, 0);
-                vTaskDelay(pdMS_TO_TICKS(100));
+                uint32_t pulses = (uint32_t)(length * LENGTH_PULSE);
+                Emm_V5_Pos_Control(6, 1, speed*3, acc, pulses, true, false);
+                vTaskDelay(pdMS_TO_TICKS(10));
                 currentArm.length = length;
             }
         }
         
         if (taskMotionAborted) return false;
         if(turret_angle != -1) {
-            Servo_SetAngleMTurn(2, safeTurretTarget, (300-speed)*3, 0);
+            Servo_SetAngleMTurn(2, safeTurretTarget, (300-speed)*10, 0);
             currentArm.turret_angle = safeTurretTarget;
         }
 
@@ -463,7 +464,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
                         return false;
                     }
                     if (taskMotionAborted) return false;
-                    Servo_SetAngleMTurn(1, nearestAngle, (300-speed)*3, 0);
+                    Servo_SetAngleMTurn(1, nearestAngle, (300-speed)*10, 0);
                     currentArm.pawl_angle = pawl_angle;
                 }
             }
@@ -588,7 +589,7 @@ void GotoPose(float x, float y, float theta, bool isRelative) {
             Emm_V5_Pos_Control(3, !dir, speed, 50, pulses, 0, 0);
             vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Pos_Control(4, !dir, speed, 50, pulses, 0, 0);
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
         // 平移 Y
         if (y != 0) {
@@ -601,7 +602,7 @@ void GotoPose(float x, float y, float theta, bool isRelative) {
             Emm_V5_Pos_Control(3, !dir, speed, 50, pulses, 0, 0);
             vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Pos_Control(4,  dir, speed, 50, pulses, 0, 0);
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
         // 原地旋转
         if (theta != 0) {
@@ -614,7 +615,7 @@ void GotoPose(float x, float y, float theta, bool isRelative) {
             Emm_V5_Pos_Control(3, dir, speed, 50, pulses, 0, 0);
             vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
             Emm_V5_Pos_Control(4, dir, speed, 50, pulses, 0, 0);
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
         // 命令下发完成后更新开环目标估计；不代表电机已到位。
         // 相对 X/Y 属于车体坐标，先按移动前航向转换到世界坐标。
@@ -994,22 +995,21 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
  * @brief 机械臂初始化归零位
  */
 bool InitArm_start() {
-    if (!MoveArm(160,-1,-1,0,150)) return false;
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    if (!MoveArm(-1, -1, -55, -1, 150)) return false;
+    if (!MoveArm(160,-1,-1,0,200)) return false;
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    if (!MoveArm(-1, -1, -55, -1, 200)) return false;
     vTaskDelay(pdMS_TO_TICKS(100));
-    if (!MoveArm(150,40,-1,0,150)) return false;
+    if (!MoveArm(150,40,-1,0,200)) return false;
     vTaskDelay(pdMS_TO_TICKS(500));
     return true;
 }
 
 /**
- * @brief 机械臂初始化归视觉位
+ * @brief 机械臂初始化归视觉位（暂存区/粗加工区视觉）
  */
 bool InitArm_look() {
-    vTaskDelay(pdMS_TO_TICKS(1000));
     if (!MoveArm(170,0,-1,60,200)) return false;
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    vTaskDelay(pdMS_TO_TICKS(1500));
     if (!MoveArm(-1, 0, 90, 80, 200)) return false;
     vTaskDelay(pdMS_TO_TICKS(100));
     if (!MoveArm(170,-1,-1,80,200)) return false;
@@ -1018,22 +1018,51 @@ bool InitArm_look() {
 }
 
 /**
- * @brief 机械臂初始化归视觉位
+ * @brief 机械臂初始化归视觉位（圆盘定位视觉）
  */
 bool InitArm_look2() {
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    if (!MoveArm(170,0,-1,-1,150)) return false;
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    if (!MoveArm(-1, 0, 90, 80, 150)) return false;
+    if (!MoveArm(170,0,-1,-1,200)) return false;
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    if (!MoveArm(-1, 0, 90, 80, 200)) return false;
     return true;
 }
 
 /**
- * @brief 机械臂初始化归视觉位
+ * @brief 机械臂初始化归视觉位（圆盘物料定位视觉）
  */
 bool InitArm_look3() {
-    if (!MoveArm(170,30,-1,-1,150)) return false;
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    if (!MoveArm(-1, -1, 90, 80, 150)) return false;
+    if (!MoveArm(170,30,-1,-1,200)) return false;
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    if (!MoveArm(-1, -1, 90, 80, 200)) return false;
+    return true;
+}
+
+/**
+ * @brief 机械臂初始化归视觉位（角点识别视觉）
+ */
+bool InitArm_look4() {
+    if (currentStartZone == START_ZONE_1) {
+        //车体旋转到180°（绝对角度）        
+        if (!MovePosition(0.0f, 0.0f, NodeRouteTurn(currentPose.theta, 180.0f), 80.0f)) {
+            return false;}
+        if (!MoveArm(170,120,-1,-1,200)) return false;
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        if (!MoveArm(-1, -1, 90, 80, 200)) return false;
+        if (!MoveArm(-1, -1, 45, 90, 200)) return false;  
+        vTaskDelay(pdMS_TO_TICKS(500));
+    } else if (currentStartZone == START_ZONE_2) {
+        //车体旋转到180°（绝对角度）        
+        if (!MovePosition(0.0f, 0.0f, NodeRouteTurn(currentPose.theta, 180.0f), 80.0f)) {
+            return false;}
+        if (!MoveArm(170,120,-1,-1,200)) return false;
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        if (!MoveArm(-1, -1, 90, 80, 200)) return false;
+        if (!MoveArm(-1, -1, 135, 90, 200)) return false; 
+        vTaskDelay(pdMS_TO_TICKS(500));
+    } else {
+        Serial.println("[Arm] ERR: invalid start zone for corner vision pose");
+        return false;
+    }
+
     return true;
 }

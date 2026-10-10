@@ -9,7 +9,13 @@ void Emm_V5_Init(void)
   Serial1.begin(115200, SERIAL_8N1, SERIAL1_RXD_PIN, SERIAL1_TXD_PIN);
   delay(100);
   Emm_V5_Reset_Clog_Pro(0);
+  delay(10);
+  // 广播清零所有电机，包含 5 号升降和 6 号伸缩；当前位置定义为开机原点。
+  // 这是坐标清零，不执行机械回零，也不代表已经收到驱动器确认。
   Emm_V5_Reset_CurPos_To_Zero(0);
+  Serial1.flush();
+  delay(10);
+  Serial.println("[Emm_V5] startup position zero issued (arm motors 5/6 included)");
   Serial.println("[Emm_V5] initialized! UART initialized on SERIAL1");
 }
 

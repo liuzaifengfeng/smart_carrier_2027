@@ -1,22 +1,362 @@
-# 小车运行流程
+# 小车运行流程（按当前状态机实现）
 
-本文规定小车从上电准备、任务码获取、两批物料搬运到返回启停区的动作流程。
+本文依据当前 `src/main.cpp` 的 `Task_MainStateMachine()`、`src/robot_runtime.cpp` 的视觉任务/路径接口/总超时回调，以及 `src/serial_commands.inc`、`src/chassis.cpp`、`src/material_transfer.cpp` 的实际调用行为编写。核对日期：2026-10-07。注释掉的代码不计入运行流程；参数页的 RAM 修改可能改变死区、速度和位姿，本文列出的默认值以当前源码为准。
 
-## 流程概览
+**当前两轮粗加工放料后均不再开启带物料定位：停车 → 等待 1000 ms → 按原任务位置直接取回三件。** 粗加工放料后的 `InitArm_look()`、`WORK_AREA_LOADED` 启停及对齐等待保留在源码注释中。粗加工放料前、暂存区第一层放料前使用 `WORK_AREA`；暂存区第二层码垛前已有第一层物料，使用 `WORK_AREA_LOADED`。
 
-上位机日志统一使用 `[HH:MM:SS.mmm] [RX/TX/INFO/...] 内容`，时间为电脑本地时间，精度显示到毫秒，不显示年月日。RX 使用串口线程读取该行时记录的时间，其他日志使用写入日志时的时间；复制日志会保留时间戳。时间戳仅用于上位机显示，不加入串口协议，也不代表 ESP32 执行动作的精确时间。
+动作函数返回成功表示软件动作序列及物料记录更新完成；`ROUTE_DONE,ESTIMATED` 表示路径指令和估算等待完成。它们不等于传感器确认实际夹持、放置、车辆到位或物理归位。
 
-上电与启停区选择 → 扫描与任务码获取 → 第一批物料搬运 → 第二批物料搬运 → 返回初始启停区与复位。
+## 1. 全局流程与状态分工
 
-每批物料均按“圆盘区取料 → 粗加工区放料并重新取料 → 暂存区放料”的顺序搬运。两轮搬运及正常返家已接入；机械臂函数成功仅表示预设动作执行及载物台记录更新完成，导航完成仅表示指令及估算等待完成，实际抓放、到位和视觉精度仍需实车确认。
+```mermaid
+flowchart TD
+    D[上电 Debug] -->|SYS RELEASE| W[STATE_WAIT_START\n复位、选区、雷达姿态、等待 START]
+    W -->|SYS START| R[STATE_READ_TASK\n获取并显示任务码]
+    R --> G1[STATE_GRAB_ROUND1\n2→14、DISC 对齐、顺序抓三件]
+    G1 --> C1[STATE_PLACE_COARSE1\n14→10、WORK_AREA 对齐、放第一层]
+    C1 --> T1[STATE_PLACE_TEMP1\n等待1秒、取回、10→22、对齐、放第一层]
+    T1 --> G2[STATE_GRAB_ROUND2\n22→14、DISC 对齐、顺序抓三件]
+    G2 --> C2[STATE_PLACE_COARSE2\n14→10、WORK_AREA 对齐、放第一层]
+    C2 --> T2[STATE_STACK_TEMP2\n等待1秒、取回、10→22、对齐、码第二层]
+    T2 --> H[STATE_RETURN_HOME\n收臂、返家路径、CORNER 对齐、复位]
+    H --> E[STATE_DONE\n停止计时、关闭电机使能]
+    R -.扫码失败.-> F[对应故障状态\n保持，等待人工处理]
+    G1 -.路径/定位/动作失败.-> F
+    C1 -.路径/定位/动作失败.-> F
+    T1 -.路径/定位/动作失败.-> F
+    G2 -.路径/定位/动作失败.-> F
+    C2 -.路径/定位/动作失败.-> F
+    T2 -.路径/定位/动作失败.-> F
+    H -.路径/定位/动作失败.-> F
+```
 
-调试时可在上位机“机械臂 → 机械臂初始化”调用 `InitArm_start()`（起始姿态）、`InitArm_look()`（观察姿态）或 `InitArm_look2()`（观察姿态2，170 mm 高位），分别发送 `{CMD,ARM,INIT_START}` / `{CMD,ARM,INIT_LOOK}` / `{CMD,ARM,INIT_LOOK2}`，仅 Debug 模式可用。日志中的 `ACK` 表示接令，`ISSUED` 表示指令下发，`FAILED` 表示流程中断；实际到位需另行确认。这三个按钮不改变下述自动运行步骤。
+`STATE_PLACE_TEMP1` 和 `STATE_STACK_TEMP2` 的前半段仍在粗加工区：先取回物料，成功后才导航到暂存区。不能仅按状态名称判断车辆所在区域。
+
+正常主循环每轮结束等待约 50 ms；等待视觉达标时仅退出本轮 switch，后续循环继续检查。导航、机械臂动作及明确的延时会阻塞调用任务。阶段标志在主状态机创建时初始化一次，成功后置位，避免每轮循环重复导航、取回或恢复观察姿态。
+
+### 1.1 节点与朝向
+
+| 用途 | 路径 | 终点车头朝向 | 开启的定位视觉 |
+| --- | --- | --- | --- |
+| 首轮圆盘 | 2 → 14 | 90° | DISC |
+| 两轮粗加工 | 14 → 10 | 270° | WORK_AREA |
+| 暂存第一层 | 10 → 22 | 180° | WORK_AREA |
+| 暂存第二层 | 10 → 22 | 180° | WORK_AREA_LOADED |
+| 第二轮圆盘 | 22 → 14 | 90° | DISC |
+| 区1返家 | 22 → 4 | 180° | CORNER |
+| 区2返家 | 22 → 0 | 180° | CORNER |
+
+上述是请求的起终点；中间节点由外部路径规划端回传。首轮导航仍按扫码区节点2作为起点；扫码时的提前停车或手动任务码不会自动重新确定地图节点。
+
+### 1.2 任务码与物料对应
+
+格式为 `第一轮颜色+第一轮位置+第二轮颜色+第二轮位置`，共15字符。颜色每位允许1～6；每组位置必须是1、2、3的排列。颜色组的校验不要求三个颜色互不相同。
+
+以日志中的 `412+312+124+231` 为例：
+
+| 轮次 | 抓取顺序 / 载物台 | 粗加工放料位置 | 粗加工取回 | 暂存放料 |
+| --- | --- | --- | --- | --- |
+| 第一轮 | 颜色4→台1；颜色1→台2；颜色2→台3 | 台1→工位3；台2→工位1；台3→工位2 | 工位3→台1；工位1→台2；工位2→台3 | 同位置码312，第一层 |
+| 第二轮 | 颜色1→台1；颜色2→台2；颜色4→台3 | 台1→工位2；台2→工位3；台3→工位1 | 工位2→台1；工位3→台2；工位1→台3 | 同位置码231，第二层 |
+
+取回颜色直接沿用任务码，当前位置直接沿用该轮位置码；当前粗加工取回不重新进行视觉颜色/位置确认。粗加工与暂存使用同一套 `materialTransferLayout.workArea` 位姿。
+
+## 2. 上电、Release 与启停区准备
+
+### 2.1 setup：默认进入 Debug
+
+1. 初始化 GPIO5 PWM、115200串口、舵机、电机、扫码模块和WS2812。GPIO5默认关闭，PWM默认2000 Hz。
+2. 电机初始化时广播当前位置清零，包含5号升降和6号伸缩；清除堵转和清零命令之间留10 ms，清零后等待UART发送完成及10 ms间隔。将底盘理想位姿和机械臂维护值初始化；升降/伸缩从开机位置建立0 mm绝对目标坐标，延时100 ms后读取2号转台及1号夹爪舵机角度。
+3. 初始化当前启用的OTA服务，创建视觉命令队列、雷达姿态互斥锁、单帧对齐反馈队列和运动互斥锁。
+4. 对齐队列/锁创建成功才创建 `Task_VisualAlignment`；失败会打印 `[Align] ERR: failed to create alignment queue or mutex`。
+5. 延时3000 ms，打印 `Debug mode`，状态灯变黄，默认开启手动连续视觉闭环，再创建串口控制任务。
+
+自动主状态机在收到 RELEASE 或 Debug空闲时按下BOOT0后创建。BOOT0为GPIO0低电平按键，40 ms消抖，稳定松开后才允许再次触发；上电按住不触发。串口动作执行或半帧接收期间按下不排队，Release中按下不重复切换。按键复用串口RELEASE入口，成功同样回复 `{RSP,SYS,RELEASE,OK}`，仍等待选区及SYS START。上电时并未由 setup 自动调用机械臂复位；自动复位发生在下面的 WAIT_START 阶段。
+
+升降/伸缩的所有 `MoveArm` 调用改为 EMM V5 绝对位置控制：直接发送目标毫米数换算出的脉冲，不再按 `currentArm` 的差值移动；重复目标和0目标也发令，`-1`仍跳过该轴。开机清零把当时位置定义为零，不执行机械寻零；应在已知起始姿态开机。目前不校验清零应答，也不读取两轴位置确认到位，维护值仍为下发目标。
+
+### 2.2 SYS RELEASE：建立自动任务
+
+发送 `{CMD,SYS,RELEASE}`：
+
+1. 若物料识别处于活动状态，先请求停止；关闭视觉底盘闭环并停车。
+2. 创建一次性总任务定时器，周期 `3000000 ms = 3000 s = 50 min`。此时只创建，尚未开始计时。
+3. 设置 `STATE_WAIT_START`，清除动作中止标志，关闭抓取准备状态，令 `enableRun=false`。
+4. 创建主状态机任务。定时器/任务创建失败回复 `ERR,TIMER` / `ERR,TASK`，不进入正常Release流程。
+5. 成功切换Release，状态灯变绿，打印 `Release mode` 并回复 `{RSP,SYS,RELEASE,OK}`。Release中再次发送RELEASE会被拒绝为MODE。
+
+### 2.3 STATE_WAIT_START：选区、雷达姿态与启动
+
+主任务先延时约1秒，再按顺序执行：
+
+1. 打印 `TASK start`，调用 `InitArm_start()`，显示 `WAIT start_zone`。
+2. 每100 ms检查启停区，直到收到有效 `{CMD,NAV,START_ZONE,1}` 或 `...,2`。
+3. 保存 `homeStartZone=currentStartZone`，供正常返家使用；运行中修改START_ZONE不会改变已经保存的返家区。
+4. 设置开局理想位姿：区1为 `(2250,150,180°)`，区2为 `(150,150,180°)`，并显示 `start_zone: 1/2`。两个区车头均朝左；区2向右扫码时后退，航向不变。Debug选区和上位机初始显示采用同样的朝向。
+5. 调用 `runLidarPoseAction()`，自动执行一次对应区域的雷达扫描姿态。
+6. 显示 `WAIT START`，每100 ms检查 `enableRun`。机载电脑完成外部扫描后发送 `{CMD,SYS,START}`，主控回复 `{RSP,SYS,START,OK}` 并设置启动标志。
+7. 主循环观察到启动标志后启动总任务定时器，转入 `STATE_READ_TASK`。
+
+`SYS READY`只记录 `nano_ready=true` 并回复OK；当前WAIT_START分支没有把READY作为启动门槛，也不直接消费雷达扫描结果。START表示外部允许继续，不代表主控验证了雷达结果。代码按启动标志检查，不保证START一定在WAIT START提示之后才发送。
+
+雷达姿态的区域差异如下，数值按现有 `GotoPose` / `MoveArm` 参数记载：
+
+| 区域 | 执行顺序 |
+| --- | --- |
+| 区1 | `GotoPose(125,0,0,true)` → `MoveArm(150,100,-1,-1,200)` → 等2秒 → `GotoPose(0,100,0,true)` → 转台45°、伸出100 → 等1秒 → 升降降到0、伸出100 |
+| 区2 | `GotoPose(125,0,0,true)` → `MoveArm(150,100,-1,-1,200)` → 等2秒 → `GotoPose(0,-100,0,true)` → 升降0、伸出100、转台135° |
+
+`runLidarPoseAction()`用互斥锁防止自动流程和手动按钮并发执行。自动入口遇忙报告 `LIDAR_POSE_FAILED,BUSY`；手动入口遇忙回复ERR,BUSY。已有动作结束后仍可能报告 `LIDAR_POSE_DONE`。
+
+**现有实现边界：** WAIT_START和READ_TASK调用的 `InitArm_start()` 未检查返回值；WAIT_START也不根据 `runLidarPoseAction()` 返回值进入故障。`PrepareLidarScanPose()` 内部未逐项检查 `GotoPose/MoveArm` 返回结果。应按当前代码理解这些阶段，不能把DONE或流程继续解释为全部物理动作已验证成功。
+
+## 3. STATE_READ_TASK：扫码与任务码获取
+
+1. 显示 `READ TASK`，再次调用 `InitArm_start()`。
+2. 若已通过 `TASK SET`提交有效任务码，直接跳过全部扫码接近和扫描移动。
+3. 未收到任务码时，固定本次扫码区号并检查有效性。启停区1向左接近，调用 `MovePosition(0,+900,0,60)`；启停区2向右接近，调用 `MovePosition(0,-900,0,60)`。这里的正负值为位置接口的车身Y位移。这次接近移动没有传入扫码提前停止回调。
+4. 接近成功后开始400 mm扫描区往返，扫描速度为30 RPM。启停区1首次扫描使用+Y，启停区2首次扫描使用-Y，后续交替反向。每段前先检查任务码；调用扫描位置移动时传入 `pollTaskCode`，动作等待期间会轮询扫码/手动码，收到有效码可提前停止当前扫描段。
+
+| 扫描次数 | 日志编号 | 位移（车身Y） | 完整走完时相对接近前起点的位置 |
+| --- | --- | --- | --- |
+| 初次扫描 | scan 0/3 | +400 mm | 1300 mm |
+| 重试1 | scan 1/3 | -400 mm | 900 mm |
+| 重试2 | scan 2/3 | +400 mm | 1300 mm |
+| 重试3 | scan 3/3 | -400 mm | 900 mm |
+
+表中位移和累计距离均沿各区接近扫码点的方向计正；启停区2传给位置接口的Y位移与表中符号相反。
+
+5. `pollTaskCode`读取扫码器字符串，打印 `[SCANNER] recv: ...` 并校验15字符格式。有效码提交 `currentTask` 并设置 `taskReceived=true`；已提交的手动码不会被迟到扫码结果覆盖。
+6. 四次扫描耗尽、位置移动失败或区号无效，且仍无任务码时：显示 `TASK ERR`，停止总定时器，进入 `STATE_SCAN_FAILED`。
+7. 成功时重新组装任务码，发送 `{EVT,DISPLAY,TASK_CODE,任务码}`，显示 `TASK OK`，清空旧视觉命令队列，进入 `STATE_GRAB_ROUND1`。
+
+手动替代扫码使用 `{CMD,TASK,SET,412+312+124+231}`。Debug允许设置；Release仅WAIT_START或READ_TASK尚未收到码时允许设置，其他阶段回复BUSY。设置任务码重置进度，不清空载物台占用，也不改变车辆位置；尤其预置码跳过扫码移动后，仍需现场保证首轮路径起点符合节点2的假定。
+
+## 4. 第一轮：圆盘抓取 → 粗加工 → 暂存第一层
+
+### 4.1 STATE_GRAB_ROUND1：导航与圆盘定位
+
+1. 显示 `GRAB R1`。首次请求路径 `2→14`；路径成功后置 `discRouteCompleted=true`，清零 `roundProgress`，关闭抓取准备标志。
+2. 调用 **`InitArm_look3()`**，成功后请求 `START_REQUEST,DISC`。look3失败显示 `DISC ARM ERR`，停止总定时器，进入搬运故障。
+3. `requestVisionStart(DISC)`先清空旧反馈并开启自动连续闭环，再发送视觉启动事件。机载电脑持续回传 `{CMD,VISION,ALIGN_DATA,angle,x,y}`。
+4. 对齐处于WAITING时留在本状态轮询。对齐结束时先保存结果，再关闭底盘PID并请求 `STOP_REQUEST,DISC`。
+5. 只有DONE允许继续；FAILED或IDLE显示 `DISC ALIGN ERR`，停止计时并进入 `STATE_ALIGN_FAILED`。
+6. DONE后清空视觉命令队列，依次等待100 ms和1000 ms。源码中的 `GotoPose(-45,0,0,true)` 已注释，这里不执行该位移。
+7. 调用 `InitArm_look2()`，成功后设置 `firstDiscGrabReady=true`，请求 `START_REQUEST,DISC_MATERIAL`，置 `discMaterialRequested=true`，显示 `WAIT DISC MATERIAL`。
+
+### 4.2 STATE_GRAB_ROUND1：三件颜色驱动抓取
+
+1. 机载电脑发送 `{CMD,VISION,COLOR,color}`。主控按 `round1_colors[roundProgress]` 判定，目标载物台为 `roundProgress+1`。
+2. 颜色不匹配时回复接收OK，报告 `COLOR,SKIP,color,cargo,COLOR_MISMATCH`，继续等待，不改变进度。
+3. 匹配且状态允许、底盘对齐已停、载物台为空时，报告 `COLOR,GRAB,color,cargo`，串口任务执行 `GrabDiscMaterial(color,cargo)`。匹配但条件不允许时报告BLOCKED及原因。
+4. 抓取开始前令 `firstDiscGrabReady=false`，清除恢复请求。相机继续识别，主控屏蔽颜色触发；此阶段COLOR仅回复OK并丢弃，不缓存下一件颜色。
+5. `GrabDiscMaterial`完成圆盘抓取、抬升、放入指定载物台；成功后登记载物台颜色，报告 `GRAB,DONE`并推进进度。失败报告 `GRAB,FAILED`，保持进度，结束物料视觉，显示 `DISC GRAB ERR`并进入搬运故障，不自动重试。
+6. 第1、2件成功后，主状态机打印 `[DISC] Restoring observation after grab N`，各执行一次 `InitArm_look2()`。成功后更新 `discPreparedProgress`，请求串口任务清理固定旧缓存及跨边界旧半帧。
+7. 串口任务到达旧数据后的完整帧边界，再恢复抓取准备并打印 `[DISC] Color handling resumed: expected=..., cargo=...`。持续新帧不会让等待无限延长；恢复过程不反复启停相机。
+8. 第3件成功时，串口任务先请求 `STOP_REQUEST,DISC_MATERIAL`，再发布 `roundProgress=3`。主状态机关闭准备标志、清零进度，进入 `STATE_PLACE_COARSE1`；不再执行第三次恢复观察。
+
+抓取在串口任务内阻塞执行，长动作期间可能积压输入，返回后日志会集中出现COLOR应答。COLOR,OK表示接收；确认本次抓取结果应看GRAB,DONE/FAILED，而非OK数量。
+
+### 4.3 STATE_PLACE_COARSE1：粗加工定位与放料
+
+1. 显示 `GO COARSE1`，再次请求结束DISC_MATERIAL并清空旧视觉命令队列；重复停止事件可以出现。
+2. 首次请求 `14→10`，终点朝向270°。成功置 `coarse1RouteCompleted=true`并清零进度。
+3. 关闭对齐并停车，调用 `InitArm_look()`。该函数成功后还执行源码中的 `vTaskDelay(1000)`，其参数是1000个RTOS tick；确认状态未改变、动作未中止后，启动WORK_AREA，置 `coarse1VisionRequested=true`。
+4. 等待WORK_AREA达到DONE；结束时先关闭PID并请求STOP_REQUEST,WORK_AREA，再判断保存的结果。FAILED/IDLE显示 `COARSE ALIGN ERR`并进入对齐故障。
+5. 显示 `PLACE C1`，执行 `PlaceTaskCargoToWorkArea(currentTask.round1_pos,1)`：依载物台1、2、3顺序放到对应工位第一层。每件成功后清空该载物台记录。
+6. 整组失败显示 `PLACE C1 ERR`并进入搬运故障；整组成功清零进度，确认任务未中止，进入 `STATE_PLACE_TEMP1`。放料后的观察姿态和WORK_AREA_LOADED请求已注释。
+
+### 4.4 STATE_PLACE_TEMP1：等待、直接取回、暂存放料
+
+本状态按三个子阶段执行，已成功的阶段不重复。
+
+**A. 粗加工取回：**
+
+1. `temp1CargoRetrieved=false`时关闭PID并停车，检查动作中止标志，显示 `WAIT RETRIEVE C1`。
+2. 执行 `vTaskDelay(pdMS_TO_TICKS(1000))`，明确等待1秒；等待后再次检查仍处于STATE_PLACE_TEMP1且未中止。
+3. 显示 `RETRIEVE C1`，直接调用 `RetrieveRoundToCargo(round1_colors,round1_pos)`：从位置码指定的工位逐件取回，按原任务顺序放回载物台1～3并登记颜色。
+4. 不等待WORK_AREA_LOADED的ALIGN_DONE，不发送本阶段的带物料视觉启停事件。
+5. 取回失败显示 `RETRIEVE C1 ERR`，停止总定时器并进入搬运故障；全部成功置 `temp1CargoRetrieved=true`、清零进度，再进入下一次主循环。
+
+**B. 前往暂存区：**
+
+1. 显示 `GO TEMP1`，请求 `10→22`，终点朝向180°。
+2. 路径成功置 `temp1RouteCompleted=true`；关闭PID、执行 `InitArm_look()`，成功且未中止后请求WORK_AREA并置 `temp1VisionRequested=true`。
+3. 路径失败进入路径故障；观察姿态失败显示 `WORK AREA ARM ERR`并进入搬运故障。
+
+**C. 暂存第一层放料：**
+
+1. 显示 `ALIGN TEMP1`并等待对齐DONE。停止PID和WORK_AREA后，非DONE显示 `TEMP ALIGN ERR`并进入对齐故障。
+2. 显示 `PLACE T1`，调用 `PlaceTaskCargoToWorkArea(round1_pos,1)`，按第一轮位置码放到暂存第一层。
+3. 失败显示 `PLACE T1 ERR`并进入搬运故障；全部成功清零进度，进入 `STATE_GRAB_ROUND2`。
+
+## 5. 第二轮：圆盘抓取 → 粗加工 → 暂存第二层
+
+### 5.1 STATE_GRAB_ROUND2
+
+整体颜色处理、逐件放回载物台、屏蔽旧帧、成功推进进度和失败保持规则与第一轮相同，具体差异如下：
+
+| 项目 | 第二轮实际行为 |
+| --- | --- |
+| 路径 | `22→14`，终点90°，由 `disc2RouteCompleted`保证只执行一次 |
+| 圆盘定位前姿态 | **`InitArm_look2()`**，与首轮look3不同 |
+| 定位 | 启动DISC，等待DONE，停车并结束DISC；失败进入对齐故障 |
+| 识别前准备 | 等100 ms、再等1000 ms；执行look2；开启DISC_MATERIAL |
+| 颜色数组 | `currentTask.round2_colors` |
+| 抓取顺序 | 第i件颜色→载物台i+1，成功才推进进度 |
+| 观察恢复 | 第1、2件成功后各执行look2，用 `disc2PreparedProgress`防止重复 |
+| 识别/恢复标志 | `disc2MaterialRequested`及与首轮共用的抓取准备/清旧帧标志 |
+| 三件完成 | 先结束DISC_MATERIAL，再由主状态机清零进度，转 `STATE_PLACE_COARSE2` |
+| 主要提示 | `GRAB R2`、`WAIT DISC MATERIAL`、`DISC ALIGN ERR`、`DISC ARM ERR` |
+
+### 5.2 STATE_PLACE_COARSE2
+
+1. 显示 `GO COARSE2`，关闭DISC_MATERIAL并清空旧视觉命令队列。
+2. 请求 `14→10`，终点270°；成功置 `coarse2RouteCompleted=true`。
+3. 停车，执行 `InitArm_look()`；成功且未中止后直接开启WORK_AREA，置 `coarse2VisionRequested=true`。**第二轮此处没有首轮look之后的额外 `vTaskDelay(1000)`。**
+4. 等待DONE，关闭PID并结束WORK_AREA。非DONE显示 `COARSE ALIGN ERR`并进入对齐故障。
+5. 显示 `PLACE C2`，执行 `PlaceTaskCargoToWorkArea(round2_pos,1)`，粗加工仍放第一层。
+6. 失败显示 `PLACE C2 ERR`并进入搬运故障；成功清零进度并检查中止，转 `STATE_STACK_TEMP2`。本轮放料后的look和WORK_AREA_LOADED同样已注释。
+
+### 5.3 STATE_STACK_TEMP2
+
+1. 首次先在粗加工区取回：停车，显示 `WAIT RETRIEVE C2`，等待1000 ms，再检查状态与中止标志。
+2. 显示 `RETRIEVE C2`，直接执行 `RetrieveRoundToCargo(round2_colors,round2_pos)`。失败显示 `RETRIEVE C2 ERR`并进入搬运故障；成功置 `temp2CargoRetrieved=true`、清零进度。本阶段没有带物料定位。
+3. 下一阶段显示 `GO TEMP2`，请求 `10→22`，终点180°。成功置 `temp2RouteCompleted=true`，停车并执行look，成功且未中止后开启WORK_AREA_LOADED，识别已放有第一层物料的工位。
+4. 显示 `ALIGN TEMP2`并等待DONE；停车并结束WORK_AREA_LOADED后，非DONE显示 `TEMP ALIGN ERR`并进入对齐故障。
+5. 显示 `STACK T2`，执行 `PlaceTaskCargoToWorkArea(round2_pos,2)`，按第二轮位置码放在暂存第二层。
+6. 每个目标松手高度为对应工位基础高度加 `secondLayerOffset`。整组放料前检查载物台非空、位置码、位姿和三处目标高度，目标高度不能超过 `ARM_HEIGHT_LIMIT_MM=175 mm`。
+7. 失败显示 `STACK T2 ERR`并进入搬运故障；全部成功清零进度，转 `STATE_RETURN_HOME`。
+
+第一轮和第二轮暂存位置由各自位置码决定；第二轮不会改用第一轮位置码。部分搬运失败时已经成功更新的载物台记录保留，不自动重复整组动作。
+
+## 6. 正常返家与完成
+
+### 6.1 STATE_RETURN_HOME
+
+1. 首次显示 `GO HOME`，校验开局保存的homeStartZone。区号无效显示 `HOME ZONE ERR`并进入路径故障。
+2. 关闭抓取准备，请求结束DISC_MATERIAL，关闭视觉底盘PID并停车。
+3. 执行 `InitArm_start()` 收臂；失败显示 `HOME ARM ERR`并进入搬运故障。
+4. 按保存的区域请求返家路径：区1为 `22→4,180°`；区2为 `22→0,180°`，均恢复开局车头朝左的朝向。路径失败显示 `HOME ROUTE ERR`并进入路径故障。
+5. 成功置 `homeRouteCompleted=true`，启动CORNER，置 `homeVisionRequested=true`。当前代码在启动CORNER前不额外调用look。
+6. 显示 `ALIGN HOME`，机载电脑回传角点angle/x/y误差，等待DONE。结束时关闭PID并停止CORNER；FAILED/IDLE显示 `HOME ALIGN ERR`并进入对齐故障。
+7. CORNER达标后再次执行 `InitArm_start()`，失败显示 `RESET ARM ERR`并进入搬运故障。
+8. 复位成功且状态未变时，清零进度，停止总定时器，进入 `STATE_DONE`。
+
+### 6.2 STATE_DONE
+
+显示 `DONE`，再次停止总定时器，调用 `Emm_V5_En_Control_all(false)`关闭电机使能，执行很长的保持延时。DONE并不自动清空全部阶段标志或开始下一局，当前自动流程按一次任务编排。
+
+源码没有在此发送完整统计报告或独立的任务完成统计帧；可观察的完成提示是 `{EVT,DISPLAY,DEBUG,DONE}`。
+
+## 7. 跨阶段接口与等待条件
+
+### 7.1 路径请求和执行
+
+1. 状态机调用 `requestAndMoveNodePath(start,end,finalHeading)`，内部设置WAITING并发送 `{EVT,NAV,ROUTE_WAITING}`、`{EVT,NAV,ROUTE_REQUEST,start,end}`。
+2. 外部端回传 `{CMD,NAV,ROUTE,n1,n2,...,nN}`。Release仅在等待路径时接收；回复 `{RSP,NAV,ROUTE,ACK,N}` 后才发布可执行状态。ACK表示路径接收，不表示移动完成。
+3. 固件检查首尾节点与请求一致，否则发送 `ROUTE_FAILED,ENDPOINT`。有效路径再经过执行层检查、合并同向共线段、原地转向、前进/后退及估算等待。
+4. 到达终点朝向并结束估算等待后发送 `{EVT,NAV,ROUTE_DONE,ESTIMATED}`，函数成功返回，才启动下一步观察姿态/视觉。
+
+等待外部路径的循环每20 ms检查一次，没有单独的路径接收超时；启动后的3000秒总任务定时器仍有效。不能将“未回传路径时保持等待”误认为已有路径执行失败。
+
+### 7.2 当前视觉启停顺序
+
+| 阶段 | 启动前动作 | 视觉启动 | 继续条件 / 结束时机 |
+| --- | --- | --- | --- |
+| 首轮圆盘定位 | 路径完成、look3成功 | DISC | DONE后停车并停止DISC，随后准备物料识别 |
+| 第二轮圆盘定位 | 路径完成、look2成功 | DISC | 同上 |
+| 两轮圆盘抓取 | DISC已结束、look2成功 | DISC_MATERIAL | 第三件成功前持续识别；抓取失败或恢复look失败也停止 |
+| 两轮粗加工放料前 | 路径完成、look成功 | WORK_AREA | DONE后**先停止视觉/PID，再放料** |
+| 两轮粗加工放料后 | 停车等待1秒 | 不启动WORK_AREA_LOADED | 直接取回成功后才允许导航 |
+| 暂存第一层放料前 | 路径完成、look成功 | WORK_AREA | DONE后**先停止视觉/PID，再放第一层** |
+| 暂存第二层码垛前 | 路径完成、look成功 | WORK_AREA_LOADED | DONE后**先停止视觉/PID，再码第二层** |
+| 正常返家 | 收臂、返家路径完成 | CORNER | DONE后先停车并停止CORNER，再复位 |
+
+`START_REQUEST`和`STOP_REQUEST`是主控发给机载电脑的请求事件，不带区域号，也不等待相机启停ACK。机载电脑需结合流程阶段区分WORK_AREA来自粗加工还是暂存；相机停止可能略晚于事件，尾帧可能报告 `ALIGN_IGNORED,DISABLED`。
+
+### 7.3 对齐达标、超时与连续闭环
+
+定位模式启动时清旧帧，开始自动WAITING及15秒计时。机载电脑只需发送ALIGN_DATA，无需另发ALIGN_START。当前源码默认死区如下，X/Y是视觉单位，角度为度：
+
+| 模式 | X死区 | Y死区 | 角度死区 | 自动流程用途 |
+| --- | --- | --- | --- | --- |
+| DISC | 8 | 8 | 0.5° | 两轮圆盘定位 |
+| DISC_MATERIAL | 3 | 3 | 0.2° | 仅保留参数；物料识别请求不驱动底盘对齐 |
+| WORK_AREA | 3 | 3 | 0.2° | 两轮粗加工、暂存第一层放料前定位 |
+| WORK_AREA_LOADED | 3 | 3 | 0.2° | 暂存第二层码垛前带物料定位；手动接口保留 |
+| CORNER | 6 | 6 | 0.4° | 正常返家角点定位 |
+
+- 连续5个新有效反馈帧的三项偏差绝对值均不大于各自死区才达标，发ALIGN_DONE并将自动状态锁存为DONE。前1～4帧达标时已停车，但还不能开始业务动作。
+- 越界、无效反馈、模式切换、启停会清连续计数；队列覆盖导致序号不连续，或处理帧间隔达到300 ms时也清计数。没有新帧不会增加计数。
+- ALIGN_DONE后连续闭环仍保持开启；业务状态机读取DONE后主动停止，才进行抓放。
+- 从启用自动对齐起15秒内未首次达标（包括没有首帧）则停车、关闭闭环，发 `{EVT,VISION,ALIGN_FAILED,TIMEOUT}`，主流程进入对齐故障。
+- **当前300 ms断流停车/失败分支已注释。** 等待新反馈期间可能保持上次轮速；300 ms队列等待及恢复反馈后的计数重置仍保留，不能把它写成现行自动停车保护。
+- 自动等待期间，同模式或无模式ALIGN_START回复OK且不重置模式、反馈、计数和15秒起点；不同模式或尚未处理的FAILED回复BUSY。ALIGN_STOP会取消等待，主流程将非DONE结果按失败处理。
+
+### 7.4 物料记录和动作成功条件
+
+`roundProgress`用于圆盘逐件顺序推进；其他阶段有独立的单次完成标志。粗加工取回不靠外部进度指令跳转。
+
+| 操作 | 预检查 | 成功后的软件记录 |
+| --- | --- | --- |
+| 普通圆盘抓取 | 颜色/载物台编号、占用、放置位姿等 | 对应载物台登记本次颜色；自动进度增加1 |
+| 三件放料/码垛 | 位置码、层数、位姿、三台均非空、目标高度等 | 每件放完后清空该载物台；全部成功才进入下一阶段 |
+| 三件取回 | 颜色/位置码、位姿、三台均为空等 | 从各任务工位取回并登记到载物台1～3；全部成功才允许导航 |
+
+取回沿用已有 `MoveWorkAreaToCargo`，抓放沿用 `pickAt/placeAt`。失败可能发生在部分动作已执行之后；代码保留已完成更新的记录，不自动整组重试，也没有物料传感器对每次抓放结果进行独立确认。
+
+## 8. 故障与总任务超时
+
+| 状态 | 典型触发 | 常见显示提示 | 后续行为 |
+| --- | --- | --- | --- |
+| STATE_SCAN_FAILED | 无有效任务码，接近/扫描失败或重试耗尽 | TASK ERR | 停止总计时器，保持故障 |
+| STATE_ROUTE_FAILED | 路径端点/执行失败，返家区号无效 | ROUTE ERR、HOME ROUTE ERR、HOME ZONE ERR | 不启动下一阶段视觉或搬运，保持故障 |
+| STATE_ALIGN_FAILED | 15秒未达标或等待被停止成为非DONE | DISC/COARSE/TEMP/HOME ALIGN ERR | 对应定位PID及视觉已停止，保持故障 |
+| STATE_TRANSFER_FAILED | 观察/复位姿态、抓取、放料、取回失败 | DISC/WORK AREA ARM ERR、PLACE/RETRIEVE/STACK ERR、HOME/RESET ARM ERR | 停止计时，不继续导航/整组重试 |
+| STATE_TIMEOUT_FAILED | 启动后的总任务3000秒耗尽 | TASK TIMEOUT | 全视觉结束、六电机急停、暂停主任务、等待人工处理 |
+
+普通故障分支每100 ms保持等待，不会自动跳到下一状态；多数检测分支停止总任务计时器。故障状态本身只是保持循环，不能理解为统一执行了与总超时完全相同的六电机急停清理。
+
+总超时回调名为 `vHomeTimerCallback`，但当前行为是**停机，不自动返家**：设置 `taskMotionAborted=true`，锁存超时故障，关闭抓取准备，停止五种视觉请求及底盘PID，将路径状态置FAILED，暂停主状态机，停止电机1～6，保留夹爪位置不主动松手。回调再锁存超时状态以防主任务退出动作时覆盖，发送 `ROUTE_FAILED,TIMEOUT`和人工处理提示。后续MoveArm发令受中止标志约束。
+
+超时或部分搬运失败时位置和持料状态可能不确定；当前代码没有自动从故障续跑/重新建局的状态机流程，应现场处理后重新初始化任务。正常DONE会停止总定时器。
+
+## 9. 日志核对顺序
+
+按以下顺序确认阶段衔接；DISPLAY相同内容会去重，不会每次轮询都输出。
+
+| 阶段 | 预期主要日志顺序 |
+| --- | --- |
+| 开局 | Release mode → TASK start → WAIT start_zone → start_zone → 雷达姿态结果 → WAIT START → READ TASK |
+| 扫码 | SCANNER recv/task code OK → DISPLAY TASK_CODE → TASK OK |
+| 圆盘 | GRAB R1/R2 → ROUTE_REQUEST → ROUTE_DONE,ESTIMATED → START_REQUEST,DISC → ALIGN_DONE → STOP_REQUEST,DISC → START_REQUEST,DISC_MATERIAL |
+| 每件抓取 | COLOR,GRAB → Material placed → GRAB,DONE；前两件随后Restoring observation → Color handling resumed |
+| 粗加工 | GO COARSE1/2 → 路径完成 → START_REQUEST,WORK_AREA → ALIGN_DONE → STOP_REQUEST,WORK_AREA → PLACE C1/C2 |
+| 粗加工直接取回 | WAIT RETRIEVE C1/C2 → 至少等待1秒 → RETRIEVE C1/C2 → GO TEMP1/2；正常此段无ALIGN LOADED或LOADED ALIGN ERR |
+| 暂存第一层 | 路径完成 → START_REQUEST,WORK_AREA → ALIGN TEMP1 → ALIGN_DONE → STOP_REQUEST,WORK_AREA → PLACE T1 |
+| 暂存第二层 | 路径完成 → START_REQUEST,WORK_AREA_LOADED → ALIGN TEMP2 → ALIGN_DONE → STOP_REQUEST,WORK_AREA_LOADED → STACK T2 |
+| 返家 | GO HOME → 路径完成 → START_REQUEST,CORNER → ALIGN HOME → ALIGN_DONE → STOP_REQUEST,CORNER → 复位 → DONE |
+
+日志时间为上位机本地时间，RX取串口线程读取该行时刻；集中输出可能晚于动作实际发生时间。`[Align PID]`约每500 ms打印一次非达标反馈，便于区分持续偏差与没有反馈；ALIGN_START,OK只表示开启命令被接受。`COLOR,ERR,NOT_ACTIVE`可能是停止物料识别后的尾帧；`FRAME,ERR,FORMAT`说明输入帧结构错误，需结合机载电脑TX记录确认，不能直接当成某个物料动作失败。
+
+## 10. 手动调试与辅助接口
+
+自动工作流以以上状态机为准；手动接口详情见 `serial_protocol.md`。
+
+- 机械臂INIT_START/INIT_LOOK/INIT_LOOK2仅Debug可用，分别调用起始、普通观察和观察2姿态，不直接推进自动状态。当前首轮圆盘还在固件内部使用look3。
+- 手动START_REQUEST可选择DISC、DISC_MATERIAL、WORK_AREA、WORK_AREA_LOADED、CORNER。四种定位请求同步启动自动底盘对齐；DISC_MATERIAL只请求识别。WORK_AREA/WORK_AREA_LOADED串口入口先执行look，成功后才发视觉启动事件，ACK不代表姿态完成。
+- 手动ALIGN_START只控制底盘PID，不自动启动相机；停止对齐后参数页可修改各模式死区等RAM参数，重启恢复源码默认值。
+- FORCE_GRAB先停止对齐，绕过任务顺序/视觉状态，遇载物台占用警告后继续；动作边界和位姿校验保留。它不推进自动任务进度，普通抓取仍拒绝占用。
+- POSE GET回读底盘及升降/伸缩维护的理想值，并读取两个舵机角度；它不是底盘或升降的实测定位确认。
+
+以下保留运动函数及灯光调试细节，便于对照动作参数。
 
 ## 节点路径移动
 
 `MoveNodePath(...)` 每段只沿车身 Y 轴前进（Y+）或后退（Y-），需要时先原地转向，不做车身左右平移。未约束终点朝向的路段比较前进和后退所需的转角，选择绝对值较小者，等角时优先前进，进入该段的转角不超过 90°。例如车头朝场地右方（0°）时，走 `1-0` 可直接后退 480 mm，车头仍为 0°，无需转 180°。
 
-功能区采用最后一段朝向约束：圆盘区节点 14 为 90°，粗加工区节点 10 为 270°，暂存区节点 22 为 180°。暂存区节点依据当前地图标注 (1200,2180) 对应节点中心 (1200,2160)，地图调整时需核对。串口 NAV ROUTE 的 Debug 路径及 Release 请求路径都按终点节点自动应用此规则，其他终点不约束。两轮自动导航均已接入。正常返家从暂存区节点 22 到开局保存的启停区附近节点：右侧区 1 为节点 4（2160,240），朝向 180°；左侧区 2 为节点 0（240,240），朝向 0°。这两个节点与开局位置分别约有 90 mm 的 X/Y 偏差，最终归位需 CORNER 视觉继续对齐，并实车确认映射。返家朝向仅通过固件路径函数参数指定，不改变 Debug 普通路径的终点规则。
+功能区采用最后一段朝向约束：圆盘区节点 14 为 90°，粗加工区节点 10 为 270°，暂存区节点 22 为 180°。暂存区节点依据当前地图标注 (1200,2180) 对应节点中心 (1200,2160)，地图调整时需核对。串口 NAV ROUTE 的 Debug 路径及 Release 请求路径都按终点节点自动应用此规则，其他终点不约束。两轮自动导航均已接入。正常返家从暂存区节点 22 到开局保存的启停区附近节点：右侧区 1 为节点 4（2160,240），朝向 180°；左侧区 2 为节点 0（240,240），朝向 180°。这两个节点与开局位置分别约有 90 mm 的 X/Y 偏差，最终归位需 CORNER 视觉继续对齐，并实车确认映射。返家朝向仅通过固件路径函数参数指定，不改变 Debug 普通路径的终点规则。
 
 最后一段与指定朝向平行时，提前调整车头方向，用前进或后退直接到达，不补转；垂直时选择进入本段转动较少的方案，停车后补转 90°。这是到达后的转角限制；为满足朝向，进入最后一段前仍可能需转 180°。`ROUTE_DONE,ESTIMATED` 在终点转向及估算等待完成后才发送，之后才开启功能区视觉。直接调用可用 `MoveNodePath({13,14}, 80, 50, 90)` 指定终点角度，省略最后参数则保持不约束。
 
@@ -58,99 +398,3 @@ GPIO5 补光灯在扫码、路径、定位、总任务超时或搬运动作失�
 ## LED 照明调节
 
 GPIO5 通过 AO3400 驱动 LED，默认 2000 Hz PWM，可在上位机“LED 调光”页输入 100～9000 Hz 并点击“应用频率”。上电进入 setup 后默认关闭；设定 0～100% 并点击“应用亮度”，或点击“关闭 LED”。Debug/Release 均可发送 `{CMD,LED,SET,percent}` 和 `{CMD,LED,FREQ,hz}`；`{CMD,LED,GET}` 回读亮度和频率。修改频率保持亮度，关闭 LED 保留频率。断开串口保持设置，重启恢复关闭和 2000 Hz，不保存到 Flash；自动运行流程不主动改变设置。
-
-## 视觉功能速查
-
-粗加工／暂存区普通定位（`WORK_AREA`）及带物料定位（`WORK_AREA_LOADED`）启动前，状态机在各调用位置显式停车并执行 `InitArm_look()` 普通观察姿态，检查成功后再调用 `requestVisionStart()`；该视觉接口自身不包含机械臂动作。两轮自动流程共六处，失败时停止总计时器并进入搬运故障；已有超时状态不会被覆盖。手动 `START_REQUEST` 的串口入口也显式执行 look，失败或中断时发送 `{EVT,VISION,START_FAILED,模式,ARM}`，不启动定位。动作成功后才开启 PID、开始 15 秒对齐计时并发送视觉启动事件。动作返回成功仅代表软件执行结果，观察姿态及视野需实车确认。
-
-两轮自动抓取在匹配任务颜色后保持圆盘物料视觉开启，仅屏蔽主控的颜色处理，再执行抓取并放到对应载物台。屏蔽期间的 COLOR 帧只确认接收，不缓存、不触发抓取。成功后才增加 `roundProgress`；前两件完成后，主循环各调用一次 `InitArm_look2()` 恢复观察姿态，再请求串口任务记录当时积压的字节数，处理完这批旧数据及跨边界的旧半帧后恢复颜色处理，不要求串口缓存完全为空，持续新帧不会无限延长屏蔽时间，也不反复发送视觉启停请求。恢复时打印 `[DISC] Color handling resumed: expected=..., cargo=...`，表示软件已允许下一件抓取；后续颜色不匹配仍会 SKIP。第三件完成或动作失败时才结束物料识别；失败进入 `STATE_TRANSFER_FAILED`，不自动重复抓取。动作成功仍是软件执行结果，实际夹持和放置需实车验证。
-
-手动测试抓取可在上位机“视觉 → 圆盘物料回传与抓取”选择颜色及载物台，点击“强制抓取”，发送 `{CMD,VISION,FORCE_GRAB,color,cargo}`。此入口绕过视觉开启、任务码和顺序检查，先停止连续对齐，再调用现有 GrabDiscMaterial 动作；强制模式遇到载物台占用时发出警告并继续运行；普通抓取仍拒绝占用。位姿标定和运动边界检查继续由函数内部执行，原占用记录只有成功放置后才更新为本次颜色。该入口不推进任务进度，REQUESTED 只表示函数已调用并返回，结果查看物料日志并现场确认。
-
-五种功能的 X、Y、角度死区独立可调，默认分别为 3、3（视觉单位）、0.2°；在停止对齐后通过上位机“参数”页调整对应模式的三项参数，重启恢复默认值。`DISC` / `WORK_AREA` 的自动对齐按各自死区判断完成：只有连续 5 个新有效反馈帧的三个偏差绝对值均不大于死区，`WaitForAlignment(...)` 才返回 `true`，发出 `ALIGN_DONE` 后继续流程。越界、无效反馈、丢帧、启停或断流清零计数；没有新帧时不计数，前 4 帧虽已停车仍继续等待。
-
-上位机“底盘 → 视觉 PID 对齐”可选择五种模式的死区进行手动连续对齐，发送 `{CMD,VISION,ALIGN_START,模式}`；这不自动启动相机。无自动对齐时，无模式 `ALIGN_START` 使用 DISC 死区；自动对齐期间沿用当前模式。同模式或无模式重复启动回复 OK，不重置反馈、PID、连续帧计数、WAITING/DONE 或 15 秒超时起点；不同模式及尚未处理的自动 FAILED 回复 BUSY，不覆盖自动结果。圆盘定位、工位定位、带物料视觉和角点识别的视觉请求同步启停连续对齐；只有圆盘物料识别的视觉请求不驱动底盘。
-
-
-视觉功能以 **加粗** 标注；串口事件、指令和函数调用以行内代码标注。
-
-| 视觉功能 | 启动事件 | 结束事件 | 使用步骤 |
-| --- | --- | --- | --- |
-| **圆盘定位视觉** | `{EVT,VISION,START_REQUEST,DISC}` | `{EVT,VISION,STOP_REQUEST,DISC}` | 7、14 |
-| **圆盘物料识别视觉** | `{EVT,VISION,START_REQUEST,DISC_MATERIAL}` | `{EVT,VISION,STOP_REQUEST,DISC_MATERIAL}` | 8、15 |
-| **暂存区/粗加工区定位视觉** | `{EVT,VISION,START_REQUEST,WORK_AREA}` | `{EVT,VISION,STOP_REQUEST,WORK_AREA}` | 9、12、16、19 |
-| **暂存区/粗加工区带物料视觉** | `{EVT,VISION,START_REQUEST,WORK_AREA_LOADED}` | `{EVT,VISION,STOP_REQUEST,WORK_AREA_LOADED}` | 11、18 |
-| **角点视觉识别** | `{EVT,VISION,START_REQUEST,CORNER}` | `{EVT,VISION,STOP_REQUEST,CORNER}` | 22 |
-
-上位机“视觉”页可手动触发以上五种功能：发送 `{CMD,VISION,START_REQUEST,模式}`，小车先回复 `{RSP,VISION,START_REQUEST,ACK,模式}`，再发出表中的启动事件。`DISC` / `WORK_AREA` / `WORK_AREA_LOADED` / `CORNER` 会先同步开启连续底盘 PID 对齐，机载电脑只需持续回传 `ALIGN_DATA`，无需另发 `ALIGN_START`；`DISC_MATERIAL` 仅请求视觉。接令及请求事件均不代表视觉已启动或已完成。首次连续 5 帧达标限时 15 秒，300 ms 断流停车/失败分支暂时注释，断流期间保持最后一次轮速；首次等待失败后需重新开启。达标只报告结果，连续闭环保持开启，直到对应视觉停止或 ALIGN_STOP。
-
-每种功能的“结束”按钮发送 `{CMD,VISION,STOP_REQUEST,模式}`，小车先回复 `{RSP,VISION,STOP_REQUEST,ACK,模式}`，再发出表中的结束事件；固件可调用 `requestVisionStop(VisionStartMode::模式)`。圆盘定位、工位定位、带物料视觉、角点识别结束时同步停止属于该模式的底盘对齐并清零 PID 和连续帧计数；结束旧模式不会停止随后开启的另一定位模式。机载电脑收到事件后结束对应识别和反馈。结束请求不代表任务成功，也不证明相机已经停止；无模式 `ALIGN_START` 的连续对齐通过 `{CMD,VISION,ALIGN_STOP}` 停车。
-
-自动流程中的结束时机如下（两轮及返家阶段均已接入）：
-
-- 圆盘定位 `DISC`：步骤 8、15 对齐完成后结束，再开启 `DISC_MATERIAL`。
-- 圆盘物料 `DISC_MATERIAL`：步骤 8、15 完成该批三件物料抓取后结束，再离开圆盘区。
-- 工位定位 `WORK_AREA`：步骤 10、13、17、20 完成放料／码放后结束，再切换视觉或离开工位。
-- 带物料视觉 `WORK_AREA_LOADED`：步骤 11、18 完成三件物料取回后结束，再离开粗加工区。
-- 角点识别 `CORNER`：步骤 22 取得有效到达确认后结束，再进入复位步骤；不能用结束请求代替到达确认。
-
-以下为目标运行流程。当前固件已接入两轮圆盘抓取、粗加工区放料/取回、暂存区第一层放料/第二层码垛，以及正常返家导航和 CORNER 对齐；机载电脑收到对应视觉启动事件后直接发送 `ALIGN_DATA`，无需再发 `ALIGN_START`。连续 5 帧达标后业务流程结束当前定位视觉，同时停止对齐。等待首帧及首次达标最多 15 秒；300 ms 断流停车/失败分支暂时注释；总对齐超时或手动停止打断时，流程停止并进入对齐故障状态。同模式及无模式重复 `ALIGN_START` 不取消业务等待，不延长超时；不同模式回复 BUSY。
-
-每轮物料识别启动后，机载电脑发送 COLOR。固件按当前轮次下一件任务颜色判断：匹配时调用现有 GrabDiscMaterial(color,cargo)，不匹配时跳过。第一轮用 round1_colors，第二轮用 round2_colors，下标为 roundProgress，载物台编号为 roundProgress+1。当前抓取函数执行机械臂动作，在成功放置并登记载物台后返回 true，普通 COLOR/GRAB 完成路径推进 roundProgress；失败返回 false，保留进度。第三件成功后关闭物料视觉，Release 主流程进入对应轮次的粗加工阶段。两轮均在每件完成后恢复 InitArm_look2 观察姿态，再处理固定旧缓存至完整帧边界才重新允许抓取；抓取失败关闭物料识别并进入搬运故障，不自动重试。自动状态提示复用 `{EVT,DISPLAY,DEBUG,正文}`，包括第二轮、返家、完成和故障提示。
-
-例如任务码 235+123+516+231，第一轮进度 0 时收到 COLOR,2 应匹配载物台 1；已准备、对齐停止且载物台为空时回传 COLOR,GRAB 并调用抓取函数。收到 COLOR,3 或 COLOR,5 回传 COLOR,SKIP，并附 COLOR_MISMATCH。第一件动作成功后 roundProgress 更新到 1，目标变为颜色 3、载物台 2；失败则仍等待颜色 2。状态条件不满足时回传 COLOR,BLOCKED 并给出 NO_TASK、NOT_WAITING、ROUND_COMPLETE、ALIGN_ACTIVE、NOT_READY 或 OCCUPIED；不要把状态阻止当成颜色不匹配。保留的显式 GRAB 同样推进进度；两种普通入口均回传 GRAB,DONE 或 GRAB,FAILED，DONE 表示动作序列执行并登记完成，实物仍需现场确认。
-
-## 一、上电准备与任务码获取
-
-可在上位机“视觉 → 手动输入任务码”输入四组三位码（如 `235+123+516+231`），点击“下发任务码”或按回车，等待小车确认。颜色组为 1～6，位置组各为 1～3 的排列。Debug 下输入后可开启物料识别并停止连续对齐，发送 COLOR 测试第一轮任务判断，并在条件满足时执行现有抓取动作。下发任务码只重置任务进度，不清空载物台记录；先前抓取留下的占用会报告 BLOCKED,OCCUPIED，需手动强制抓取时使用专用强制入口。Release 可在 WAIT_START 预置或 READ_TASK 等待期间输入，之后执行中的任务码不能覆盖。手动码可替代扫码获取，但不改变车辆位姿，导航前仍须确认实际路径起点。重启清空手动码。
-
-1. 开局，小车上电，机械臂复位；若不复位，则不满足规则的尺寸要求。
-2. 抽签后，小车被放置任一启停区。
-3. 在机载电脑的屏幕上点击选择启停区，小车通过串口接收。
-4. 得到启停区信息后，小车稍作位移，并将雷达（机械臂）摆放到指定位置进行扫描（机载电脑处理雷达信息）。
-5. 扫描完成后（接收到 `{CMD,SYS,START}` 指令），小车根据所在区域继续向前行驶，若未接收到扫码信息，则重试三次。调试时可在 Release 模式、显示 `WAIT START` 后，点击上位机“姿态 → 启动位置 → 雷达扫描完成（继续运行）”代替机载电脑发送；`{RSP,SYS,START,OK}` 仅表示小车已接受继续运行指令，不代表实际雷达扫描结果已验证。
-6. 接收到任务码后，发送给机载电脑进行显示。
-
-## 二、第一批物料搬运
-
-### 圆盘区取料
-
-7. 请求扫码区到圆盘区的路径节点，移动完成后发送 `{EVT,VISION,START_REQUEST,DISC}`，开启 **圆盘定位视觉**。
-8. 视觉对齐完成并停车后，先发送 `{EVT,VISION,STOP_REQUEST,DISC}`，再发送 `{EVT,VISION,START_REQUEST,DISC_MATERIAL}`，开启 **圆盘物料识别视觉**。机载电脑回传 COLOR，固件与 round1_colors[roundProgress] 比较：匹配且已准备则调用 GrabDiscMaterial，不匹配则跳过。每件动作成功后推进进度，失败保留；三件完成后结束物料视觉并进入粗加工阶段。
-
-### 粗加工区放料与取料
-
-9. 请求从圆盘区 14 号节点到粗加工区 10 号节点的路径并移动；移动完成后发送 `{EVT,VISION,START_REQUEST,WORK_AREA}`，开启 **暂存区/粗加工区定位视觉**。10 号节点依据当前地图中的粗加工区中心坐标确定，实车赛道布置变化时需重新核对。
-10. 视觉对齐完成后先结束 `WORK_AREA`，再在粗加工区按第一批位置码放第一层： `PlaceTaskCargoToWorkArea(currentTask.round1_pos, 1)`。动作失败时进入搬运故障状态，不进入下一阶段。
-11. 三件放料动作均执行完成后发送 `{EVT,VISION,START_REQUEST,WORK_AREA_LOADED}`，进入 `STATE_PLACE_TEMP1` 等待带物料对齐。仅 `AutoAlignmentState::DONE` 允许继续；先关闭底盘 PID 并停车，再调用 `RetrieveRoundToCargo(currentTask.round1_colors, currentTask.round1_pos)`，将任务位置的物料按原颜色顺序取回载物台 1～3。取回结束（包括动作失败）发送 `{EVT,VISION,STOP_REQUEST,WORK_AREA_LOADED}`；仅全部取回成功后允许离开粗加工区。
-
-### 暂存区放料
-
-12. 请求从粗加工区节点 10 到暂存区节点 22 的路径并移动，终点车头朝向为 180°；取回和导航各只执行一次。移动完成后发送 `{EVT,VISION,START_REQUEST,WORK_AREA}`，开启 **暂存区/粗加工区定位视觉**。
-13. 等待暂存区对齐 `DONE`，先关闭底盘 PID 并发送 `{EVT,VISION,STOP_REQUEST,WORK_AREA}`，再按第一批位置码放第一层：`PlaceTaskCargoToWorkArea(currentTask.round1_pos, 1)`。三件动作全部成功后清零 `roundProgress` 并进入 `STATE_GRAB_ROUND2`，不依赖外部进度信号跳转。带料或空工位对齐失败/被手动停止打断、路径失败、取回或放料失败，分别停止总计时器并进入 `STATE_ALIGN_FAILED`、`STATE_ROUTE_FAILED`、`STATE_TRANSFER_FAILED`；部分搬运失败保留已更新的载物台记录，不自动重试整组动作。
-
-## 三、第二批物料搬运
-
-### 圆盘区取料
-
-14. 请求从暂存区节点 22 到圆盘区节点 14 的路径并移动，移动完成后发送 `{EVT,VISION,START_REQUEST,DISC}`，开启 **圆盘定位视觉**。
-15. 视觉对齐完成后结束 DISC，开启 **圆盘物料识别视觉**。COLOR 按 round2_colors[roundProgress] 判断抓取或跳过，匹配时调用 GrabDiscMaterial；每件成功后推进进度，第三件关闭物料视觉并转入粗加工；该轮导航、对齐及逐件观察恢复均已接入。
-
-### 粗加工区放料与取料
-
-16. 请求从圆盘区节点 14 到粗加工区节点 10 的路径并移动，移动完成后发送 `{EVT,VISION,START_REQUEST,WORK_AREA}`，开启 **暂存区/粗加工区定位视觉**。
-17. 等待对齐 DONE，关闭底盘 PID 并结束 WORK_AREA 后，在粗加工区按第二批位置码放第一层： `PlaceTaskCargoToWorkArea(currentTask.round2_pos, 1)`。
-18. 放料完毕后请求 WORK_AREA_LOADED，进入 STATE_STACK_TEMP2 等待带料对齐 DONE；先关闭底盘 PID，再调用 `RetrieveRoundToCargo(currentTask.round2_colors, currentTask.round2_pos)`，按原任务顺序取回载物台 1～3。取回结束（包括失败）停止 WORK_AREA_LOADED；仅全部成功后允许导航。
-
-### 暂存区放料
-
-19. 请求从粗加工区节点 10 到暂存区节点 22 的路径并移动，移动完成后发送 `{EVT,VISION,START_REQUEST,WORK_AREA}`，开启 **暂存区/粗加工区定位视觉**。
-20. 等待对齐 DONE，关闭底盘 PID 并结束 WORK_AREA，再按第二批位置码放第二层：`PlaceTaskCargoToWorkArea(currentTask.round2_pos, 2)`。松手高度为工位基础高度加 secondLayerOffset，三个目标均通过行程检查后执行；全部成功才清零进度并进入 STATE_RETURN_HOME。
-
-## 四、返回与复位
-
-21. 码垛完成后收臂；按开局保存的启停区请求节点 22→4（区 1）或 22→0（区 2）的回家路径，终点恢复开局朝向。收臂、路径仅执行一次；运行中修改 START_ZONE 不改变本次返家目标。
-22. 回家路径执行结束后，发送 `{EVT,VISION,START_REQUEST,CORNER}`（固件接口：`requestVisionStart(VisionStartMode::CORNER)`），请求开启 **角点视觉识别**。机载电脑沿用 ALIGN_DATA 回传相对初始启停区的角度/X/Y 误差。连续 5 帧达标（DONE）后固件停止 CORNER 及底盘 PID；失败、超时或被手动停止打断则进入对齐故障。路径结束和启动请求均不能替代此等待，也不证明物理归位。
-23. CORNER 达标后执行 InitArm_start 复位，成功才进入 STATE_DONE，停止总计时器并关闭底盘电机使能；复位失败进入搬运故障。所有预设动作返回成功仍不代表传感器确认实际完成。
-
-总任务定时器沿用当前 3000 秒配置（从 SYS START 后开始）。超时可能发生在未知路段或持料中：固件进入 STATE_TIMEOUT_FAILED，结束全部视觉、停止六个步进电机并暂停主流程；锁止后续 MoveArm 发令，夹爪不主动松开。禁止按节点 22 假定位置盲目返家；需要人工处理并重启。正常完成及各故障分支会停止总计时器。

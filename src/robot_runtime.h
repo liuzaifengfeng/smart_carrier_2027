@@ -21,6 +21,7 @@
 #include "task_code.h"
 
 #define LED_PIN 48
+constexpr uint8_t BOOT0_PIN = 0; // 板载BOOT按键，低电平按下。
 #define NUM_LEDS 1
 #define OTA_HOSTNAME "smartcarrier_ESP32S3"
 #define VERSION "0.1.4-framework"
@@ -33,6 +34,7 @@
 constexpr uint32_t ALIGN_FEEDBACK_TIMEOUT_MS = 300;
 constexpr uint32_t ALIGN_LOG_INTERVAL_MS = 500;
 constexpr uint32_t AUTO_ALIGN_TIMEOUT_MS = 15000; // 包含等待首帧的时间。
+constexpr uint16_t NODE_PATH_SPEED_RPM = 120;       // 自动节点路径的直行及原地旋转速度。
 constexpr uint8_t SCAN_AREA_NODE = 2;
 constexpr uint8_t DISC_AREA_NODE = 14;
 // 粗加工区中心约为 (210, 1100)，对应当前 5x5 地图的 10 号节点。
@@ -42,6 +44,8 @@ constexpr uint8_t TEMP_AREA_NODE = 22;
 // 启停区附近的地图节点；最终归位由 CORNER 视觉对齐。
 constexpr uint8_t HOME_ZONE1_NODE = 4;
 constexpr uint8_t HOME_ZONE2_NODE = 0;
+// 两个启停区实车车头均朝左；区2向右扫码是后退，不改变车头朝向。
+constexpr float START_ZONE_HEADING = 180.0f;
 constexpr float DISC_AREA_HEADING = 90.0f;
 constexpr float COARSE_AREA_HEADING = 270.0f;
 constexpr float TEMP_AREA_HEADING = 180.0f;
@@ -114,5 +118,6 @@ bool waitScannerCode(char *out, uint32_t len, uint32_t timeoutMs);
 void readStartupServoAngle(uint8_t servoId, float &storedAngle);
 void Task_MainStateMachine(void *pvParameters);
 void Task_Serial_CMD(void *pvParameters);
+void PollDebugBootButton(); // loop采样，Release由空闲的串口任务统一执行。
 void Task_VisualAlignment(void *pvParameters);
 void vHomeTimerCallback(TimerHandle_t xTimer);

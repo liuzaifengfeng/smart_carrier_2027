@@ -58,7 +58,7 @@ static bool executeNodePathWithStatus(const uint8_t *path, size_t count, float f
             default: break;
         }
     }
-    const bool success = MoveNodePath(path, count, 80, 50, finalHeading);
+    const bool success = MoveNodePath( path, count, NODE_PATH_SPEED_RPM, 50, finalHeading);
     // DONE 表示指令和预计等待已结束，不是电机/视觉实测到位。
     Serial.println(success ? "{EVT,NAV,ROUTE_DONE,ESTIMATED}" : "{EVT,NAV,ROUTE_FAILED,EXECUTION}");
     return success;

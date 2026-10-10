@@ -25,7 +25,7 @@ void Task_MainStateMachine(void *pvParameters) {
     bool coarse1RouteCompleted = false;
     // 是否正在等待首轮粗加工区视觉对齐结果：启动后置 true，结束并处理结果时清为 false。
     bool coarse1VisionRequested = false;
-    // TEMP1 从粗加工区带物料视觉开始，成功取回后才允许导航。
+    // TEMP1 在粗加工放料后短暂等待并直接取回，成功后才允许导航。
     bool temp1CargoRetrieved = false;
     bool temp1RouteCompleted = false;
     bool temp1VisionRequested = false;
@@ -55,12 +55,12 @@ void Task_MainStateMachine(void *pvParameters) {
             case START_ZONE_1:
                 updateDisplay("DISPLAY", "DEBUG", "start_zone: 1");
                 // 右侧启停区车头朝左，即世界坐标 -X 方向。
-                currentPose = {2250, 150, 180};
+                currentPose = {2250, 150, START_ZONE_HEADING};
                 break;
             case START_ZONE_2:
                 updateDisplay("DISPLAY", "DEBUG", "start_zone: 2");
-                // 左侧启停区车头朝右，即世界坐标 +X 方向。
-                currentPose = {150, 150, 0};
+                // 左侧启停区车头也朝左；向右扫码使用后退，航向仍为180°。
+                currentPose = {150, 150, START_ZONE_HEADING};
                 break;
 
             default:
@@ -80,12 +80,14 @@ void Task_MainStateMachine(void *pvParameters) {
         case STATE_READ_TASK: { // 读取任务码
             updateDisplay("DISPLAY", "DEBUG", "READ TASK");
             InitArm_start();
-            constexpr float SCAN_APPROACH_MM = 1000.0f;
-            constexpr float SCAN_RANGE_MM = 300.0f;
-            constexpr float SCAN_SPEED_RPM = 30.0f;
+            constexpr float SCAN_APPROACH_MM = 900.0f;
+            constexpr float SCAN_RANGE_MM = 400.0f;
+            constexpr float SCAN_SPEED_RPM = 60.0f;
             constexpr uint8_t SCAN_MAX_RETRIES = 3;
-            // 位置接口的 +Y 四轮方向与 MovePose(0) 的车头前进一致。
-            // 两个起始区均沿车头前进，不按世界坐标反转方向。
+            // 按实车方向：启停区1向左扫码（+Y），启停区2向右扫码（-Y）。
+            // 本次扫码固定使用同一个区号，接近和往返扫描统一应用方向。
+            const StartZone scanStartZone = currentStartZone;
+            const float scanDirection = scanStartZone == START_ZONE_1 ? 1.0f : -1.0f;
             const auto pollTaskCode = []() -> bool {
                 if (taskReceived) return true;
                 char scanCode[SCANNER_BUF_LEN];
@@ -103,20 +105,20 @@ void Task_MainStateMachine(void *pvParameters) {
                 return taskReceived;
             };
             if (!taskReceived) {
-                if (currentStartZone != START_ZONE_1 && currentStartZone != START_ZONE_2) {
+                if (scanStartZone != START_ZONE_1 && scanStartZone != START_ZONE_2) {
                     Serial.println("[SCANNER] ERR: invalid start zone");
-                } else if (!MovePosition(0, SCAN_APPROACH_MM, 0, SCAN_SPEED_RPM)) {
+                } else if (!MovePosition(0, scanDirection * SCAN_APPROACH_MM, 0, SCAN_SPEED_RPM)) {
                     Serial.println("[SCANNER] ERR: approach failed");
                 } else {
-                    // 首次向前扫描 300 mm；失败后在同一区域反向重试三遍。
-                    // 相对起点的端点依次为 1300、1000、1300、1000 mm。
+                    // 首次沿接近方向扫描 400 mm；失败后在同一区域反向重试三遍。
+                    // 沿接近方向距起点的端点依次为 1300、900、1300、900 mm。
                     for (uint8_t attempt = 0; attempt <= SCAN_MAX_RETRIES; ++attempt) {
                         if (pollTaskCode()) break;
-                        const float distance = (attempt % 2 == 0) ? SCAN_RANGE_MM : -SCAN_RANGE_MM;
+                        const float distance = scanDirection * ((attempt % 2 == 0) ? SCAN_RANGE_MM : -SCAN_RANGE_MM);
                         Serial.printf("[SCANNER] scan %u/%u, distance=%.0f mm\n",
                                       static_cast<unsigned>(attempt),
                                       static_cast<unsigned>(SCAN_MAX_RETRIES), distance);
-                        const bool completed = MovePosition(0, distance, 0, SCAN_SPEED_RPM, pollTaskCode);
+                        const bool completed = MovePosition(0, distance, 0, SCAN_SPEED_RPM/2, pollTaskCode);
                         if (pollTaskCode()) break;
                         if (!completed) {
                             Serial.println("[SCANNER] ERR: position move failed");
@@ -214,7 +216,7 @@ void Task_MainStateMachine(void *pvParameters) {
                 // 圆盘定位成功后、物料识别前的位置调整，仅在首次切换时执行。
                 vTaskDelay(pdMS_TO_TICKS(100));
                 //GotoPose(-45, 0, 0, true);
-                vTaskDelay(pdMS_TO_TICKS(1000));
+                vTaskDelay(pdMS_TO_TICKS(100));
                 // 观察姿态命令成功后才开放抓取，失败时不启动物料识别。
                 if (!InitArm_look2()) {
                     updateDisplay("DISPLAY", "DEBUG", "DISC ARM ERR");
@@ -273,8 +275,7 @@ void Task_MainStateMachine(void *pvParameters) {
             // 圆环评分: 1环15分 2环10分 3环7分 ... 越中心分越高
             // 从粗加工区取回3个, 按 round1_pos 放到暂存区
             // 在粗加工区取回：
-            updateDisplay("DISPLAY", "DEBUG",
-                          coarse1RouteCompleted ? "ALIGN COARSE1" : "GO COARSE1");
+            updateDisplay("DISPLAY", "DEBUG", coarse1RouteCompleted ? "ALIGN COARSE1" : "GO COARSE1");
 
             if (!coarse1RouteCompleted) {
                 // 离开圆盘前关闭物料识别，避免导航途中继续产生颜色结果。
@@ -298,7 +299,7 @@ void Task_MainStateMachine(void *pvParameters) {
                     currentState = STATE_TRANSFER_FAILED;
                     break;
                 }
-                vTaskDelay(1000);
+                vTaskDelay(100);
                 if (currentState != STATE_PLACE_COARSE1 || taskMotionAborted) break;
                 requestVisionStart(VisionStartMode::WORK_AREA);
                 coarse1VisionRequested = true;
@@ -329,6 +330,8 @@ void Task_MainStateMachine(void *pvParameters) {
                 break;
             }
             roundProgress = 0;
+            if (currentState != STATE_PLACE_COARSE1 || taskMotionAborted) break;
+            /* 暂时跳过粗加工放料后的带物料定位及观察姿态。
             // 先显式执行观察姿态，成功后再启用工位视觉定位。
             setAlignmentEnabled(false);
             if (!InitArm_look()) {
@@ -340,12 +343,14 @@ void Task_MainStateMachine(void *pvParameters) {
             }
             if (currentState != STATE_PLACE_COARSE1 || taskMotionAborted) break;
             requestVisionStart(VisionStartMode::WORK_AREA_LOADED);
+            */
             currentState = STATE_PLACE_TEMP1;
             break;
         }
 
         case STATE_PLACE_TEMP1: {
             if (!temp1CargoRetrieved) {
+                /* 暂时跳过带物料对齐等待；放料时已完成工位定位。
                 // COARSE1 已开启 WORK_AREA_LOADED；等待达标，不能把请求当作完成。
                 updateDisplay("DISPLAY", "DEBUG", "ALIGN LOADED C1");
                 const auto alignmentState = getAutoAlignmentState();
@@ -359,11 +364,17 @@ void Task_MainStateMachine(void *pvParameters) {
                     currentState = STATE_ALIGN_FAILED;
                     break;
                 }
+                */
+                setAlignmentEnabled(false);
+                if (taskMotionAborted) break;
+                updateDisplay("DISPLAY", "DEBUG", "WAIT RETRIEVE C1");
+                vTaskDelay(pdMS_TO_TICKS(100));
+                if (currentState != STATE_PLACE_TEMP1 || taskMotionAborted) break;
                 updateDisplay("DISPLAY", "DEBUG", "RETRIEVE C1");
                 // round1_pos[i] 的物料取回载物台 i+1，保持颜色和位置的对应关系。
                 const bool retrieved = RetrieveRoundToCargo(
                     currentTask.round1_colors, currentTask.round1_pos);
-                requestVisionStop(VisionStartMode::WORK_AREA_LOADED);
+                // requestVisionStop(VisionStartMode::WORK_AREA_LOADED);
                 if (currentState != STATE_PLACE_TEMP1) break;
                 if (!retrieved) {
                     updateDisplay("DISPLAY", "DEBUG", "RETRIEVE C1 ERR");
@@ -489,7 +500,7 @@ void Task_MainStateMachine(void *pvParameters) {
                 // 圆盘定位成功后、物料识别前的位置调整，仅在首次切换时执行。
                 vTaskDelay(pdMS_TO_TICKS(100));
                 //GotoPose(-45, 0, 0, true);
-                vTaskDelay(pdMS_TO_TICKS(1000));
+                vTaskDelay(pdMS_TO_TICKS(100));
                 // 观察姿态命令成功后才开放抓取，失败时不启动物料识别。
                 if (!InitArm_look2()) {
                     updateDisplay("DISPLAY", "DEBUG", "DISC ARM ERR");
@@ -601,6 +612,8 @@ void Task_MainStateMachine(void *pvParameters) {
                 break;
             }
             roundProgress = 0;
+            if (currentState != STATE_PLACE_COARSE2 || taskMotionAborted) break;
+            /* 暂时跳过粗加工放料后的带物料定位及观察姿态。
             // 先显式执行观察姿态，成功后再启用工位视觉定位。
             setAlignmentEnabled(false);
             if (!InitArm_look()) {
@@ -612,12 +625,14 @@ void Task_MainStateMachine(void *pvParameters) {
             }
             if (currentState != STATE_PLACE_COARSE2 || taskMotionAborted) break;
             requestVisionStart(VisionStartMode::WORK_AREA_LOADED);
+            */
             currentState = STATE_STACK_TEMP2;
             break;
         }
 
         case STATE_STACK_TEMP2: {
             if (!temp2CargoRetrieved) {
+                /* 暂时跳过带物料对齐等待；放料时已完成工位定位。
                 // COARSE2 已开启 WORK_AREA_LOADED；等待达标，不能把请求当作完成。
                 updateDisplay("DISPLAY", "DEBUG", "ALIGN LOADED C2");
                 const auto alignmentState = getAutoAlignmentState();
@@ -631,11 +646,17 @@ void Task_MainStateMachine(void *pvParameters) {
                     currentState = STATE_ALIGN_FAILED;
                     break;
                 }
+                */
+                setAlignmentEnabled(false);
+                if (taskMotionAborted) break;
+                updateDisplay("DISPLAY", "DEBUG", "WAIT RETRIEVE C2");
+                vTaskDelay(pdMS_TO_TICKS(100));
+                if (currentState != STATE_STACK_TEMP2 || taskMotionAborted) break;
                 updateDisplay("DISPLAY", "DEBUG", "RETRIEVE C2");
                 // round2_pos[i] 的物料取回载物台 i+1，保持颜色和位置的对应关系。
                 const bool retrieved = RetrieveRoundToCargo(
                     currentTask.round2_colors, currentTask.round2_pos);
-                requestVisionStop(VisionStartMode::WORK_AREA_LOADED);
+                // requestVisionStop(VisionStartMode::WORK_AREA_LOADED);
                 if (currentState != STATE_STACK_TEMP2) break;
                 if (!retrieved) {
                     updateDisplay("DISPLAY", "DEBUG", "RETRIEVE C2 ERR");
@@ -659,7 +680,7 @@ void Task_MainStateMachine(void *pvParameters) {
                     break;
                 }
                 temp2RouteCompleted = true;
-                // 路径入口已负责暂存区 180° 朝向；到达后再开启空工位对齐。
+                // 暂存区已有第一层物料，码垛前使用带物料工位识别。
                 // 先显式执行观察姿态，成功后再启用工位视觉定位。
                 setAlignmentEnabled(false);
                 if (!InitArm_look()) {
@@ -670,7 +691,7 @@ void Task_MainStateMachine(void *pvParameters) {
                     break;
                 }
                 if (currentState != STATE_STACK_TEMP2 || taskMotionAborted) break;
-                requestVisionStart(VisionStartMode::WORK_AREA);
+                requestVisionStart(VisionStartMode::WORK_AREA_LOADED);
                 temp2VisionRequested = true;
                 break;
             }
@@ -680,7 +701,7 @@ void Task_MainStateMachine(void *pvParameters) {
                 const auto alignmentState = getAutoAlignmentState();
                 if (alignmentState == AutoAlignmentState::WAITING) break;
                 setAlignmentEnabled(false);
-                requestVisionStop(VisionStartMode::WORK_AREA);
+                requestVisionStop(VisionStartMode::WORK_AREA_LOADED);
                 temp2VisionRequested = false;
                 if (alignmentState != AutoAlignmentState::DONE) {
                     updateDisplay("DISPLAY", "DEBUG", "TEMP ALIGN ERR");
@@ -716,7 +737,7 @@ void Task_MainStateMachine(void *pvParameters) {
                 // 使用开局保存的区域，不受运行中 START_ZONE 修改影响。
                 const uint8_t homeNode = homeStartZone == START_ZONE_1
                     ? HOME_ZONE1_NODE : HOME_ZONE2_NODE;
-                const float homeHeading = homeStartZone == START_ZONE_1 ? 180.0f : 0.0f;
+                const float homeHeading = START_ZONE_HEADING;
                 firstDiscGrabReady = false;
                 requestVisionStop(VisionStartMode::DISC_MATERIAL);
                 setAlignmentEnabled(false);
@@ -736,6 +757,14 @@ void Task_MainStateMachine(void *pvParameters) {
                     break;
                 }
                 homeRouteCompleted = true;
+                // 回到启停区后先将机械臂调整到角点识别位，再启动 CORNER 视觉。
+                if (!InitArm_look4()) {
+                    updateDisplay("DISPLAY", "DEBUG", "HOME LOOK ERR");
+                    if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
+                    currentState = STATE_TRANSFER_FAILED;
+                    break;
+                }
+                if (currentState != STATE_RETURN_HOME || taskMotionAborted) break;
                 requestVisionStart(VisionStartMode::CORNER);
                 homeVisionRequested = true;
                 break;
@@ -761,6 +790,17 @@ void Task_MainStateMachine(void *pvParameters) {
                 currentState = STATE_TRANSFER_FAILED;
                 break;
             }
+            if (currentStartZone == START_ZONE_1) {
+                GotoPose(-70, 0, 0, true);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                GotoPose(0, 200, 0, true);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+            } else if (currentStartZone == START_ZONE_2) {
+                GotoPose(-70, 0, 0, true);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                GotoPose(0, 200, 0, true);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+            }
             if (currentState != STATE_RETURN_HOME) break;
             roundProgress = 0;
             if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
@@ -782,6 +822,7 @@ void Task_MainStateMachine(void *pvParameters) {
 
 // ================= setup  =================
 void setup() {
+    pinMode(BOOT0_PIN, INPUT_PULLUP);
     const bool ledPwmReady = LedPwm_Init();
     Serial.begin(115200);
     if (!ledPwmReady) Serial.println("[LED] PWM initialization failed");
@@ -794,7 +835,7 @@ void setup() {
     FastLED.setBrightness(10);
 
     currentPose = {0, 0, 0};   // [TODO] 初始位姿按实际
-    currentArm = {0, 0, 0, 0}; // 升降/伸缩位置仍待标定，舵机角度由下方实读更新。
+    currentArm = {0, 0, 0, 0}; // 升降/伸缩目标坐标对应 Emm_V5_Init 的开机清零，舵机角度由下方实读更新。
     // 与 MoveArm 的实际 ID 对应：2 号=转台，1 号=夹爪。
     // 在串口任务启动前读取，避免多个任务同时访问舵机总线。
     // 给上电中的舵机留出启动时间；总线已初始化但舵机不一定立即应答。
@@ -823,7 +864,7 @@ void setup() {
     }
 
     vTaskDelay(pdMS_TO_TICKS(3000));
-    // 上电固定进入 Debug；串口发送 {CMD,SYS,RELEASE} 切换到正式模式。
+    // 上电固定进入 Debug；串口SYS RELEASE或空闲时按BOOT0切换到正式模式。
     {
         Serial.println("Debug mode");
         leds[0] = CRGB::Yellow; FastLED.show();
@@ -835,6 +876,7 @@ void setup() {
 }
 
 void loop() {
+    PollDebugBootButton();
     // 不依赖主状态机：总超时暂停主任务后仍持续闪灯。
     const RobotState state = currentState;
     LedPwm_UpdateFaultBlink(state == STATE_SCAN_FAILED || state == STATE_ROUTE_FAILED

@@ -563,9 +563,10 @@ class ArmPose:
     pawl_angle: float
 
 
+# 两个启停区车头均朝左；区2向右扫码时倒车，航向保持180°。
 START_POSES = {
     "启停区1": Pose(2250.0, 150.0, 180.0),
-    "启停区2": Pose(150.0, 150.0, 0.0),
+    "启停区2": Pose(150.0, 150.0, 180.0),
 }
 
 
@@ -2012,7 +2013,7 @@ class UpperComputerApp:
             foreground="#59636e", wraplength=420, justify=tk.LEFT,
         ).pack(anchor="w", pady=(5, 0))
 
-        self.current_vars = self._pose_editor(pose_tab, "当前理想姿态", (150.0, 150.0, 0.0))
+        self.current_vars = self._pose_editor(pose_tab, "当前理想姿态", (150.0, 150.0, 180.0))
         ttk.Button(pose_tab, text="手动校准理想位置", command=self.update_current).pack(
             fill=tk.X, pady=(5, 14)
         )
@@ -2257,7 +2258,7 @@ class UpperComputerApp:
         arm_controls.columnconfigure(1, weight=1)
         ttk.Button(
             arm_controls,
-            text="发送升降 / 伸出（MoveArm_1）",
+            text="发送绝对升降 / 伸出（MoveArm_1）",
             command=lambda: self.send_arm_command("MoveArm_1"),
         ).grid(row=5, column=0, columnspan=3, sticky="ew", pady=(7, 3))
         ttk.Button(
@@ -2273,7 +2274,7 @@ class UpperComputerApp:
         ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(2, 0))
 
         self.arm_status_var = tk.StringVar(
-            value="输入参数会实时预览；-1 保留上次已发送的估计值。"
+            value="升降/伸出为绝对目标，开机当前位置为零；-1 跳过该轴。预览不代表实测到位。"
         )
         ttk.Label(
             arm_tab,
@@ -3245,7 +3246,7 @@ def run_self_test() -> None:
     assert math.isclose(round_trip[0], 725.0, abs_tol=1e-9)
     assert math.isclose(round_trip[1], 1330.0, abs_tol=1e-9)
     assert START_POSES["启停区1"] == Pose(2250.0, 150.0, 180.0)
-    assert START_POSES["启停区2"] == Pose(150.0, 150.0, 0.0)
+    assert START_POSES["启停区2"] == Pose(150.0, 150.0, 180.0)
     assert next_start_zone("启停区1") == "启停区2"
     assert next_start_zone("启停区2") == "启停区1"
     assert all(pose_fits_field(pose) for pose in START_POSES.values())

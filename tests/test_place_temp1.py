@@ -24,6 +24,7 @@ enum State { STATE_PLACE_TEMP1, STATE_GRAB_ROUND2, STATE_ALIGN_FAILED,
 enum class AutoAlignmentState { WAITING, DONE, FAILED, IDLE };
 enum class VisionStartMode { WORK_AREA_LOADED, WORK_AREA };
 constexpr int COARSE_AREA_NODE = 10, TEMP_AREA_NODE = 22;
+constexpr int pdMS_TO_TICKS(int ms) { return ms; }
 struct Task { int round1_colors[3] = {6, 2, 4}; int round1_pos[3] = {3, 1, 2}; };
 struct Run {
     State currentState = STATE_PLACE_TEMP1;
@@ -31,7 +32,7 @@ struct Run {
     Task currentTask;
     int roundProgress = 3;
     int xHomeTimer = 1;
-    bool pid = true, loaded = true, empty = false;
+    bool pid = false, loaded = false, empty = false;
     bool retrieveOK = true, routeOK = true, placeOK = true;
     int interruptAt = 0;
     int retrieved = 0, routed = 0, placed = 0, timerStops = 0;
@@ -41,6 +42,13 @@ struct Run {
     constexpr AutoAlignmentState getAutoAlignmentState() { return alignment; }
     constexpr void setAlignmentEnabled(bool enabled) { pid = enabled; }
     constexpr void xTimerStop(int, int) { ++timerStops; }
+    int retrievalWaits = 0;
+    constexpr void vTaskDelay(int ms) {
+        valid = valid && !pid && !loaded && !retrieved && ms == 1000;
+        ++retrievalWaits;
+        if (interruptAt == 4) currentState = STATE_RETURN_HOME;
+        if (interruptAt == 5) taskMotionAborted = true;
+    }
     constexpr void requestVisionStop(VisionStartMode mode) {
         pid = false;
         if (mode == VisionStartMode::WORK_AREA_LOADED) loaded = false;
@@ -56,7 +64,7 @@ struct Run {
         empty = true; pid = true; alignment = AutoAlignmentState::WAITING;
     }
     constexpr bool RetrieveRoundToCargo(const int* colors, const int* positions) {
-        valid = valid && !pid && loaded && !routed && !placed
+        valid = valid && !pid && !loaded && retrievalWaits == 1 && !routed && !placed
                 && colors == currentTask.round1_colors && positions == currentTask.round1_pos;
         ++retrieved;
         if (interruptAt == 1) currentState = STATE_RETURN_HOME;
@@ -85,9 +93,6 @@ struct Run {
 };
 constexpr bool success() {
     Run r;
-    for (int i = 0; i < 4; ++i) r.tick();
-    if (r.retrieved || r.routed || r.placed || !r.pid) return false;
-    r.alignment = AutoAlignmentState::DONE;
     r.tick(); r.tick();
     for (int i = 0; i < 4; ++i) r.tick();
     if (r.retrieved != 1 || r.routed != 1 || r.placed || !r.empty || !r.pid) return false;
@@ -95,7 +100,7 @@ constexpr bool success() {
     r.tick(); r.tick();
     return r.valid && r.retrieved == 1 && r.routed == 1 && r.placed == 1
             && !r.pid && !r.empty && !r.loaded && !r.timerStops
-            && !r.roundProgress && r.currentState == STATE_GRAB_ROUND2;
+            && !r.roundProgress && r.retrievalWaits == 1 && r.currentState == STATE_GRAB_ROUND2;
 }
 constexpr bool failure(int phase, AutoAlignmentState state) {
     Run r;
@@ -133,8 +138,19 @@ constexpr bool lookFailure() {
 }
 static_assert(lookFailure(), "failed look blocks temporary-area vision and placement");
 static_assert(success(), "ordered flow, waits, task mapping, no duplicate actions");
-static_assert(failure(0, AutoAlignmentState::FAILED), "loaded alignment failure");
-static_assert(failure(0, AutoAlignmentState::IDLE), "loaded alignment cancelled");
+constexpr bool skipsLoadedAlignment(AutoAlignmentState state) {
+    Run r; r.alignment = state; r.tick();
+    return r.valid && r.retrieved == 1 && r.retrievalWaits == 1 && !r.pid && !r.loaded;
+}
+constexpr bool interruptedDuringWait(int action) {
+    Run r; r.interruptAt = action; r.tick();
+    return r.valid && r.retrieved == 0 && r.routed == 0 && r.retrievalWaits == 1
+        && (action == 4 ? r.currentState == STATE_RETURN_HOME : r.taskMotionAborted);
+}
+static_assert(skipsLoadedAlignment(AutoAlignmentState::WAITING)
+    && skipsLoadedAlignment(AutoAlignmentState::FAILED)
+    && skipsLoadedAlignment(AutoAlignmentState::IDLE), "retrieval does not wait for loaded alignment");
+static_assert(interruptedDuringWait(4) && interruptedDuringWait(5), "abort during wait prevents retrieval");
 static_assert(failure(1, AutoAlignmentState::DONE), "retrieval failure blocks route");
 static_assert(failure(2, AutoAlignmentState::DONE), "route failure blocks vision/place");
 static_assert(failure(3, AutoAlignmentState::FAILED), "temp alignment failure");

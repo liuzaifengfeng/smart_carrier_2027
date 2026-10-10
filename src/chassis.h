@@ -28,7 +28,7 @@ struct ArmPose {
 };
 
 extern RobotPose currentPose;   // 主控维护的"理想位姿"
-extern ArmPose currentArm;     // 主控维护的"理想臂位姿"
+extern ArmPose currentArm;     // 升降/伸缩为最近下发的绝对目标，非驱动器实测位置。
 
 // 运动标定系数
 extern float X_PULSE;      // X向 每毫米脉冲
@@ -113,6 +113,7 @@ bool WaitForAlignment(VisionStartMode mode, float angleErrorDeg,
 void ResetAlignmentWait();
 
 // @brief 机械臂移动到位.
+// 升降/伸缩使用 EMM V5 绝对位置模式，以开机当前位置清零为原点；-1 跳过该轴。
 // 返回值表示所请求的控制命令是否全部成功下发，不代表机构已物理到位。
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
 
@@ -124,6 +125,7 @@ bool InitArm_start();
 bool InitArm_look();
 bool InitArm_look2();
 bool InitArm_look3();
+bool InitArm_look4();
 
 /**
  * @brief 按 0~24 号场地节点路径移动，只使用原地转向和车身 Y 轴前后直行。

@@ -23,7 +23,10 @@ class RemainingFlowTests(unittest.TestCase):
         runtime = (root / "src/robot_runtime.cpp").read_text(encoding="utf-8")
         timer = runtime[runtime.index("void vHomeTimerCallback("):
                         runtime.index("// @brief 等待扫码")]
-        harness = r'''
+        header = (root / "src/robot_runtime.h").read_text(encoding="utf-8")
+        start_heading = next(line for line in header.splitlines()
+                             if line.startswith("constexpr float START_ZONE_HEADING ="))
+        harness = start_heading + r'''
 #include <stddef.h>
 #include "disc_material_decision.h"
 enum RobotState { STATE_GRAB_ROUND1, STATE_GRAB_ROUND2, STATE_PLACE_COARSE2,
@@ -55,7 +58,15 @@ struct Run {
     DECLARATIONS
     constexpr void updateDisplay(const char*, const char*, const char*) {}
     constexpr void xQueueReset(int) {}
-    constexpr void vTaskDelay(int) {}
+    int retrievalWaits=0;
+    bool interruptWait=false;
+    constexpr void vTaskDelay(int ms) {
+        if (currentState==STATE_STACK_TEMP2 && !temp2CargoRetrieved) {
+            valid=valid && !pid && camera==VisionStartMode::NONE && ms==100;
+            ++retrievalWaits;
+            if (interruptWait) { currentState=STATE_RETURN_HOME; taskMotionAborted=true; }
+        }
+    }
     constexpr void xTimerStop(int, int) { ++timerStops; }
     constexpr AutoAlignmentState getAutoAlignmentState() { return alignment; }
     constexpr void setAlignmentEnabled(bool enabled) { pid=enabled; }
@@ -67,6 +78,8 @@ struct Run {
     constexpr bool InitArm_look() { valid = valid && !pid; ++workLooks; return workLookOK; }
     constexpr void requestVisionStart(VisionStartMode mode) {
         valid = valid && camera == VisionStartMode::NONE;
+        if (currentState==STATE_STACK_TEMP2) valid=valid && mode==VisionStartMode::WORK_AREA_LOADED;
+        if (currentState==STATE_PLACE_COARSE2) valid=valid && mode==VisionStartMode::WORK_AREA;
         if (mode==VisionStartMode::DISC_MATERIAL) { material=true; valid=valid && !pid; }
         else { camera=mode; pid=true; alignment=AutoAlignmentState::WAITING; }
     }
@@ -81,7 +94,7 @@ struct Run {
         if (currentState==STATE_STACK_TEMP2) valid=valid && from==10 && to==22;
         if (currentState==STATE_RETURN_HOME) valid=valid && from==22
             && to==(homeStartZone==START_ZONE_1 ? 4 : 0)
-            && heading==(homeStartZone==START_ZONE_1 ? 180 : 0);
+            && heading==180;
         ++routes; return routeOK;
     }
     constexpr bool GrabDiscMaterial(uint8_t color, uint8_t cargo) {
@@ -90,7 +103,7 @@ struct Run {
         ++grabs; return grabOK;
     }
     constexpr bool RetrieveRoundToCargo(const int* colors, const int* positions) {
-        valid=valid && !pid && camera==VisionStartMode::WORK_AREA_LOADED
+        valid=valid && !pid && camera==VisionStartMode::NONE && retrievalWaits==1
             && colors==currentTask.round2_colors && positions==currentTask.round2_pos;
         ++retrieves; return transferOK;
     }
@@ -121,10 +134,12 @@ constexpr bool fullRound(StartZone zone) {
     if (r.currentState!=STATE_PLACE_COARSE2 || r.material || r.grabs!=3) return false;
     r.tick(); r.tick();
     if (r.coarsePlaces) return false;
-    r.alignment=AutoAlignmentState::DONE; r.tick(); r.tick();
+    r.alignment=AutoAlignmentState::DONE; r.tick();
     if (r.currentState!=STATE_STACK_TEMP2 || r.retrieves) return false;
-    r.alignment=AutoAlignmentState::DONE; r.tick(); r.tick(); r.tick();
-    if (r.stacks) return false;
+    r.alignment=AutoAlignmentState::IDLE; r.tick(); r.tick(); r.tick();
+    if (r.stacks || r.camera!=VisionStartMode::WORK_AREA_LOADED || !r.pid) return false;
+    r.tick();
+    if (r.stacks || r.camera!=VisionStartMode::WORK_AREA_LOADED || !r.pid) return false;
     r.alignment=AutoAlignmentState::DONE; r.tick();
     if (r.currentState!=STATE_RETURN_HOME || r.stacks!=1) return false;
     r.tick(); r.tick();
@@ -132,7 +147,7 @@ constexpr bool fullRound(StartZone zone) {
     r.alignment=AutoAlignmentState::DONE; r.tick(); r.tick();
     return r.valid && r.currentState==STATE_DONE && !r.pid && !r.material
         && r.camera==VisionStartMode::NONE && r.routes==4 && r.coarsePlaces==1
-        && r.retrieves==1 && r.stacks==1 && r.armStarts==2 && r.timerStops==1 && r.workLooks==3;
+        && r.retrieves==1 && r.stacks==1 && r.armStarts==2 && r.timerStops==1 && r.workLooks==2 && r.retrievalWaits==1;
 }
 constexpr bool grabFailure() {
     Run r; r.material=true; r.firstDiscGrabReady=true; r.grabOK=false;
@@ -150,9 +165,9 @@ constexpr bool failures(int kind) {
         if (kind==3) { r.alignment=AutoAlignmentState::DONE; r.transferOK=false; }
         if (kind!=0) r.tick();
     } else if (kind<=7) {
-        r.currentState=STATE_STACK_TEMP2; r.camera=VisionStartMode::WORK_AREA_LOADED; r.pid=true;
+        r.currentState=STATE_STACK_TEMP2; r.camera=VisionStartMode::NONE; r.pid=false;
         r.alignment=kind==4 ? AutoAlignmentState::FAILED : AutoAlignmentState::DONE;
-        if (kind==5) r.transferOK=false;
+        if (kind==4 || kind==5) r.transferOK=false;
         r.tick();
         if (kind>=6) { r.routeOK=kind!=6; r.tick(); }
         if (kind==7) { r.alignment=AutoAlignmentState::DONE; r.transferOK=false; r.tick(); }
@@ -166,7 +181,7 @@ constexpr bool failures(int kind) {
         if (kind==12) { r.alignment=AutoAlignmentState::DONE; r.armFailAt=2; r.tick(); }
     }
     auto expected=(kind==0 || kind==6 || kind==8 || kind==10) ? STATE_ROUTE_FAILED
-        : (kind==1 || kind==2 || kind==4 || kind==11) ? STATE_ALIGN_FAILED : STATE_TRANSFER_FAILED;
+        : (kind==1 || kind==2 || kind==11) ? STATE_ALIGN_FAILED : STATE_TRANSFER_FAILED;
     r.tick();
     return r.valid && r.currentState==expected && r.timerStops==1 && !r.pid
         && !r.material && r.camera==VisionStartMode::NONE;
@@ -177,23 +192,27 @@ constexpr bool workLookFailures() {
     empty.currentState = STATE_PLACE_COARSE2;
     empty.workLookOK = false;
     empty.tick();
-    Run loaded;
-    loaded.currentState = STATE_PLACE_COARSE2;
-    loaded.coarse2RouteCompleted = true;
-    loaded.coarse2VisionRequested = true;
-    loaded.alignment = AutoAlignmentState::DONE;
-    loaded.camera = VisionStartMode::WORK_AREA;
-    loaded.pid = true;
-    loaded.workLookOK = false;
-    loaded.tick();
-    return empty.valid && loaded.valid
-        && empty.currentState == STATE_TRANSFER_FAILED && loaded.currentState == STATE_TRANSFER_FAILED
-        && empty.camera == VisionStartMode::NONE && loaded.camera == VisionStartMode::NONE
-        && empty.workLooks == 1 && loaded.workLooks == 1
-        && empty.timerStops == 1 && loaded.timerStops == 1
-        && empty.coarsePlaces == 0 && loaded.coarsePlaces == 1;
+    return empty.valid && empty.currentState == STATE_TRANSFER_FAILED
+        && empty.camera == VisionStartMode::NONE && empty.workLooks == 1
+        && empty.timerStops == 1 && empty.coarsePlaces == 0;
 }
-static_assert(workLookFailures(), "look failure prevents empty/loaded work-area vision");
+constexpr bool retrievalWaitInterrupted() {
+    Run r; r.currentState=STATE_STACK_TEMP2; r.interruptWait=true; r.tick();
+    return r.valid && r.retrievalWaits==1 && r.retrieves==0 && r.routes==0
+        && r.currentState==STATE_RETURN_HOME && r.taskMotionAborted;
+}
+constexpr bool loadedAlignmentFailure() {
+    Run r; r.currentState=STATE_STACK_TEMP2;
+    r.tick(); r.tick();
+    if (r.camera!=VisionStartMode::WORK_AREA_LOADED || !r.pid || r.stacks) return false;
+    r.alignment=AutoAlignmentState::FAILED;
+    r.tick(); r.tick();
+    return r.valid && r.currentState==STATE_ALIGN_FAILED && r.stacks==0
+        && r.camera==VisionStartMode::NONE && !r.pid && r.timerStops==1;
+}
+static_assert(loadedAlignmentFailure(), "loaded alignment failure stops matching mode and prevents stacking");
+static_assert(workLookFailures(), "look failure prevents empty work-area vision");
+static_assert(retrievalWaitInterrupted(), "interruption during settling wait prevents retrieval");
 static_assert(fullRound(START_ZONE_1), "right home: complete ordered round without repeated actions");
 static_assert(fullRound(START_ZONE_2), "left home: preserve zone and restore initial heading");
 static_assert(grabFailure(), "round two grab failure stops recognition and progress");
