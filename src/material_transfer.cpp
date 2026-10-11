@@ -124,7 +124,7 @@ bool placeAt(const MaterialStationPose &pose, float targetHeight) {
     // 放置顺序：夹持物料到目标上方 -> 下降 -> 张开夹爪 -> 提升到安全高度。
     if (!moveAbove(pose, materialTransferLayout.clawClosedAngle)) return false;
     if (!MoveArm(targetHeight, -1, -1, materialTransferLayout.clawClosedAngle, materialMotionSteps.placeDescendSpeed)) return false;
-    waitForArm(1.5);
+    waitForArm(2);
     if (!MoveArm(-1, -1, -1, materialTransferLayout.clawOpenAngle, materialMotionSteps.placeReleaseSpeed)) return false;
     waitForArm();
     if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1, materialMotionSteps.placeLiftSpeed)) return false;

@@ -41,7 +41,7 @@
           "integer": false
         },
         "搬运/载物台1/转台(deg)": {
-          "value": 242.0,
+          "value": 240.0,
           "description": "载物台1：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -180.0,
           "maximum": 360.0,
@@ -55,14 +55,14 @@
           "integer": false
         },
         "搬运/工作区1/伸出(mm)": {
-          "value": 61.0,
+          "value": 69.3000031,
           "description": "工作区1：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区1/转台(deg)": {
-          "value": 48.0,
+          "value": 49.7999992,
           "description": "工作区1：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -180.0,
           "maximum": 360.0,
@@ -97,14 +97,14 @@
           "integer": false
         },
         "搬运/工作区2/伸出(mm)": {
-          "value": 0.0,
+          "value": 8.0,
           "description": "工作区2：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区2/转台(deg)": {
-          "value": 86.0,
+          "value": 85.6999969,
           "description": "工作区2：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -180.0,
           "maximum": 360.0,
@@ -139,14 +139,14 @@
           "integer": false
         },
         "搬运/工作区3/伸出(mm)": {
-          "value": 39.0,
+          "value": 45.5,
           "description": "工作区3：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区3/转台(deg)": {
-          "value": 125.300003,
+          "value": 123.400002,
           "description": "工作区3：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -180.0,
           "maximum": 360.0,
@@ -181,7 +181,7 @@
           "integer": false
         },
         "搬运/夹爪夹紧(deg)": {
-          "value": -5.0,
+          "value": -7.0,
           "description": "抓取夹紧和搬运持物时夹爪目标角度；不要填-1（表示不移动）。",
           "minimum": -360.0,
           "maximum": 360.0,
