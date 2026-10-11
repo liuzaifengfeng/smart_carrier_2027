@@ -16,7 +16,8 @@ import tkinter as tk
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
-from tkinter import messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
+from parameter_config import DEFAULT_CONFIG_PATH, load_config, config_edits, export_config
 
 try:
     import serial
@@ -270,8 +271,112 @@ def parse_parameter(fields: list[str]) -> Parameter:
     return Parameter(index, fields[3], fields[4], minimum, maximum, fields[7] == "1")
 
 
+PARAMETER_STAGES = (
+    "全部参数", "开局与扫码", "圆盘抓取（两轮）", "粗加工（两轮）",
+    "暂存第一层", "暂存第二层", "返航归位", "机械臂公共参数",
+    "底盘导航与标定",
+)
+
+PARAMETER_STAGE_HELP = {
+    "开局与扫码": "开局/扫码路径相关的地图和底盘参数；扫码距离与重试数仍在固件源码中。",
+    "圆盘抓取（两轮）": "两轮共用圆盘位置和载物台位置；DISC / DISC_MATERIAL 对齐参数与公共抓放参数一起显示。",
+    "粗加工（两轮）": "两轮共用工作区位置；粗加工区与暂存区目前使用同一套工作区坐标。",
+    "暂存第一层": "使用工作区基础高度；位置与粗加工区共用。",
+    "暂存第二层": "使用工作区基础高度与二层高度增量；使用 WORK_AREA_LOADED 对齐。",
+    "返航归位": "回启停区的 CORNER 对齐及返航节点参数。",
+    "机械臂公共参数": "抓放步骤公共速度、夹爪角度、等待时间与升降/伸缩标定。",
+    "底盘导航与标定": "25 个地图节点、底盘脉冲标定及停车稳定时间。",
+}
+
+
+def parameter_matches_stage(name: str, stage: str) -> bool:
+    if stage == "全部参数":
+        return True
+    common = name.startswith(("搬运/安全高度", "搬运/速度", "搬运/夹爪",
+                              "搬运/等待时间", "标定/升降", "标定/伸缩"))
+    pid = name.startswith("PID/")
+    if stage == "机械臂公共参数":
+        return common
+    if stage == "底盘导航与标定":
+        return name.startswith(("底盘/", "地图/", "标定/X", "标定/Y", "标定/旋转")) or name == "对齐/最大轮速(RPM)"
+    if stage == "开局与扫码":
+        return name.startswith(("地图/节点0/", "地图/节点2/", "底盘/", "标定/X", "标定/Y", "标定/旋转"))
+    if stage == "圆盘抓取（两轮）":
+        return (common or pid or name.startswith(("搬运/圆盘/", "搬运/圆盘预抓/", "搬运/圆盘提起/", "搬运/载物台", "对齐/DISC/",
+                       "对齐/DISC_MATERIAL/", "地图/节点14/"))
+                or name in ("对齐/最大轮速(RPM)", "底盘/节点导航轮速(RPM)"))
+    if stage in ("粗加工（两轮）", "暂存第一层", "暂存第二层"):
+        mode = "WORK_AREA_LOADED" if stage == "暂存第二层" else "WORK_AREA"
+        node = "10" if stage == "粗加工（两轮）" else "22"
+        return (common or pid or name.startswith(("搬运/载物台", "搬运/工作区",
+                       f"对齐/{mode}/", f"地图/节点{node}/"))
+                or name in ("对齐/最大轮速(RPM)", "底盘/节点导航轮速(RPM)")
+                or (stage == "暂存第二层" and name == "搬运/二层高度增量(mm)"))
+    if stage == "返航归位":
+        return (pid or name.startswith(("对齐/CORNER/", "地图/节点0/", "地图/节点4/", "地图/节点22/"))
+                or name in ("对齐/最大轮速(RPM)", "底盘/节点导航轮速(RPM)"))
+    return False
+
+
+PARAMETER_TEST_ACTIONS = {
+    "全部参数": ("试选中机械臂轴", "圆盘抓取一件", "三件放到工作区", "三件码垛第二层", "三件从工作区取回", "开启视觉定位", "底盘小距离移动", "开局机械臂姿态"),
+    "开局与扫码": ("开局机械臂姿态", "底盘小距离移动"),
+    "圆盘抓取（两轮）": ("试选中机械臂轴", "圆盘抓取一件", "开启视觉定位"),
+    "粗加工（两轮）": ("试选中机械臂轴", "三件放到工作区", "三件从工作区取回", "开启视觉定位"),
+    "暂存第一层": ("试选中机械臂轴", "三件放到工作区", "三件从工作区取回", "开启视觉定位"),
+    "暂存第二层": ("试选中机械臂轴", "三件码垛第二层", "三件从工作区取回", "开启视觉定位"),
+    "返航归位": ("开启视觉定位", "底盘小距离移动", "开局机械臂姿态"),
+    "机械臂公共参数": ("试选中机械臂轴", "三件放到工作区", "三件码垛第二层"),
+    "底盘导航与标定": ("底盘小距离移动",),
+}
+
+
+def build_parameter_test_command(action: str, stage: str, selected_name: str | None,
+                                 values: dict[str, float], *, color: int = 1, cargo: int = 1,
+                                 move: tuple[str, str, str, str] = ("0", "0", "0", "80")) -> str:
+    """只构造一条已有的 Debug 测试指令；参数提交与回读由面板负责。"""
+    if action == "试选中机械臂轴":
+        if not selected_name or selected_name not in values:
+            raise ValueError("请先选中一个机械臂位置或夹爪角度参数")
+        value = values[selected_name]
+        speed = values.get("搬运/速度", 150)
+        if selected_name.startswith("搬运/") and selected_name.endswith("/高度(mm)"):
+            return build_debug_command("MoveArm_1", [str(value), "-1", str(speed)])
+        if selected_name == "搬运/安全高度(mm)":
+            return build_debug_command("MoveArm_1", [str(value), "-1", str(speed)])
+        if selected_name.startswith("搬运/") and selected_name.endswith("/伸出(mm)"):
+            return build_debug_command("MoveArm_1", ["-1", str(value), str(speed)])
+        if selected_name.startswith("搬运/") and selected_name.endswith("/转台(deg)"):
+            if value == -1:
+                raise ValueError("转台 -1 是跳过值，请选择实际角度")
+            return build_debug_command("MoveArm_2", [str(value), "-1", str(speed)])
+        if selected_name in ("搬运/夹爪张开(deg)", "搬运/夹爪夹紧(deg)"):
+            if value == -1:
+                raise ValueError("夹爪 -1 是跳过值，请选择实际角度")
+            return build_debug_command("MoveArm_2", ["-1", str(value), str(speed)])
+        raise ValueError("该参数没有对应的单轴动作；请选择本阶段的搬运/视觉测试")
+    if action == "圆盘抓取一件":
+        return build_force_disc_grab_command(color, cargo)
+    if action in ("三件放到工作区", "三件码垛第二层", "三件从工作区取回"):
+        command = {"三件放到工作区": "MaterialDemo", "三件码垛第二层": "MaterialDemo2",
+                   "三件从工作区取回": "MaterialDemo4"}[action]
+        return build_debug_command(command, [])
+    if action == "开启视觉定位":
+        mode = {"圆盘抓取（两轮）": "DISC", "粗加工（两轮）": "WORK_AREA",
+                "暂存第一层": "WORK_AREA", "暂存第二层": "WORK_AREA_LOADED",
+                "返航归位": "CORNER"}.get(stage)
+        if mode is None:
+            raise ValueError("请先选择具体比赛阶段，再开启对应视觉定位")
+        return build_vision_start_request_command(mode)
+    if action == "底盘小距离移动":
+        return build_debug_command("MovePosition", list(move))
+    if action == "开局机械臂姿态":
+        return build_debug_command("InitArm_start", [])
+    raise ValueError("未知试动作")
+
+
 class ParameterPanel(ttk.Frame):
-    def __init__(self, parent, send_line, log):
+    def __init__(self, parent, send_line, log, run_main=None):
         super().__init__(parent, padding=8)
         self.send_line = send_line
         self.log = log
@@ -286,16 +391,88 @@ class ParameterPanel(ttk.Frame):
         self.timer = None
         self.selected = None
         self.verifying = False
+        self.run_main = run_main
+        self.run_after_verify = False
+        self.test_after_verify = None
+        self.test_running = None
+        self.active_test_vision_mode = None
+        self.descriptions = {}
+        try:
+            for group in load_config(DEFAULT_CONFIG_PATH)["groups"].values():
+                for name, entry in group["parameters"].items():
+                    self.descriptions[name] = entry.get("description", "")
+        except (OSError, ValueError):
+            pass
         ttk.Label(self, text="运行参数", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w")
-        ttk.Label(self, text="发送后保存在小车内存，重启恢复默认值。\n读写前停止视觉对齐；写入需调试模式。", justify=tk.LEFT).pack(anchor="w", pady=5)
+        ttk.Label(self, text="发送后保存在小车内存；重启恢复最近一次烧录的 JSON 默认值。\n读写前停止视觉对齐；写入需调试模式。", justify=tk.LEFT).pack(anchor="w", pady=5)
         toolbar = ttk.Frame(self)
         toolbar.pack(fill=tk.X)
-        self.read_button = ttk.Button(toolbar, text="一键读取", command=self.read)
+        edit_actions = ttk.Frame(toolbar)
+        edit_actions.pack(fill=tk.X)
+        file_actions = ttk.Frame(toolbar)
+        file_actions.pack(fill=tk.X, pady=(4, 0))
+        run_actions = ttk.Frame(toolbar)
+        run_actions.pack(fill=tk.X, pady=(4, 0))
+        self.read_button = ttk.Button(edit_actions, text="一键读取", command=self.read)
         self.read_button.pack(side=tk.LEFT)
-        self.send_button = ttk.Button(toolbar, text="发送修改", command=self.send)
-        self.send_button.pack(side=tk.LEFT, padx=5)
-        self.revert_button = ttk.Button(toolbar, text="撤销编辑", command=self.revert)
-        self.revert_button.pack(side=tk.LEFT)
+        self.send_button = ttk.Button(edit_actions, text="发送修改", command=self.send)
+        self.send_button.pack(side=tk.LEFT, padx=4)
+        self.revert_button = ttk.Button(edit_actions, text="撤销编辑", command=self.revert)
+        self.revert_button.pack(side=tk.LEFT, padx=4)
+        self.import_button = ttk.Button(file_actions, text="导入 JSON", command=self.import_json)
+        self.import_button.pack(side=tk.LEFT)
+        self.export_button = ttk.Button(file_actions, text="导出 JSON", command=self.export_json)
+        self.export_button.pack(side=tk.LEFT, padx=4)
+        self.save_default_button = ttk.Button(file_actions, text="保存为烧录默认值", command=self.save_defaults)
+        self.save_default_button.pack(side=tk.LEFT)
+        self.run_button = ttk.Button(run_actions, text="发送并进入主流程", command=self.send_and_run)
+        self.run_button.pack(side=tk.LEFT)
+        ttk.Label(run_actions, text="回读成功后进入 WAIT_START", foreground="#59636e").pack(side=tk.LEFT, padx=8)
+        filter_bar = ttk.Frame(self)
+        filter_bar.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(filter_bar, text="分类").pack(side=tk.LEFT)
+        self.category = tk.StringVar(value="全部参数")
+        self.category_box = ttk.Combobox(filter_bar, textvariable=self.category,
+                                          values=PARAMETER_STAGES,
+                                          state="readonly", width=19)
+        self.category_box.pack(side=tk.LEFT, padx=(4, 12))
+        self.category_box.bind("<<ComboboxSelected>>", self.refresh_tree)
+        ttk.Label(filter_bar, text="搜索").pack(side=tk.LEFT)
+        self.search = tk.StringVar()
+        self.search_entry = ttk.Entry(filter_bar, textvariable=self.search)
+        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        self.search.trace_add("write", lambda *_: self.refresh_tree())
+        self.stage_help = tk.StringVar(value="按比赛阶段筛选；同一套参数可能在多个阶段共用。")
+        ttk.Label(self, textvariable=self.stage_help, foreground="#59636e",
+                  wraplength=620, justify=tk.LEFT).pack(anchor="w", pady=(3, 0))
+        test_bar = ttk.LabelFrame(self, text="当前阶段试动作", padding=5)
+        test_bar.pack(fill=tk.X, pady=(5, 0))
+        self.test_action = tk.StringVar(value="试选中机械臂轴")
+        self.test_action_box = ttk.Combobox(test_bar, textvariable=self.test_action,
+            values=PARAMETER_TEST_ACTIONS["全部参数"], state="readonly", width=25)
+        self.test_action_box.grid(row=0, column=0, sticky="ew")
+        self.test_action_box.bind("<<ComboboxSelected>>", self.update_test_options)
+        self.test_button = ttk.Button(test_bar, text="应用参数并试动作", command=self.apply_and_test)
+        self.test_button.grid(row=0, column=1, padx=(5, 0))
+        self.stop_test_button = ttk.Button(test_bar, text="停止视觉定位", command=self.stop_test_vision)
+        self.stop_test_button.grid(row=0, column=2, padx=(5, 0))
+        test_bar.columnconfigure(0, weight=1)
+        self.test_inputs = ttk.Frame(test_bar)
+        self.test_inputs.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        self.test_vars = {key: tk.StringVar(value=value) for key, value in
+                          {"颜色": "1", "载物台": "1", "X(mm)": "0", "Y(mm)": "0",
+                           "转角(deg)": "0", "轮速(RPM)": "80"}.items()}
+        self.test_fields = {}
+        for key, variable in self.test_vars.items():
+            frame = ttk.Frame(self.test_inputs)
+            ttk.Label(frame, text=key).pack(side=tk.LEFT)
+            ttk.Entry(frame, textvariable=variable, width=6).pack(side=tk.LEFT, padx=(3, 7))
+            self.test_fields[key] = frame
+        self.test_note = tk.StringVar()
+        ttk.Label(test_bar, textvariable=self.test_note, foreground="#8a4b12",
+                  wraplength=580, justify=tk.LEFT).grid(row=2, column=0, columnspan=3,
+                                                         sticky="w", pady=(3, 0))
+        self.update_test_options()
         body = ttk.Frame(self)
         body.pack(fill=tk.BOTH, expand=True, pady=8)
         body.rowconfigure(0, weight=1)
@@ -312,26 +489,241 @@ class ParameterPanel(ttk.Frame):
         self.tree.configure(yscrollcommand=scroll.set, xscrollcommand=horizontal.set)
         self.tree.tag_configure("dirty", foreground="#b05b00")
         self.tree.bind("<<TreeviewSelect>>", self.select)
-        self.tree.bind("<Double-1>", lambda _event: self.entry.focus_set())
-        self.label = tk.StringVar(value="选择参数后在下方修改；数组编号从 1 开始。")
+        self.tree.bind("<Double-1>", self.focus_editor)
+        self.label = tk.StringVar(value="选择表格中的参数，在这里输入新值；数组编号从 1 开始。")
         ttk.Label(self, textvariable=self.label, wraplength=430).pack(anchor="w")
         editor = ttk.Frame(self)
         editor.pack(fill=tk.X, pady=6)
+        ttk.Label(editor, text="新值").pack(side=tk.LEFT, padx=(0, 5))
         self.value = tk.StringVar()
         self.entry = ttk.Entry(editor, textvariable=self.value, width=20)
         self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.entry.bind("<Return>", lambda _event: self.edit())
-        self.edit_button = ttk.Button(editor, text="修改选中项", command=self.edit)
+        self.entry.bind("<Return>", lambda _event: self.edit_and_send())
+        self.apply_button = ttk.Button(editor, text="修改并发送", command=self.edit_and_send)
+        self.apply_button.pack(side=tk.LEFT, padx=(5, 0))
+        self.edit_button = ttk.Button(editor, text="暂存多项", command=self.edit)
         self.edit_button.pack(side=tk.LEFT, padx=5)
         self.status = tk.StringVar(value="连接串口后点击“一键读取”。")
         ttk.Label(self, textvariable=self.status, wraplength=430).pack(anchor="w", pady=5)
+        # 编辑区始终位于表格上方，窗口高度不足时表格缩小并保留滚动条。
+        body.pack_forget()
+        body.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
         self.update_controls()
 
     def update_controls(self):
-        idle = not self.mode
+        idle = not self.mode and not self.test_running
         self.read_button.configure(state=tk.NORMAL if idle else tk.DISABLED)
-        for widget in (self.send_button, self.edit_button, self.revert_button, self.entry):
+        for widget in (self.send_button, self.edit_button, self.revert_button, self.entry,
+                       self.import_button, self.export_button, self.apply_button,
+                       self.save_default_button):
             widget.configure(state=tk.NORMAL if idle and self.ready else tk.DISABLED)
+        self.run_button.configure(state=tk.NORMAL if idle and self.ready and self.run_main else tk.DISABLED)
+        self.test_button.configure(state=tk.NORMAL if idle and self.ready and not self.test_running else tk.DISABLED)
+        self.stop_test_button.configure(state=tk.NORMAL if idle and self.ready else tk.DISABLED)
+
+    def refresh_tree(self, _event=None):
+        stage = self.category.get()
+        query = self.search.get().strip().casefold()
+        selection = self.tree.selection()
+        selected = selection[0] if selection else None
+        self.tree.delete(*self.tree.get_children())
+        for p in self.parameters.values():
+            if not parameter_matches_stage(p.name, stage):
+                continue
+            if query and query not in p.name.casefold() and query not in self.descriptions.get(p.name, "").casefold():
+                continue
+            self.tree.insert("", tk.END, iid=str(p.index),
+                             values=(p.name, p.value, self.edits.get(p.index, "")),
+                             tags=("dirty",) if p.index in self.edits else ())
+        self.stage_help.set(PARAMETER_STAGE_HELP.get(stage,
+                            "按比赛阶段筛选；同一套参数可能在多个阶段共用。")
+                            + f"  当前显示 {len(self.tree.get_children())} 项。")
+        choices = PARAMETER_TEST_ACTIONS.get(stage, PARAMETER_TEST_ACTIONS["全部参数"])
+        self.test_action_box.configure(values=choices)
+        if self.test_action.get() not in choices:
+            self.test_action.set(choices[0])
+        self.update_test_options()
+        if selected and self.tree.exists(selected):
+            self.tree.selection_set(selected)
+        else:
+            self.selected = None
+            self.value.set("")
+
+    def focus_editor(self, _event=None):
+        self.select()
+        if self.selected is not None:
+            self.entry.focus_set()
+            self.entry.select_range(0, tk.END)
+
+    def update_test_options(self, _event=None):
+        for frame in self.test_fields.values():
+            frame.pack_forget()
+        action = self.test_action.get()
+        if action == "圆盘抓取一件":
+            for name in ("颜色", "载物台"):
+                self.test_fields[name].pack(side=tk.LEFT)
+            note = "圆盘放好一件物料、目标载物台为空；动作会真实抓取并放入载物台。"
+        elif action == "底盘小距离移动":
+            for name in ("X(mm)", "Y(mm)", "转角(deg)", "轮速(RPM)"):
+                self.test_fields[name].pack(side=tk.LEFT)
+            note = "按车身相对坐标移动；请先输入小距离，观察实际位移。"
+        elif action == "试选中机械臂轴":
+            note = "先选中高度、伸出、转台或夹爪参数；按回读值只移动对应轴。"
+        elif action == "三件放到工作区":
+            note = "三个载物台须各有物料，小车停在目标区；按 1→1、2→2、3→3 放置。"
+        elif action == "三件码垛第二层":
+            note = "三个载物台须各有物料，工作区第一层已就位；会真实码垛三件。"
+        elif action == "三件从工作区取回":
+            note = "工作区三个位置须各有物料、载物台为空；按 1→3、2→2、3→1 取回。"
+        elif action == "开启视觉定位":
+            note = "请求机载视觉并开启本阶段闭环；试完请点“停止视觉定位”。"
+        else:
+            note = "机械臂会移动到开局姿态。"
+        self.test_note.set(note)
+
+    def apply_and_test(self):
+        if self.mode or not self.ready or self.test_running or not self.edit():
+            return
+        try:
+            values = {p.name: float(self.edits.get(p.index, p.value))
+                      for p in self.parameters.values()}
+            selected_name = self.parameters[self.selected].name if self.selected is not None else None
+            action = self.test_action.get()
+            color = int(self.test_vars["颜色"].get()) if action == "圆盘抓取一件" else 1
+            cargo = int(self.test_vars["载物台"].get()) if action == "圆盘抓取一件" else 1
+            line = build_parameter_test_command(
+                action, self.category.get(), selected_name, values,
+                color=color, cargo=cargo,
+                move=tuple(self.test_vars[name].get() for name in
+                           ("X(mm)", "Y(mm)", "转角(deg)", "轮速(RPM)")),
+            )
+        except (ValueError, OverflowError) as exc:
+            messagebox.showerror("试动作参数无效", str(exc), parent=self)
+            return
+        if self.edits:
+            self.run_after_verify = False
+            self.test_after_verify = (action, line)
+            self.send()
+        else:
+            self.dispatch_test(action, line)
+
+    def dispatch_test(self, action, line):
+        try:
+            self.send_line(line)
+        except (RuntimeError, OSError) as exc:
+            self.status.set(f"试动作未发送：{exc}")
+            return
+        self.log("TX", line)
+        request = tuple(line[1:-1].split(","))  # 已由 build_* 验证的 CMD 帧。
+        self.test_running = (action, request) if action != "开启视觉定位" else None
+        if action == "开启视觉定位":
+            self.active_test_vision_mode = request[3]
+        self.status.set(f"已下发“{action}”；查看日志中的动作结果，接令不代表物理到位。")
+        self.update_controls()
+
+    def stop_test_vision(self):
+        if self.mode or not self.ready:
+            return
+        mode = self.active_test_vision_mode or {"圆盘抓取（两轮）": "DISC", "粗加工（两轮）": "WORK_AREA",
+                "暂存第一层": "WORK_AREA", "暂存第二层": "WORK_AREA_LOADED",
+                "返航归位": "CORNER"}.get(self.category.get())
+        if mode is None:
+            self.status.set("请先选择具体比赛阶段，再停止对应视觉定位。")
+            return
+        line = build_vision_stop_request_command(mode)
+        try:
+            self.send_line(line)
+        except (RuntimeError, OSError) as exc:
+            self.status.set(f"停止视觉定位未发送：{exc}")
+            return
+        self.log("TX", line)
+        self.active_test_vision_mode = None
+        self.status.set(f"已请求停止 {mode} 视觉定位。")
+
+    def receive_test_result(self, text):
+        if not self.test_running:
+            return
+        fields = parse_frame(text)
+        if fields is None:
+            return
+        action, request = self.test_running
+        category, command = request[1:3]
+        complete = False
+        result = ""
+        if fields[:3] == ("RSP", category, command) and len(fields) >= 4 and fields[3] == "ERR":
+            complete, result = True, "被固件拒绝：" + text
+        elif fields[:3] == ("EVT", category, command) and len(fields) >= 4:
+            if fields[3] in ("DONE", "FAILED", "ISSUED", "REQUESTED"):
+                complete = True
+                result = ("固件报告失败" if fields[3] == "FAILED" else
+                          "动作序列已结束，需目测确认" if fields[3] == "DONE" else
+                          "指令已下发，需目测确认" if fields[3] == "ISSUED" else
+                          "抓取接口已返回，需目测确认")
+        if complete:
+            self.test_running = None
+            self.status.set(f"“{action}”：{result}。")
+            self.update_controls()
+
+    def edit_and_send(self):
+        if self.edit():
+            self.send()
+
+    def save_defaults(self):
+        if self.mode or not self.ready or not self.edit():
+            return
+        if self.edits:
+            self.status.set("还有待发送修改；请先发送并回读确认，再保存为烧录默认值。")
+            return
+        try:
+            export_config(DEFAULT_CONFIG_PATH, self.parameters, {})
+        except (OSError, ValueError, OverflowError) as exc:
+            messagebox.showerror("保存失败", str(exc), parent=self)
+            return
+        self.status.set("已保存到 robot_parameters.json；下次 PlatformIO 上传后成为重启默认值。")
+
+    def send_and_run(self):
+        if self.mode or not self.ready or not self.run_main or not self.edit():
+            return
+        if not self.edits:
+            if self.run_main() is not False:
+                self.status.set("已发送进入 Release 主流程指令；仍需设置启停区，并在准备完成后发送 START。")
+            return
+        self.run_after_verify = True
+        self.test_after_verify = None
+        self.send()
+
+    def import_json(self):
+        if self.mode or not self.ready:
+            return
+        path = filedialog.askopenfilename(parent=self, title="导入运行参数",
+            initialdir=str(DEFAULT_CONFIG_PATH.parent),
+            filetypes=[("JSON 参数文件", "*.json")])
+        if not path:
+            return
+        try:
+            edits = config_edits(load_config(path), self.parameters)
+        except (OSError, ValueError, OverflowError) as exc:
+            messagebox.showerror("导入失败", str(exc), parent=self)
+            return
+        self.edits = edits
+        self.refresh_tree()
+        self.select()
+        self.status.set(f"JSON 已导入 {len(edits)} 项修改；点击“发送修改”后生效。")
+
+    def export_json(self):
+        if self.mode or not self.ready or not self.edit():
+            return
+        path = filedialog.asksaveasfilename(parent=self, title="导出当前值和待发送编辑",
+            initialdir=str(DEFAULT_CONFIG_PATH.parent), initialfile="robot_parameters_custom.json",
+            defaultextension=".json", filetypes=[("JSON 参数文件", "*.json")])
+        if not path:
+            return
+        try:
+            export_config(path, self.parameters, self.edits)
+        except (OSError, ValueError, OverflowError) as exc:
+            messagebox.showerror("导出失败", str(exc), parent=self)
+            return
+        self.status.set("已导出当前值和待发送编辑；导出不会向小车发送参数。")
 
     def cancel_timer(self):
         if self.timer is not None:
@@ -343,10 +735,14 @@ class ParameterPanel(ttk.Frame):
         self.mode = ""
         self.ready = False
         self.commands.clear()
+        self.run_after_verify = False
+        self.test_after_verify = None
         self.status.set(message + "；请重新读取确认小车当前值。")
         self.update_controls()
 
     def disconnected(self):
+        self.test_running = None
+        self.active_test_vision_mode = None
         self.fail("连接已变化，旧参数不能继续发送")
 
     def transmit(self, line):
@@ -366,6 +762,9 @@ class ParameterPanel(ttk.Frame):
         if not verify and self.edits:
             if not messagebox.askyesno("重新读取", "重新读取会丢弃未发送的编辑，是否继续？", parent=self):
                 return
+        if not verify:
+            self.run_after_verify = False
+            self.test_after_verify = None
         self.sequence += 1
         self.mode = "read"
         self.ready = False
@@ -382,8 +781,26 @@ class ParameterPanel(ttk.Frame):
         self.selected = int(selection[0])
         p = self.parameters[self.selected]
         self.value.set(self.edits.get(p.index, p.value))
+        if self.test_action.get() == "试选中机械臂轴":
+            choices = PARAMETER_TEST_ACTIONS.get(self.category.get(), ())
+            if p.name.startswith(("PID/", "对齐/")) and "开启视觉定位" in choices and self.category.get() in (
+                    "圆盘抓取（两轮）", "粗加工（两轮）", "暂存第一层", "暂存第二层", "返航归位"):
+                self.test_action.set("开启视觉定位")
+                self.update_test_options()
+            elif p.name.startswith(("标定/X", "标定/Y", "标定/旋转")) and "底盘小距离移动" in choices:
+                self.test_action.set("底盘小距离移动")
+                self.update_test_options()
+            elif p.name.startswith("搬运/") and not (p.name.endswith(("/高度(mm)", "/伸出(mm)", "/转台(deg)"))
+                    or p.name in ("搬运/安全高度(mm)", "搬运/夹爪张开(deg)", "搬运/夹爪夹紧(deg)")):
+                for candidate in ("三件放到工作区", "三件码垛第二层", "圆盘抓取一件"):
+                    if candidate in choices:
+                        self.test_action.set(candidate)
+                        self.update_test_options()
+                        break
         kind = "整数" if p.integer else "数值"
-        self.label.set(f"{p.name}\n允许范围：{p.minimum:g}～{p.maximum:g}（{kind}）")
+        description = self.descriptions.get(p.name, "")
+        self.label.set(f"{p.name}\n允许范围：{p.minimum:g}～{p.maximum:g}（{kind}）"
+                       + (f"\n{description}" if description else ""))
 
     def edit(self):
         if not self.ready or self.mode or self.selected is None:
@@ -408,8 +825,7 @@ class ParameterPanel(ttk.Frame):
 
     def revert(self):
         self.edits.clear()
-        for p in self.parameters.values():
-            self.tree.item(str(p.index), values=(p.name, p.value, ""), tags=())
+        self.refresh_tree()
         self.select()
         self.status.set("已撤销本地编辑。")
 
@@ -473,16 +889,23 @@ class ParameterPanel(ttk.Frame):
                             raise ValueError("回读值与发送值不一致")
                 self.parameters = self.received
                 self.edits.clear()
-                self.tree.delete(*self.tree.get_children())
                 self.selected = None
                 self.value.set("")
-                for p in self.parameters.values():
-                    self.tree.insert("", tk.END, iid=str(p.index), values=(p.name, p.value, ""))
+                self.refresh_tree()
                 self.cancel_timer()
                 self.mode = ""
                 self.ready = True
-                self.status.set(f"修改已生效并回读确认，共 {count} 项。重启恢复默认值。" if self.verifying else f"已读取 {count} 项参数，选择一项开始编辑。")
+                self.status.set(f"修改已生效并回读确认，共 {count} 项。重启恢复烧录默认值。" if self.verifying else f"已读取 {count} 项参数，选择一项开始编辑。")
                 self.update_controls()
+                if self.verifying and self.run_after_verify:
+                    self.run_after_verify = False
+                    if self.run_main:
+                        if self.run_main() is not False:
+                            self.status.set("参数回读确认后已发送进入 Release 主流程指令；仍需设置启停区并发送 START。")
+                if self.verifying and self.test_after_verify:
+                    action, line = self.test_after_verify
+                    self.test_after_verify = None
+                    self.dispatch_test(action, line)
             elif self.mode == "write" and fields[0] == "OK" and ",".join(fields[2:]) == self.expected:
                 self.cancel_timer()
                 if self.commands:
@@ -972,12 +1395,21 @@ class SerialLink:
         self._port.write((command + "\n").encode("utf-8"))
 
     def _read_loop(self) -> None:
+        pending = bytearray()
         try:
             while not self._stop.is_set() and self._port is not None:
-                data = self._port.readline()
-                if data:
-                    text = data.decode("utf-8", errors="replace").rstrip("\r\n")
+                data = self._port.read(256)
+                if not data:
+                    continue
+                pending.extend(data)
+                while b"\n" in pending:
+                    raw, _, tail = pending.partition(b"\n")
+                    pending = bytearray(tail)
+                    text = raw.rstrip(b"\r").decode("utf-8", errors="replace")
                     self.events.put(("RX", text, datetime.now()))
+                if len(pending) > 2048:
+                    self.events.put(("RX", "[串口] 丢弃超过 2048 字节的未换行数据", datetime.now()))
+                    pending.clear()
         except Exception as exc:
             if not self._stop.is_set():
                 self.events.put(("ERROR", f"串口读取失败：{exc}", datetime.now()))
@@ -1808,8 +2240,8 @@ class UpperComputerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title("智能搬运车调试上位机 - 有线串口")
-        width = min(1180, max(1, root.winfo_screenwidth() - 40))
-        height = min(780, max(1, root.winfo_screenheight() - 100))
+        width = min(1400, max(1, root.winfo_screenwidth() - 40))
+        height = min(900, max(1, root.winfo_screenheight() - 80))
         root.geometry(f"{width}x{height}")
         root.minsize(min(740, width), min(480, height))
         self.serial_events: queue.Queue[tuple[str, str, datetime]] = queue.Queue()
@@ -1880,7 +2312,7 @@ class UpperComputerApp:
         self.field = FieldCanvas(container)
         self.field.grid(row=1, column=0, sticky="nsew", padx=(0, 12))
 
-        notebook = ttk.Notebook(container, width=500)
+        notebook = ttk.Notebook(container, width=min(630, max(480, int(width * 0.44))))
         notebook.grid(row=1, column=1, sticky="ns")
         pose_page = ScrollableTab(notebook, padding=12)
         chassis_page = ScrollableTab(notebook)
@@ -1900,7 +2332,10 @@ class UpperComputerApp:
         notebook.add(keyboard_page, text="键盘控制")
         notebook.add(log_tab, text="日志")
         notebook.add(vision_page, text="视觉")
-        self.parameter_panel = ParameterPanel(notebook, self.serial_link.send_line, self.append_log)
+        self.parameter_panel = ParameterPanel(
+            notebook, self.serial_link.send_line, self.append_log,
+            run_main=lambda: self.send_command("Mode:Release"),
+        )
         notebook.add(self.parameter_panel, text="参数")
 
         led_page = ScrollableTab(notebook, padding=12)
@@ -2621,24 +3056,25 @@ class UpperComputerApp:
         self.command_vars["En_C"][0].set("1" if enabled else "0")
         self.send_command("En_C")
 
-    def send_command(self, command: str) -> None:
+    def send_command(self, command: str) -> bool:
         if command in ("GOTOpose", "MovePosition") and self.pending_target is not None:
             messagebox.showerror(
                 "命令未发送",
                 "姿态页目标仍在等待回显，请勿同时发送另一条位置移动指令。",
                 parent=self.root,
             )
-            return
+            return False
         variables = self.command_vars.get(command, [])
         try:
             line = build_debug_command(command, [variable.get() for variable in variables])
             self.serial_link.send_line(line)
         except (ValueError, RuntimeError, OSError) as exc:
             messagebox.showerror("命令未发送", str(exc), parent=self.root)
-            return
+            return False
         self.append_log("TX", line)
         if command == "MovePosition":
             self.position_move_status.set("位置移动已发送，等待小车接令；回显不代表实际到位。")
+        return True
 
     def send_vision_start_request(self, mode: str) -> None:
         self._send_vision_request(mode, True)
@@ -3198,6 +3634,7 @@ class UpperComputerApp:
                     self.status_var.set(f"路径命令失败或被拒绝：{text}")
                 was_reading = self.parameter_panel.mode == "read"
                 self.parameter_panel.receive(text)
+                self.parameter_panel.receive_test_result(text)
                 if was_reading and self.parameter_panel.ready:
                     # 节点数组回读成功后同步地图，避免画面坐标与车上配置不一致。
                     values = {p.name: float(p.value) for p in self.parameter_panel.parameters.values()}

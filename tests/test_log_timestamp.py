@@ -30,10 +30,10 @@ class LogTimestampTests(unittest.TestCase):
         events = queue.Queue()
         link = SerialLink(events)
         link._port = Mock()
-        def read_line():
+        def read_chunk(_size):
             link._stop.set()
             return b"{RSP,VISION,COLOR,OK}\r\n"
-        link._port.readline.side_effect = read_line
+        link._port.read.side_effect = read_chunk
         received_at = datetime(2026, 10, 6, 12, 34, 56, 123000)
         with patch("upper_computer.datetime") as clock:
             clock.now.return_value = received_at

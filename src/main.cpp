@@ -82,7 +82,6 @@ void Task_MainStateMachine(void *pvParameters) {
             InitArm_start();
             constexpr float SCAN_APPROACH_MM = 900.0f;
             constexpr float SCAN_RANGE_MM = 400.0f;
-            constexpr float SCAN_SPEED_RPM = 60.0f;
             constexpr uint8_t SCAN_MAX_RETRIES = 3;
             // 按实车方向：启停区1向左扫码（+Y），启停区2向右扫码（-Y）。
             // 本次扫码固定使用同一个区号，接近和往返扫描统一应用方向。
@@ -107,7 +106,7 @@ void Task_MainStateMachine(void *pvParameters) {
             if (!taskReceived) {
                 if (scanStartZone != START_ZONE_1 && scanStartZone != START_ZONE_2) {
                     Serial.println("[SCANNER] ERR: invalid start zone");
-                } else if (!MovePosition(0, scanDirection * SCAN_APPROACH_MM, 0, SCAN_SPEED_RPM)) {
+                } else if (!MovePosition(0, scanDirection * SCAN_APPROACH_MM, 0, SCAN_APPROACH_SPEED_RPM)) {
                     Serial.println("[SCANNER] ERR: approach failed");
                 } else {
                     // 首次沿接近方向扫描 400 mm；失败后在同一区域反向重试三遍。
@@ -118,7 +117,7 @@ void Task_MainStateMachine(void *pvParameters) {
                         Serial.printf("[SCANNER] scan %u/%u, distance=%.0f mm\n",
                                       static_cast<unsigned>(attempt),
                                       static_cast<unsigned>(SCAN_MAX_RETRIES), distance);
-                        const bool completed = MovePosition(0, distance, 0, SCAN_SPEED_RPM/2, pollTaskCode);
+                        const bool completed = MovePosition(0, distance, 0, SCAN_SEARCH_SPEED_RPM, pollTaskCode);
                         if (pollTaskCode()) break;
                         if (!completed) {
                             Serial.println("[SCANNER] ERR: position move failed");
@@ -825,6 +824,10 @@ void setup() {
     pinMode(BOOT0_PIN, INPUT_PULLUP);
     const bool ledPwmReady = LedPwm_Init();
     Serial.begin(115200);
+    if (!ApplyCompiledParameterDefaults()) {
+        Serial.println("[CFG] Startup stopped: invalid compiled defaults");
+        for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
+    }
     if (!ledPwmReady) Serial.println("[LED] PWM initialization failed");
     Serial.printf("version: %s\n", VERSION);
     Servo_Init();    // 总线舵机初始化 (默认 Serial2: RX=16, TX=15, 115200bps)

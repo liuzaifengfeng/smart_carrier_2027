@@ -52,6 +52,26 @@ struct MaterialTransferLayout {
     uint32_t motionWaitMs;       // 每步动作的机械稳定等待时间
 };
 
+// 每个 MoveArm 阶段独立调速；目标位置仍由上面的工位位姿决定。
+struct MaterialMotionSteps {
+    MaterialStationPose discApproach;
+    float discOpenAngle;
+    float discLiftHeight;
+    float discApproachSpeed;
+    float discGripSpeed;
+    float discLiftSpeed;
+    float approachTranslateSpeed;
+    float approachRotateSpeed;
+    float pickDescendSpeed;
+    float pickGripSpeed;
+    float pickLiftSpeed;
+    float placeDescendSpeed;
+    float placeReleaseSpeed;
+    float placeLiftSpeed;
+};
+
+extern MaterialMotionSteps materialMotionSteps;
+
 // materialTransferLayout：所有固定位置和动作参数，标定值在 cpp 文件顶部填写。
 // cargoPlatforms：三个载物台当前的物料状态，下标 0~2 对应载物台编号 1~3。
 // 位姿未填写完整时，程序会拒绝执行搬运动作，不会控制机械臂移动。

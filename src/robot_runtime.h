@@ -34,7 +34,9 @@ constexpr uint8_t BOOT0_PIN = 0; // 板载BOOT按键，低电平按下。
 constexpr uint32_t ALIGN_FEEDBACK_TIMEOUT_MS = 300;
 constexpr uint32_t ALIGN_LOG_INTERVAL_MS = 500;
 constexpr uint32_t AUTO_ALIGN_TIMEOUT_MS = 15000; // 包含等待首帧的时间。
-constexpr uint16_t NODE_PATH_SPEED_RPM = 120;       // 自动节点路径的直行及原地旋转速度。
+extern uint32_t NODE_PATH_SPEED_RPM; // 自动节点路径的直行及原地旋转速度。
+extern uint32_t SCAN_APPROACH_SPEED_RPM;
+extern uint32_t SCAN_SEARCH_SPEED_RPM;
 constexpr uint8_t SCAN_AREA_NODE = 2;
 constexpr uint8_t DISC_AREA_NODE = 14;
 // 粗加工区中心约为 (210, 1100)，对应当前 5x5 地图的 10 号节点。

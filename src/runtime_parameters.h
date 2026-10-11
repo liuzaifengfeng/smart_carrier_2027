@@ -6,6 +6,8 @@
 void RegisterRuntimeFloat(const char *name, float &value, float minimum, float maximum);
 void RegisterRuntimeUInt(const char *name, uint32_t &value, float minimum, float maximum);
 void RegisterChassisParameters();
+// 启动时应用从 robot_parameters.json 编译进固件的默认值；失败时禁止开始动作。
+bool ApplyCompiledParameterDefaults();
 // 调用方持有对齐互斥锁；仅在调试模式且停止对齐时允许写入。
 // fields = [动作,事务编号,可选参数...]；解析结构由串口接收层完成。
 bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writable);

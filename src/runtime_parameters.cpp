@@ -2,11 +2,15 @@
 #include "chassis.h"
 #include "serial_frame.h"
 #include "material_transfer.h"
+#include "generated_parameter_defaults.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 extern uint32_t ALIGN_PID_MAX_SPEED_RPM;
+extern uint32_t NODE_PATH_SPEED_RPM;
+extern uint32_t SCAN_APPROACH_SPEED_RPM;
+extern uint32_t SCAN_SEARCH_SPEED_RPM;
 
 namespace {
 constexpr size_t MAX_PARAMETERS = 160;
@@ -67,12 +71,29 @@ void initialize() {
     }
     RegisterRuntimeFloat("搬运/安全高度(mm)", materialTransferLayout.approachHeight, 0, ARM_HEIGHT_LIMIT_MM);
     RegisterRuntimeFloat("搬运/二层高度增量(mm)", materialTransferLayout.secondLayerOffset, 0, ARM_HEIGHT_LIMIT_MM);
-    // MoveArm 中舵机时间使用 (300-speed)*3，速度不得超过 300。
+    // MoveArm 中舵机时间使用 (300-speed)*10，速度不得超过 300。
     RegisterRuntimeFloat("搬运/速度", materialTransferLayout.moveSpeed, 1, 300);
     RegisterRuntimeFloat("搬运/夹爪张开(deg)", materialTransferLayout.clawOpenAngle, -360, 360);
     RegisterRuntimeFloat("搬运/夹爪夹紧(deg)", materialTransferLayout.clawClosedAngle, -360, 360);
     RegisterRuntimeUInt("搬运/等待时间(ms)", materialTransferLayout.motionWaitMs, 1, 60000);
+    registerPose("搬运/圆盘预抓", materialMotionSteps.discApproach);
+    RegisterRuntimeFloat("搬运/圆盘预抓/张爪(deg)", materialMotionSteps.discOpenAngle, -360, 360);
+    RegisterRuntimeFloat("搬运/圆盘提起/高度(mm)", materialMotionSteps.discLiftHeight, 0, ARM_HEIGHT_LIMIT_MM);
+    RegisterRuntimeFloat("搬运/速度/圆盘预抓", materialMotionSteps.discApproachSpeed, 1, 300);
+    RegisterRuntimeFloat("搬运/速度/圆盘夹紧", materialMotionSteps.discGripSpeed, 1, 300);
+    RegisterRuntimeFloat("搬运/速度/圆盘提起", materialMotionSteps.discLiftSpeed, 1, 300);
+    RegisterRuntimeFloat("搬运/速度/移至工位平移", materialMotionSteps.approachTranslateSpeed, 1, 300);
+    RegisterRuntimeFloat("搬运/速度/移至工位转向", materialMotionSteps.approachRotateSpeed, 1, 300);
+    RegisterRuntimeFloat("搬运/速度/取料下降", materialMotionSteps.pickDescendSpeed, 1, 300);
+    RegisterRuntimeFloat("搬运/速度/取料夹紧", materialMotionSteps.pickGripSpeed, 1, 300);
+    RegisterRuntimeFloat("搬运/速度/取料提起", materialMotionSteps.pickLiftSpeed, 1, 300);
+    RegisterRuntimeFloat("搬运/速度/放料下降", materialMotionSteps.placeDescendSpeed, 1, 300);
+    RegisterRuntimeFloat("搬运/速度/放料松爪", materialMotionSteps.placeReleaseSpeed, 1, 300);
+    RegisterRuntimeFloat("搬运/速度/放料提起", materialMotionSteps.placeLiftSpeed, 1, 300);
     RegisterChassisParameters();
+    RegisterRuntimeUInt("底盘/节点导航轮速(RPM)", NODE_PATH_SPEED_RPM, 1, 5000);
+    RegisterRuntimeUInt("底盘/扫码接近轮速(RPM)", SCAN_APPROACH_SPEED_RPM, 1, 5000);
+    RegisterRuntimeUInt("底盘/扫码往返轮速(RPM)", SCAN_SEARCH_SPEED_RPM, 1, 5000);
     RegisterRuntimeUInt("对齐/最大轮速(RPM)", ALIGN_PID_MAX_SPEED_RPM, 1, 5000);
 }
 
@@ -103,6 +124,41 @@ void RegisterRuntimeUInt(const char *name, uint32_t &value, float minimum, float
     add(name, &value, minimum, maximum, true);
 }
 
+bool ApplyCompiledParameterDefaults() {
+    initialize();
+    if (registrationFailed) {
+        Serial.println("[CFG] ERR: parameter registry overflow");
+        return false;
+    }
+    // 先检查全部条目，再写入任何变量；避免错误文件造成部分参数生效。
+    for (size_t j = 0; j < COMPILED_PARAMETER_DEFAULT_COUNT; ++j) {
+        const auto &entry = COMPILED_PARAMETER_DEFAULTS[j];
+        size_t i = 0;
+        while (i < count && strcmp(parameters[i].name, entry.name) != 0) ++i;
+        if (i == count || !isfinite(entry.value)
+                || entry.value < parameters[i].minimum
+                || entry.value > parameters[i].maximum
+                || (parameters[i].integer && (floor(entry.value) != entry.value
+                    || entry.value < 0 || entry.value > UINT32_MAX))) {
+            Serial.printf("[CFG] ERR: invalid compiled parameter: %s\n", entry.name);
+            return false;
+        }
+    }
+    for (size_t j = 0; j < COMPILED_PARAMETER_DEFAULT_COUNT; ++j) {
+        const auto &entry = COMPILED_PARAMETER_DEFAULTS[j];
+        for (size_t i = 0; i < count; ++i) {
+            Parameter &p = parameters[i];
+            if (strcmp(p.name, entry.name) != 0) continue;
+            if (p.integer) *static_cast<uint32_t *>(p.address) = static_cast<uint32_t>(entry.value);
+            else *static_cast<float *>(p.address) = static_cast<float>(entry.value);
+            break;
+        }
+    }
+    Serial.printf("[CFG] Applied %u compiled defaults from robot_parameters.json\n",
+                  static_cast<unsigned>(COMPILED_PARAMETER_DEFAULT_COUNT));
+    return true;
+}
+
 bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writable) {
     initialize();
     const char *action = size > 0 ? fields[0] : "FRAME";
@@ -127,6 +183,10 @@ bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writab
             Serial.printf("{RSP,CFG,GET,VALUE,%lu,%u,%s,%.9g,%.9g,%.9g,%u}\n",
                 static_cast<unsigned long>(id), static_cast<unsigned>(i), p.name,
                 readValue(p), p.minimum, p.maximum, p.integer ? 1 : 0);
+            // A full registry is a burst of 111 UTF-8 lines. Drain each frame
+            // before sending the next so USB/UART bridges do not drop bytes.
+            Serial.flush();
+            delay(2);
         }
         Serial.printf("{RSP,CFG,GET,END,%lu,%u}\n", static_cast<unsigned long>(id), static_cast<unsigned>(count));
         return true;

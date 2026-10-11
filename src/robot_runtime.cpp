@@ -4,6 +4,9 @@
 // ================= 基础配置 =================
 
 uint32_t ALIGN_PID_MAX_SPEED_RPM = 20;  // 移动速度单位为转/分
+uint32_t NODE_PATH_SPEED_RPM = 120;
+uint32_t SCAN_APPROACH_SPEED_RPM = 60;
+uint32_t SCAN_SEARCH_SPEED_RPM = 30;
 
 CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 

@@ -94,6 +94,8 @@ struct Run {
     int count = 0;
     float distances[5] = {};
     float speeds[5] = {};
+    static constexpr float SCAN_APPROACH_SPEED_RPM = 60;
+    static constexpr float SCAN_SEARCH_SPEED_RPM = 30;
     Logger Serial;
     constexpr bool pollTaskCode() {
         if (receiveAfter >= 0 && count >= receiveAfter) taskReceived = true;
@@ -111,7 +113,7 @@ struct Run {
 '''
         # 将实际回调实参映射为 mock 标志；保留真实分支和位移表达式。
         harness += declarations + motion.replace(
-            "SCAN_SPEED_RPM/2, pollTaskCode)", "SCAN_SPEED_RPM/2, true)")
+            "SCAN_SEARCH_SPEED_RPM, pollTaskCode)", "SCAN_SEARCH_SPEED_RPM, true)")
         harness += r'''
     }
 };

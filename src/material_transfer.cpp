@@ -26,6 +26,16 @@ MaterialTransferLayout materialTransferLayout = {
     1000,   // motionWaitMs
 };
 
+MaterialMotionSteps materialMotionSteps = {
+    {80.0f, 0.0f, 90.0f}, // 圆盘预抓：高度、伸出、转台
+    90.0f,  // 圆盘预抓张爪角度
+    150.0f, // 圆盘抓后提起高度
+    250.0f, 250.0f, 250.0f, // 圆盘预抓、夹紧、提起
+    250.0f, 250.0f,         // 移至工位上方：平移、转向
+    250.0f, 250.0f, 250.0f, // 取料：下降、夹紧、提起
+    250.0f, 250.0f, 250.0f, // 放料：下降、松爪、提起
+};
+
 // 开机时三个载物台均为空载。
 CargoPlatform cargoPlatforms[MATERIAL_STATION_COUNT] = {
     {MATERIAL_NONE}, {MATERIAL_NONE}, {MATERIAL_NONE}
@@ -82,11 +92,11 @@ void waitForArm(float multiplier = 1.0f) {
 bool moveAbove(const MaterialStationPose &pose, float clawAngle) {
     // 先升到安全高度，再转向目标并伸出，防止横向移动时碰到物料或车体。
     if (!MoveArm(materialTransferLayout.approachHeight, pose.length,
-                 -1, clawAngle, materialTransferLayout.moveSpeed)) return false;
+                 -1, clawAngle, materialMotionSteps.approachTranslateSpeed)) return false;
     waitForArm();    
     waitForArm();
     if (!MoveArm(materialTransferLayout.approachHeight, pose.length,
-                 pose.turretAngle, clawAngle, materialTransferLayout.moveSpeed)) return false;
+                 pose.turretAngle, clawAngle, materialMotionSteps.approachRotateSpeed)) return false;
     waitForArm();
     return true;
 }
@@ -96,13 +106,13 @@ bool pickAt(const MaterialStationPose &pose) {
     // 抓取顺序：张开夹爪到目标上方 -> 下降 -> 夹紧 -> 提升到安全高度。
     if (!moveAbove(pose, materialTransferLayout.clawOpenAngle)) return false;
     if (!MoveArm(pose.high, -1, -1, materialTransferLayout.clawOpenAngle,
-                 materialTransferLayout.moveSpeed)) return false;
+                 materialMotionSteps.pickDescendSpeed)) return false;
     waitForArm(1.5);
     if (!MoveArm(-1, -1, -1, materialTransferLayout.clawClosedAngle,
-                 materialTransferLayout.moveSpeed)) return false;
+                 materialMotionSteps.pickGripSpeed)) return false;
     waitForArm();
     if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1,
-                 materialTransferLayout.moveSpeed)) return false;
+                 materialMotionSteps.pickLiftSpeed)) return false;
     waitForArm(1.5);
     return true;
 }
@@ -113,11 +123,11 @@ bool pickAt(const MaterialStationPose &pose) {
 bool placeAt(const MaterialStationPose &pose, float targetHeight) {
     // 放置顺序：夹持物料到目标上方 -> 下降 -> 张开夹爪 -> 提升到安全高度。
     if (!moveAbove(pose, materialTransferLayout.clawClosedAngle)) return false;
-    if (!MoveArm(targetHeight, -1, -1, materialTransferLayout.clawClosedAngle,  materialTransferLayout.moveSpeed)) return false;
+    if (!MoveArm(targetHeight, -1, -1, materialTransferLayout.clawClosedAngle, materialMotionSteps.placeDescendSpeed)) return false;
     waitForArm(1.5);
-    if (!MoveArm(-1, -1, -1, materialTransferLayout.clawOpenAngle,  materialTransferLayout.moveSpeed)) return false;
+    if (!MoveArm(-1, -1, -1, materialTransferLayout.clawOpenAngle, materialMotionSteps.placeReleaseSpeed)) return false;
     waitForArm();
-    if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1, materialTransferLayout.moveSpeed)) return false;
+    if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1, materialMotionSteps.placeLiftSpeed)) return false;
     waitForArm(2);
     return true;
 }
@@ -524,11 +534,25 @@ bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force) {
         return false;
     }
 
-    if (!MoveArm( 80 ,0, 90 ,90 , 250)) return false;
+    if (!isPoseValid(materialMotionSteps.discApproach)
+            || !isfinite(materialMotionSteps.discOpenAngle)
+            || !isfinite(materialMotionSteps.discLiftHeight)
+            || materialMotionSteps.discLiftHeight < 0
+            || materialMotionSteps.discLiftHeight > ARM_HEIGHT_LIMIT_MM) return false;
+    if (!MoveArm(materialMotionSteps.discApproach.high,
+                 materialMotionSteps.discApproach.length,
+                 materialMotionSteps.discApproach.turretAngle,
+                 materialMotionSteps.discOpenAngle,
+                 materialMotionSteps.discApproachSpeed)) return false;
     waitForArm(1);
-    if (!MoveArm( 80 ,0, 90 ,-5 , 250)) return false;
+    if (!MoveArm(materialMotionSteps.discApproach.high,
+                 materialMotionSteps.discApproach.length,
+                 materialMotionSteps.discApproach.turretAngle,
+                 materialTransferLayout.clawClosedAngle,
+                 materialMotionSteps.discGripSpeed)) return false;
     waitForArm(0.5);
-    if (!MoveArm( 150 ,0, -1 ,-1 , 250)) return false;
+    if (!MoveArm(materialMotionSteps.discLiftHeight, -1, -1, -1,
+                 materialMotionSteps.discLiftSpeed)) return false;
     waitForArm();
 
     if (!placeAt(destination, destination.high)) return false;
