@@ -10,12 +10,23 @@ void Emm_V5_Init(void)
   delay(100);
   Emm_V5_Reset_Clog_Pro(0);
   delay(10);
-  // 广播清零所有电机，包含 5 号升降和 6 号伸缩；当前位置定义为开机原点。
-  // 这是坐标清零，不执行机械回零，也不代表已经收到驱动器确认。
-  Emm_V5_Reset_CurPos_To_Zero(0);
+  // 保留1~4号底盘清零，5、6号改为返回已保存的单圈零点。
+  for (uint8_t addr = 1; addr <= 4; ++addr) {
+    Emm_V5_Reset_CurPos_To_Zero(addr);
+    Serial1.flush();
+    delay(10);
+  }
+  Serial.println("[Emm_V5] startup position zero issued to chassis motors 1-4");
+  // 5号升降、6号伸缩：使能后触发单圈就近回零，不重新设置零点。
+  Emm_V5_En_Control(5, true, false);
+  delay(10);
+  Emm_V5_Origin_Trigger_Return(5, 0, false);
+  delay(10);
+  Emm_V5_En_Control(6, true, false);
+  delay(10);
+  Emm_V5_Origin_Trigger_Return(6, 0, false);
   Serial1.flush();
   delay(10);
-  Serial.println("[Emm_V5] startup position zero issued (arm motors 5/6 included)");
   Serial.println("[Emm_V5] initialized! UART initialized on SERIAL1");
 }
 
