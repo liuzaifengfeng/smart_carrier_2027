@@ -23,7 +23,7 @@ MaterialTransferLayout materialTransferLayout = {
     250.0f, // moveSpeed
     50.0f,   // clawOpenAngle
     -5.0f,  // clawClosedAngle
-    1000,   // motionWaitMs
+    1,      // motionWaitMs，不传等待参数时的默认毫秒数
 };
 
 MaterialMotionSteps materialMotionSteps = {
@@ -75,15 +75,15 @@ bool isLayoutParameterValid() {
         && materialTransferLayout.motionWaitMs > 0;
 }
 
-void waitForArm(float multiplier = 1.0f) {
-    // multiplier 是基础等待时间的倍数：
-    // waitForArm() 等待 1 倍，waitForArm(2.5f) 等待 2.5 倍。
-    if (!isfinite(multiplier) || multiplier <= 0.0f) {
-        Serial.println("[Material] ERR: invalid arm wait multiplier");
-        multiplier = 1.0f; // 非法参数仍按基础时间等待，避免机械臂未停稳就执行下一步。
+void waitForArm(float durationMs = materialTransferLayout.motionWaitMs) {
+    // 参数直接表示毫秒：waitForArm(1000) 等待1秒，不乘基础时间。
+    // 不传参数或参数非法时，使用配置中的默认等待时间。
+    if (!isfinite(durationMs) || durationMs <= 0.0f) {
+        Serial.println("[Material] ERR: invalid arm wait duration");
+        durationMs = materialTransferLayout.motionWaitMs;
     }
     const uint32_t waitMs = static_cast<uint32_t>(
-        lroundf(materialTransferLayout.motionWaitMs * multiplier)
+        lroundf(durationMs)
     );
     vTaskDelay(pdMS_TO_TICKS(waitMs));
 }
@@ -93,11 +93,11 @@ bool moveAbove(const MaterialStationPose &pose, float clawAngle) {
     // 先升到安全高度，再转向目标并伸出，防止横向移动时碰到物料或车体。
     if (!MoveArm(materialTransferLayout.approachHeight, pose.length,
                  -1, clawAngle, materialMotionSteps.approachTranslateSpeed)) return false;
-    waitForArm();    
-    waitForArm();
+    waitForArm(680);
+    waitForArm(680);
     if (!MoveArm(materialTransferLayout.approachHeight, pose.length,
                  pose.turretAngle, clawAngle, materialMotionSteps.approachRotateSpeed)) return false;
-    waitForArm();
+    waitForArm(680);
     return true;
 }
 
@@ -107,13 +107,13 @@ bool pickAt(const MaterialStationPose &pose) {
     if (!moveAbove(pose, materialTransferLayout.clawOpenAngle)) return false;
     if (!MoveArm(pose.high, -1, -1, materialTransferLayout.clawOpenAngle,
                  materialMotionSteps.pickDescendSpeed)) return false;
-    waitForArm(1.5);
+    waitForArm(1020);
     if (!MoveArm(-1, -1, -1, materialTransferLayout.clawClosedAngle,
                  materialMotionSteps.pickGripSpeed)) return false;
-    waitForArm();
+    waitForArm(680);
     if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1,
                  materialMotionSteps.pickLiftSpeed)) return false;
-    waitForArm(1.5);
+    waitForArm(1020);
     return true;
 }
 
@@ -124,11 +124,11 @@ bool placeAt(const MaterialStationPose &pose, float targetHeight) {
     // 放置顺序：夹持物料到目标上方 -> 下降 -> 张开夹爪 -> 提升到安全高度。
     if (!moveAbove(pose, materialTransferLayout.clawClosedAngle)) return false;
     if (!MoveArm(targetHeight, -1, -1, materialTransferLayout.clawClosedAngle, materialMotionSteps.placeDescendSpeed)) return false;
-    waitForArm(2);
+    waitForArm(1360);
     if (!MoveArm(-1, -1, -1, materialTransferLayout.clawOpenAngle, materialMotionSteps.placeReleaseSpeed)) return false;
-    waitForArm();
+    waitForArm(680);
     if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1, materialMotionSteps.placeLiftSpeed)) return false;
-    waitForArm(2);
+    waitForArm(1360);
     return true;
 }
 
@@ -342,10 +342,10 @@ bool PrepareLidarScanPose(uint8_t startZoneCode) {
             Serial.println("[LidarPose] start zone 1");
             GotoPose(125, 0, 0, true);
             MoveArm(170, 100, -1, -1, 200);
-            waitForArm(2);
+            waitForArm(1360);
             GotoPose(0, 100, 0, true);
             MoveArm(-1, -1, 45, -1, 200);
-            waitForArm(1);
+            waitForArm(680);
             MoveArm(0, 100, -1, -1, 200);
 
             break;
@@ -354,10 +354,10 @@ bool PrepareLidarScanPose(uint8_t startZoneCode) {
             Serial.println("[LidarPose] start zone 2");
             GotoPose(125, 0, 0, true);
             MoveArm(170, 100, -1, -1, 200);
-            waitForArm(2);
+            waitForArm(1360);
             GotoPose(0, -100, 0, true);
             MoveArm(-1, 100, -1, -1, 200);
-            waitForArm(1);
+            waitForArm(680);
             MoveArm(0, 100, 135, -1, 200);
             break;
 
@@ -544,16 +544,16 @@ bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force) {
                  materialMotionSteps.discApproach.turretAngle,
                  materialMotionSteps.discOpenAngle,
                  materialMotionSteps.discApproachSpeed)) return false;
-    waitForArm(1);
+    waitForArm(680);
     if (!MoveArm(materialMotionSteps.discApproach.high,
                  materialMotionSteps.discApproach.length,
                  materialMotionSteps.discApproach.turretAngle,
                  materialTransferLayout.clawClosedAngle,
                  materialMotionSteps.discGripSpeed)) return false;
-    waitForArm(0.5);
+    waitForArm(340);
     if (!MoveArm(materialMotionSteps.discLiftHeight, -1, -1, -1,
                  materialMotionSteps.discLiftSpeed)) return false;
-    waitForArm();
+    waitForArm(680);
 
     if (!placeAt(destination, destination.high)) return false;
     cargo.material = static_cast<MaterialType>(materialCode);

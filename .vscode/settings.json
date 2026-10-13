@@ -86,5 +86,6 @@
             "priority": 4
         }
     ],
-    "python-envs.defaultEnvManager": "ms-python.python:system"
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "python.defaultInterpreterPath": "D:\\Python\\python.exe"
 }

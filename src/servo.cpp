@@ -190,6 +190,35 @@ void Servo_SetAngleMTurn(uint8_t servoId, float angle, uint32_t interval, uint16
     sendPacket(FSUS_CMD_SET_ANGLE_MTURN, content, 11);
 }
 
+// 官方 UART/RS-485 协议第11节：高级多圈角度控制（基于时间）。
+// https://fashionstar.com.cn/wiki/protocols/servo/uart-rs485/
+void Servo_SetAngleMTurnByInterval(uint8_t servoId, float angle, uint32_t interval,
+                                 uint16_t t_acc, uint16_t t_dec, uint16_t power) {
+    const int32_t angleInt = static_cast<int32_t>(angle * 10.0f);
+    // 先转为无符号位模式，负角度也按32位补码、小端顺序发送。
+    const uint32_t angleBits = static_cast<uint32_t>(angleInt);
+
+    uint8_t content[15];
+    content[0] = servoId;
+    content[1] = angleBits & 0xFF;
+    content[2] = (angleBits >> 8) & 0xFF;
+    content[3] = (angleBits >> 16) & 0xFF;
+    content[4] = (angleBits >> 24) & 0xFF;
+    content[5] = interval & 0xFF;
+    content[6] = (interval >> 8) & 0xFF;
+    content[7] = (interval >> 16) & 0xFF;
+    content[8] = (interval >> 24) & 0xFF;
+    content[9] = t_acc & 0xFF;
+    content[10] = (t_acc >> 8) & 0xFF;
+    content[11] = t_dec & 0xFF;
+    content[12] = (t_dec >> 8) & 0xFF;
+    content[13] = power & 0xFF;
+    content[14] = (power >> 8) & 0xFF;
+
+    // sendPacket 沿用总线锁，并补齐帧头、指令、长度及累加校验。
+    sendPacket(FSUS_CMD_SET_ANGLE_MTURN_INTERVAL, content, sizeof(content));
+}
+
 // 梯形加减速角度控制
 void Servo_SetAngleByInterval(uint8_t servoId, float angle, uint16_t interval, uint16_t t_acc, uint16_t t_dec, uint16_t power) {
     if (angle < -135.0f) angle = -135.0f;

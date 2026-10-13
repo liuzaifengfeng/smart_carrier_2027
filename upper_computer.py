@@ -924,7 +924,7 @@ MAX_RELATIVE_MOVE_MM = FIELD_SIZE_MM * math.sqrt(2.0)
 FIELD_EDGE_EPSILON_MM = 1e-6
 ARM_HEIGHT_LIMIT_MM = 175.0
 ARM_TRAVEL_LIMIT_MM = 170.0
-TURRET_CABLE_MIN_DEG = -180.0
+TURRET_CABLE_MIN_DEG = -150.0
 TURRET_CABLE_MAX_DEG = 360.0
 FIELD_NODE_RADIUS_MM = 105.0
 FIELD_GRID_SIZE = 5
@@ -1261,7 +1261,10 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
         require_range(2, 1.0, 1000.0, "速度")
     elif command == "SERVO":
         require_range(0, 0.0, 253.0, "舵机 ID")
-        require_range(1, -135.0, 135.0, "舵机角度")
+        require_range(1,
+                      TURRET_CABLE_MIN_DEG if values[0] == 2 else -135.0,
+                      TURRET_CABLE_MAX_DEG if values[0] == 2 else 135.0,
+                      "舵机角度")
         if not values[0].is_integer():
             raise ValueError("舵机 ID 必须是整数")
         integer_indexes = {0}
@@ -2703,7 +2706,7 @@ class UpperComputerApp:
         ).grid(row=6, column=0, columnspan=3, sticky="ew", pady=3)
         ttk.Label(
             arm_controls,
-            text="转台线缆范围：实测多圈角度 -180°～360°；越界时自动拒绝转台动作。",
+            text="转台线缆范围：实测多圈角度 -150°～360°；越界时自动拒绝转台动作。",
             foreground="#9a3f20",
             wraplength=285,
         ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(2, 0))
@@ -3541,7 +3544,7 @@ class UpperComputerApp:
         self.arm_preview.set_pose(arm)
         self.arm_status_var.set(
             f"理想值：H={arm.high:g} mm，L={arm.length:g} mm；"
-            f"实测：舵盘多圈={arm.turret_angle:g}°（线缆 -180°～360°），夹爪={arm.pawl_angle:g}°"
+            f"实测：舵盘多圈={arm.turret_angle:g}°（线缆 -150°～360°），夹爪={arm.pawl_angle:g}°"
         )
         self.pose_query_status.set("已回读：舵盘为实测多圈角度，夹爪为实测单圈角度；其余轴为理想值")
 

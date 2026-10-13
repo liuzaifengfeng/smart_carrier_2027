@@ -47,6 +47,7 @@
 #define FSUS_CMD_QUERY_ANGLE_MTURN 0x10 // 读取舵机实时多圈角度
 #define FSUS_CMD_SET_ANGLE_INTERVAL 0x0B// 梯形加减速角度控制
 #define FSUS_CMD_SET_ANGLE_MTURN    0x0D// 多圈绝对角度控制
+#define FSUS_CMD_SET_ANGLE_MTURN_INTERVAL 0x0E // 高级多圈角度控制（基于时间）
 #define FSUS_CMD_RESET_TURNS        0x11// 重置当前累计圈数（不转动）
 #define FSUS_CMD_STOP              0x18// 停止/释放/保持锁力
 
@@ -84,6 +85,18 @@ void Servo_SetAngle(uint8_t servoId, float angle, uint16_t interval = 0, uint16_
  * @param power 功率限制 (mW)
  */
 void Servo_SetAngleMTurn(uint8_t servoId, float angle, uint32_t interval = 0, uint16_t power = 0);
+
+/**
+ * @brief 高级多圈绝对角度控制（基于时间，指令 0x0E）
+ * @param servoId 舵机 ID
+ * @param angle 目标多圈角度（度，范围 -368640.0 ~ 368640.0）
+ * @param interval 总运动时间（ms），应不小于加速与减速时间之和
+ * @param t_acc 加速时间（ms，不小于 20）
+ * @param t_dec 减速时间（ms，不小于 20）
+ * @param power 执行功率（mW），0 使用舵机功率保护阈值
+ */
+void Servo_SetAngleMTurnByInterval(uint8_t servoId, float angle, uint32_t interval,
+                                 uint16_t t_acc, uint16_t t_dec, uint16_t power = 0);
 
 /**
  * @brief 梯形加减速角度控制 (平滑平稳运动)

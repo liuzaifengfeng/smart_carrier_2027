@@ -506,7 +506,9 @@ static void serialDispatch(const SerialFrame &frame) {
         float angle = 0;
         if (!serialUInt(frame.fields[3], id, 254)
                 || id == SERVO_ID_BROADCAST
-                || !serialFloat(frame.fields[4], angle, -135, 135)) {
+                || !serialFloat(frame.fields[4], angle,
+                                id == 2 ? TURRET_CABLE_MIN_DEG : -135.0f,
+                                id == 2 ? TURRET_CABLE_MAX_DEG : 135.0f)) {
             serialError(frame, "RANGE"); return;
         }
         Serial.printf("{RSP,ARM,SERVO,ACK,%u,%.3f}\n", static_cast<unsigned>(id), angle);

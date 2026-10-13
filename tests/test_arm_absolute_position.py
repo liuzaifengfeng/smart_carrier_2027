@@ -41,6 +41,8 @@ struct Run {
     int count=0;
     constexpr bool Servo_QueryAngleMTurn(int, float& angle, int) { angle=0; return true; }
     constexpr void Servo_SetAngleMTurn(int, float, float, int) {}
+    constexpr void Servo_SetAngleMTurnByInterval(int, float, uint32_t,
+                                                uint16_t, uint16_t, uint16_t) {}
     constexpr void Emm_V5_Pos_Control(uint8_t addr, uint8_t dir, uint16_t, uint8_t,
                                       uint32_t pulses, bool absolute, bool sync) {
         commands[count++]={addr, dir, pulses, absolute, sync};

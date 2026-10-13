@@ -508,7 +508,7 @@ void readStartupServoAngle(uint8_t servoId, float &storedAngle) {
             Serial.printf("[Servo] 转台圈数已重置：%.1f -> %.1f度；未命令转台旋转\n",
                           measuredAngle, storedAngle);
         } else {
-            Serial.printf("[Servo] 转台实测多圈角度=%.1f度（线缆允许范围 -180~360 度），无需重置\n",
+            Serial.printf("[Servo] 转台实测多圈角度=%.1f度（线缆允许范围 -150~360 度），无需重置\n",
                           storedAngle);
         }
         return;

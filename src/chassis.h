@@ -9,7 +9,7 @@ constexpr float ARM_HEIGHT_LIMIT_MM = 175.0f; // Maximum arm height (mm).
 // 总任务超时后锁止 MoveArm 的后续发令，上电/重新进入 Release 才清除。
 extern volatile bool taskMotionAborted;
 // 2 号转台舵机的真实多圈角度边界，由线缆可运动范围决定。
-constexpr float TURRET_CABLE_MIN_DEG = -180.0f;
+constexpr float TURRET_CABLE_MIN_DEG = -150.0f;
 constexpr float TURRET_CABLE_MAX_DEG = 360.0f;
 
 // 机器人位姿结构体(世界坐标, 单位 mm / 度)

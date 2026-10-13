@@ -372,7 +372,14 @@ void RegisterChassisParameters() {
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
     if (taskMotionAborted) return false;
     int acc = 220;
+    // 2号转台按实际转角计时：180度用1050ms，最短400ms；加减速时间固定。
+    constexpr float TURRET_REFERENCE_ANGLE_DEG = 180.0f;
+    constexpr uint32_t TURRET_REFERENCE_TIME_MS = 1050;
+    constexpr uint32_t TURRET_MIN_TIME_MS = 400;
+    constexpr uint16_t TURRET_ACCEL_TIME_MS = 100;
+    constexpr uint16_t TURRET_DECEL_TIME_MS = 300;
     float safeTurretTarget = 0.0f;
+    uint32_t turretIntervalMs = TURRET_MIN_TIME_MS;
     if (turret_angle != -1.0f) {
         if (s_turretStartupReferenceFault) {
             Serial.printf("[Arm] ERR: turret startup turn count unverified (%s); motion skipped\n",
@@ -381,7 +388,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
         }
         if (!isfinite(turret_angle) || turret_angle < TURRET_CABLE_MIN_DEG
                 || turret_angle > TURRET_CABLE_MAX_DEG) {
-            Serial.println("[Arm] ERR: turret request outside cable range [-180,360]");
+            Serial.println("[Arm] ERR: turret request outside cable range [-150,360]");
             return false;
         }
         float measuredAngle = 0.0f;
@@ -391,7 +398,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
         }
         // 舵机的多圈读数就是线缆累计旋转角；已经越界时禁止自动动作。
         if (measuredAngle < TURRET_CABLE_MIN_DEG || measuredAngle > TURRET_CABLE_MAX_DEG) {
-            Serial.printf("[Arm] ERR: turret actual %.1f outside cable range [-180,360]; motion skipped\n",
+            Serial.printf("[Arm] ERR: turret actual %.1f outside cable range [-150,360]; motion skipped\n",
                           measuredAngle);
             return false;
         }
@@ -409,6 +416,12 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
         if (!isfinite(bestDistance)) {
             Serial.println("[Arm] ERR: no turret target within cable range");
             return false;
+        }
+        // bestDistance 来自实测多圈角度与最终安全目标的差，不使用上次目标缓存。
+        const float scaledIntervalMs = bestDistance * TURRET_REFERENCE_TIME_MS
+            / TURRET_REFERENCE_ANGLE_DEG;
+        if (scaledIntervalMs > TURRET_MIN_TIME_MS) {
+            turretIntervalMs = static_cast<uint32_t>(scaledIntervalMs + 0.5f);
         }
     }
 
@@ -442,7 +455,8 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
         
         if (taskMotionAborted) return false;
         if(turret_angle != -1) {
-            Servo_SetAngleMTurn(2, safeTurretTarget, (300-speed)*10, 0);
+            Servo_SetAngleMTurnByInterval(2, safeTurretTarget, turretIntervalMs,
+                                         TURRET_ACCEL_TIME_MS, TURRET_DECEL_TIME_MS, 0);
             currentArm.turret_angle = safeTurretTarget;
         }
 

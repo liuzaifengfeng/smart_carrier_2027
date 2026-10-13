@@ -49,7 +49,7 @@ struct MaterialTransferLayout {
     float moveSpeed;             // 传给 MoveArm 的运动速度
     float clawOpenAngle;         // 夹爪张开角度
     float clawClosedAngle;       // 夹爪夹紧角度
-    uint32_t motionWaitMs;       // 每步动作的机械稳定等待时间
+    uint32_t motionWaitMs;       // waitForArm() 不传参数时的默认等待毫秒数
 };
 
 // 每个 MoveArm 阶段独立调速；目标位置仍由上面的工位位姿决定。
