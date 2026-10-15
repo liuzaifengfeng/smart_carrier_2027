@@ -150,13 +150,13 @@ constexpr uint8_t FIELD_NODE_COUNT = 25;
 constexpr size_t MAX_NODE_PATH_LENGTH = 25;
 
 bool MoveNodePath(const uint8_t *path, size_t pathLength,
-                  uint16_t speedRpm = 80, uint8_t acceleration = 50,
+                  uint16_t speedRpm = 80, uint8_t acceleration = 0,
                   float finalHeading = NAN);
 
 // 可直接写 MoveNodePath({0, 1, 8, 7})，节点数量由初始化列表自动传入。
 inline bool MoveNodePath(std::initializer_list<uint8_t> path,
                          uint16_t speedRpm = 80,
-                         uint8_t acceleration = 50, float finalHeading = NAN) {
+                         uint8_t acceleration = 0, float finalHeading = NAN) {
     return MoveNodePath(path.begin(), path.size(), speedRpm, acceleration, finalHeading);
 }
 

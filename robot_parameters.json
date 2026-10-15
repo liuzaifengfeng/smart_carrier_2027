@@ -401,98 +401,98 @@
       "description": "视觉闭环的容许误差与最大轮速。进入死区表示该方向误差已足够小。",
       "parameters": {
         "对齐/DISC/X死区": {
-          "value": 8.0,
+          "value": 3.0,
           "description": "圆盘整体对齐：X死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/DISC/Y死区": {
-          "value": 8.0,
+          "value": 3.0,
           "description": "圆盘整体对齐：Y死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/DISC/角度死区(deg)": {
-          "value": 0.5,
+          "value": 0.200000003,
           "description": "圆盘整体对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
           "integer": false
         },
         "对齐/DISC_MATERIAL/X死区": {
-          "value": 3.0,
+          "value": 1.0,
           "description": "圆盘单个物料对齐：X死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/DISC_MATERIAL/Y死区": {
-          "value": 3.0,
+          "value": 1.0,
           "description": "圆盘单个物料对齐：Y死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/DISC_MATERIAL/角度死区(deg)": {
-          "value": 0.200000003,
+          "value": 0.100000001,
           "description": "圆盘单个物料对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
           "integer": false
         },
         "对齐/WORK_AREA/X死区": {
-          "value": 3.0,
+          "value": 1.0,
           "description": "工作区对齐：X死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/WORK_AREA/Y死区": {
-          "value": 3.0,
+          "value": 1.0,
           "description": "工作区对齐：Y死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/WORK_AREA/角度死区(deg)": {
-          "value": 0.200000003,
+          "value": 0.100000001,
           "description": "工作区对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
           "integer": false
         },
         "对齐/WORK_AREA_LOADED/X死区": {
-          "value": 3.0,
+          "value": 1.0,
           "description": "载物工作区对齐：X死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/WORK_AREA_LOADED/Y死区": {
-          "value": 3.0,
+          "value": 1.0,
           "description": "载物工作区对齐：Y死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/WORK_AREA_LOADED/角度死区(deg)": {
-          "value": 0.200000003,
+          "value": 0.100000001,
           "description": "载物工作区对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
           "integer": false
         },
         "对齐/CORNER/X死区": {
-          "value": 6.0,
+          "value": 2.0,
           "description": "角点/归位对齐：X死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/CORNER/Y死区": {
-          "value": 6.0,
+          "value": 2.0,
           "description": "角点/归位对齐：Y死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
@@ -525,7 +525,7 @@
           "integer": true
         },
         "底盘/节点导航轮速(RPM)": {
-          "value": 160,
+          "value": 400,
           "description": "比赛主流程沿节点行驶及转向的最大轮速；下一段路径开始时生效。",
           "minimum": 1.0,
           "maximum": 5000.0,
