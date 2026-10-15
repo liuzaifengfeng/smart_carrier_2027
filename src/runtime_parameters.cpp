@@ -13,7 +13,7 @@ extern uint32_t SCAN_APPROACH_SPEED_RPM;
 extern uint32_t SCAN_SEARCH_SPEED_RPM;
 
 namespace {
-constexpr size_t MAX_PARAMETERS = 160;
+constexpr size_t MAX_PARAMETERS = 320; // 原有 130 项 + 动作组延时 127 项。
 struct Parameter {
     char name[80];
     void *address;
@@ -58,6 +58,38 @@ void registerPose(const char *name, MaterialStationPose &pose) {
                          TURRET_CABLE_MIN_DEG, TURRET_CABLE_MAX_DEG);
 }
 
+void registerTransferDelays(const char *prefix, MaterialTransferDelays &delays) {
+    const char *const steps[] = {"取料平移", "取料稳定", "取料转向", "取料下降", "取料夹紧", "取料抬升",
+                                "放料平移", "放料稳定", "放料转向", "放料下降", "放料松爪", "放料抬升"};
+    uint32_t *const values[] = {&delays.pickAbove.translateMs, &delays.pickAbove.settleMs,
+        &delays.pickAbove.rotateMs, &delays.pickDescendMs, &delays.pickGripMs, &delays.pickLiftMs,
+        &delays.placeAbove.translateMs, &delays.placeAbove.settleMs, &delays.placeAbove.rotateMs,
+        &delays.placeDescendMs, &delays.placeReleaseMs, &delays.placeLiftMs};
+    for (size_t i = 0; i < 12; ++i) {
+        char name[80];
+        snprintf(name, sizeof(name), "%s/%s(ms)", prefix, steps[i]);
+        RegisterRuntimeUInt(name, *values[i], 0, 60000);
+    }
+}
+
+void registerMaterialDelays() {
+    registerTransferDelays("动作组延时/公共", commonMaterialDelays);
+    for (uint8_t c = 0; c < MATERIAL_STATION_COUNT; ++c) {
+        for (uint8_t w = 0; w < MATERIAL_STATION_COUNT; ++w) {
+            char prefix[80];
+            snprintf(prefix, sizeof(prefix), "动作组延时/载物台%u到工作区%u", c + 1, w + 1);
+            registerTransferDelays(prefix, cargoToWorkAreaDelays[c][w]);
+        }
+    }
+    RegisterRuntimeUInt("动作组延时/圆盘/预抓(ms)", materialAuxiliaryDelays.discApproachMs, 0, 60000);
+    RegisterRuntimeUInt("动作组延时/圆盘/夹紧(ms)", materialAuxiliaryDelays.discGripMs, 0, 60000);
+    RegisterRuntimeUInt("动作组延时/圆盘/抬升(ms)", materialAuxiliaryDelays.discLiftMs, 0, 60000);
+    RegisterRuntimeUInt("动作组延时/扫码准备1/抬升(ms)", materialAuxiliaryDelays.lidarZone1LiftMs, 0, 60000);
+    RegisterRuntimeUInt("动作组延时/扫码准备1/转向(ms)", materialAuxiliaryDelays.lidarZone1TurnMs, 0, 60000);
+    RegisterRuntimeUInt("动作组延时/扫码准备2/抬升(ms)", materialAuxiliaryDelays.lidarZone2LiftMs, 0, 60000);
+    RegisterRuntimeUInt("动作组延时/扫码准备2/转向(ms)", materialAuxiliaryDelays.lidarZone2TurnMs, 0, 60000);
+}
+
 void initialize() {
     if (initialized) return;
     initialized = true;
@@ -95,6 +127,8 @@ void initialize() {
     RegisterRuntimeUInt("底盘/扫码接近轮速(RPM)", SCAN_APPROACH_SPEED_RPM, 1, 5000);
     RegisterRuntimeUInt("底盘/扫码往返轮速(RPM)", SCAN_SEARCH_SPEED_RPM, 1, 5000);
     RegisterRuntimeUInt("对齐/最大轮速(RPM)", ALIGN_PID_MAX_SPEED_RPM, 1, 5000);
+    // 追加注册，保留原有参数索引；默认值来自 material_transfer.cpp。
+    registerMaterialDelays();
 }
 
 bool parseUnsigned(const char *text, uint32_t &value) {
@@ -183,8 +217,7 @@ bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writab
             Serial.printf("{RSP,CFG,GET,VALUE,%lu,%u,%s,%.9g,%.9g,%.9g,%u}\n",
                 static_cast<unsigned long>(id), static_cast<unsigned>(i), p.name,
                 readValue(p), p.minimum, p.maximum, p.integer ? 1 : 0);
-            // A full registry is a burst of 111 UTF-8 lines. Drain each frame
-            // before sending the next so USB/UART bridges do not drop bytes.
+            // 逐帧排空串口，避免扩充后的参数表连续发送时被 USB/UART 桥丢弃。
             Serial.flush();
             delay(2);
         }

@@ -36,6 +36,31 @@ MaterialMotionSteps materialMotionSteps = {
     250.0f, 250.0f, 250.0f, // 放料：下降、松爪、提起
 };
 
+// ACTION_GROUP_DELAYS_BEGIN
+// 上位机只改写本区域的延时数值；单位 ms，0 表示不等待。
+// 每行顺序：取料平移/稳定/转向，下降/夹紧/抬升，放料平移/稳定/转向，下降/松爪/抬升。
+MaterialTransferDelays commonMaterialDelays =
+    {{680, 680, 680}, 1020, 680, 1020, {680, 680, 680}, 1360, 680, 1360};
+MaterialTransferDelays cargoToWorkAreaDelays[MATERIAL_STATION_COUNT][MATERIAL_STATION_COUNT] = {
+    {
+        {{100, 0, 300}, 700, 500, 400, {680, 0, 400}, 1100, 300, 1360}, // 1 -> 1
+        {{680, 680, 680}, 1020, 680, 1020, {680, 680, 680}, 1360, 680, 1360}, // 1 -> 2
+        {{680, 680, 680}, 1020, 680, 1020, {680, 680, 680}, 1360, 680, 1360}, // 1 -> 3
+    },
+    {
+        {{680, 680, 680}, 1020, 680, 1020, {680, 680, 680}, 1360, 680, 1360}, // 2 -> 1
+        {{680, 680, 680}, 1020, 680, 1020, {680, 680, 680}, 1360, 680, 1360}, // 2 -> 2
+        {{680, 680, 680}, 1020, 680, 1020, {680, 680, 680}, 1360, 680, 1360}, // 2 -> 3
+    },
+    {
+        {{680, 680, 680}, 1020, 680, 1020, {680, 680, 680}, 1360, 680, 1360}, // 3 -> 1
+        {{680, 680, 680}, 1020, 680, 1020, {680, 680, 680}, 1360, 680, 1360}, // 3 -> 2
+        {{680, 680, 680}, 1020, 680, 1020, {680, 680, 680}, 1360, 680, 1360}, // 3 -> 3
+    },
+};
+MaterialAuxiliaryDelays materialAuxiliaryDelays = {680, 340, 680, 1360, 680, 1360, 680};
+// ACTION_GROUP_DELAYS_END
+
 // 开机时三个载物台均为空载。
 CargoPlatform cargoPlatforms[MATERIAL_STATION_COUNT] = {
     {MATERIAL_NONE}, {MATERIAL_NONE}, {MATERIAL_NONE}
@@ -78,10 +103,11 @@ bool isLayoutParameterValid() {
 void waitForArm(float durationMs = materialTransferLayout.motionWaitMs) {
     // 参数直接表示毫秒：waitForArm(1000) 等待1秒，不乘基础时间。
     // 不传参数或参数非法时，使用配置中的默认等待时间。
-    if (!isfinite(durationMs) || durationMs <= 0.0f) {
+    if (!isfinite(durationMs) || durationMs < 0.0f) {
         Serial.println("[Material] ERR: invalid arm wait duration");
         durationMs = materialTransferLayout.motionWaitMs;
     }
+    if (durationMs == 0.0f) return;
     const uint32_t waitMs = static_cast<uint32_t>(
         lroundf(durationMs)
     );
@@ -89,46 +115,60 @@ void waitForArm(float durationMs = materialTransferLayout.motionWaitMs) {
 }
 
 // 移动到目标上方
-bool moveAbove(const MaterialStationPose &pose, float clawAngle) {
-    // 先升到安全高度，再转向目标并伸出，防止横向移动时碰到物料或车体。
+bool moveAbove(const MaterialStationPose &pose, float clawAngle,
+               const MaterialApproachDelays &delays) {
+    // 升降、伸缩同时发令；等待后转向。两次等待分别保留，供上位机逐项调整。
     if (!MoveArm(materialTransferLayout.approachHeight, pose.length,
                  -1, clawAngle, materialMotionSteps.approachTranslateSpeed)) return false;
-    waitForArm(680);
-    waitForArm(680);
+    waitForArm(delays.translateMs);
+    waitForArm(delays.settleMs);
     if (!MoveArm(materialTransferLayout.approachHeight, pose.length,
                  pose.turretAngle, clawAngle, materialMotionSteps.approachRotateSpeed)) return false;
-    waitForArm(680);
+    waitForArm(delays.rotateMs);
     return true;
 }
 
 // 抓取物料
-bool pickAt(const MaterialStationPose &pose) {
-    // 抓取顺序：张开夹爪到目标上方 -> 下降 -> 夹紧 -> 提升到安全高度。
-    if (!moveAbove(pose, materialTransferLayout.clawOpenAngle)) return false;
+bool pickAt(const MaterialStationPose &pose,
+            const MaterialTransferDelays &delays = commonMaterialDelays,
+            bool retractAfterGrip = false) {
+    // 夹紧后先保持伸出长度抬升；载物台出料在抬升等待结束后再缩回到 0。
+    if (!moveAbove(pose, materialTransferLayout.clawOpenAngle, delays.pickAbove)) return false;
     if (!MoveArm(pose.high, -1, -1, materialTransferLayout.clawOpenAngle,
                  materialMotionSteps.pickDescendSpeed)) return false;
-    waitForArm(1020);
+    waitForArm(delays.pickDescendMs);
     if (!MoveArm(-1, -1, -1, materialTransferLayout.clawClosedAngle,
                  materialMotionSteps.pickGripSpeed)) return false;
-    waitForArm(680);
+    waitForArm(delays.pickGripMs);
     if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1,
                  materialMotionSteps.pickLiftSpeed)) return false;
-    waitForArm(1020);
+    waitForArm(delays.pickLiftMs);
+    if (retractAfterGrip
+            && !MoveArm(-1, 0.0f, -1, -1, materialMotionSteps.pickLiftSpeed)) return false;
     return true;
 }
 
 // 放置物料
 //@param pose 目标位置  
 //@param targetHeight 目标高度
-bool placeAt(const MaterialStationPose &pose, float targetHeight) {
-    // 放置顺序：夹持物料到目标上方 -> 下降 -> 张开夹爪 -> 提升到安全高度。
-    if (!moveAbove(pose, materialTransferLayout.clawClosedAngle)) return false;
-    if (!MoveArm(targetHeight, -1, -1, materialTransferLayout.clawClosedAngle, materialMotionSteps.placeDescendSpeed)) return false;
-    waitForArm(1360);
+bool placeAt(const MaterialStationPose &pose, float targetHeight,
+             const MaterialTransferDelays &delays = commonMaterialDelays,
+             bool fromRetracted = false) {
+    if (fromRetracted) {
+        // pickAt 已先抬升、等待、再缩回；此处等待缩回并稳定，再保持缩回转向。
+        waitForArm(delays.placeAbove.translateMs);
+        waitForArm(delays.placeAbove.settleMs);
+        if (!MoveArm(-1, -1, pose.turretAngle, -1, materialMotionSteps.approachRotateSpeed)) return false;
+        waitForArm(delays.placeAbove.rotateMs);
+    } else if (!moveAbove(pose, materialTransferLayout.clawClosedAngle, delays.placeAbove)) return false;
+    // 载物台到工作区转向后同时伸出、下降；其他放料仍沿用原先的垂直下降。
+    if (!MoveArm(targetHeight, fromRetracted ? pose.length : -1.0f, -1,
+                 materialTransferLayout.clawClosedAngle, materialMotionSteps.placeDescendSpeed)) return false;
+    waitForArm(delays.placeDescendMs);
     if (!MoveArm(-1, -1, -1, materialTransferLayout.clawOpenAngle, materialMotionSteps.placeReleaseSpeed)) return false;
-    waitForArm(680);
+    waitForArm(delays.placeReleaseMs);
     if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1, materialMotionSteps.placeLiftSpeed)) return false;
-    waitForArm(1360);
+    waitForArm(delays.placeLiftMs);
     return true;
 }
 
@@ -220,7 +260,8 @@ bool MoveCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
                   cargoCode, workAreaCode, cargo.material);
     // 粗加工区和暂存区使用相同的 workArea 位姿。
     // 小车当前停在哪一个区域，动作就发生在哪一个区域。
-    if (!pickAt(source) || !placeAt(destination, destination.high)) return false;
+    const auto &delays = cargoToWorkAreaDelays[cargoCode - 1][workAreaCode - 1];
+    if (!pickAt(source, delays, true) || !placeAt(destination, destination.high, delays, true)) return false;
     cargo.material = MATERIAL_NONE;
     return true;
 }
@@ -299,8 +340,9 @@ bool DemoStackCargoToWorkArea() {
         cargoPlatforms[i].material = MATERIAL_RED;
         Serial.printf("[Material] demo stack cargo %u -> work area %u, release height %.1f\n",
                       i + 1, i + 1, releaseHeights[i]);
-        if (!pickAt(materialTransferLayout.cargo[i])
-                || !placeAt(materialTransferLayout.workArea[i], releaseHeights[i])) return false;
+        const auto &delays = cargoToWorkAreaDelays[i][i];
+        if (!pickAt(materialTransferLayout.cargo[i], delays, true)
+                || !placeAt(materialTransferLayout.workArea[i], releaseHeights[i], delays, true)) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;
@@ -328,8 +370,9 @@ bool DemoStackCargoToWorkArea3() {
         cargoPlatforms[i].material = MATERIAL_RED;
         Serial.printf("[Material] demo stack cargo %u -> work area %u, release height %.1f\n",
                       i + 1, i + 1, releaseHeights[i]);
-        if (!pickAt(materialTransferLayout.cargo[i])
-                || !placeAt(materialTransferLayout.workArea[i], releaseHeights[i])) return false;
+        const auto &delays = cargoToWorkAreaDelays[i][i];
+        if (!pickAt(materialTransferLayout.cargo[i], delays, true)
+                || !placeAt(materialTransferLayout.workArea[i], releaseHeights[i], delays, true)) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;
@@ -342,10 +385,10 @@ bool PrepareLidarScanPose(uint8_t startZoneCode) {
             Serial.println("[LidarPose] start zone 1");
             GotoPose(125, 0, 0, true);
             MoveArm(170, 100, -1, -1, 200);
-            waitForArm(1360);
+            waitForArm(materialAuxiliaryDelays.lidarZone1LiftMs);
             GotoPose(0, 100, 0, true);
             MoveArm(-1, -1, 45, -1, 200);
-            waitForArm(680);
+            waitForArm(materialAuxiliaryDelays.lidarZone1TurnMs);
             MoveArm(0, 100, -1, -1, 200);
 
             break;
@@ -354,10 +397,10 @@ bool PrepareLidarScanPose(uint8_t startZoneCode) {
             Serial.println("[LidarPose] start zone 2");
             GotoPose(125, 0, 0, true);
             MoveArm(170, 100, -1, -1, 200);
-            waitForArm(1360);
+            waitForArm(materialAuxiliaryDelays.lidarZone2LiftMs);
             GotoPose(0, -100, 0, true);
             MoveArm(-1, 100, -1, -1, 200);
-            waitForArm(680);
+            waitForArm(materialAuxiliaryDelays.lidarZone2TurnMs);
             MoveArm(0, 100, 135, -1, 200);
             break;
 
@@ -417,7 +460,8 @@ bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
 
     Serial.printf("[Material] cargo %u -> work area %u layer 2, material %u\n",
                   cargoCode, workAreaCode, cargo.material);
-    if (!pickAt(source) || !placeAt(destination, secondLayerHeight)) return false;
+    const auto &delays = cargoToWorkAreaDelays[cargoCode - 1][workAreaCode - 1];
+    if (!pickAt(source, delays, true) || !placeAt(destination, secondLayerHeight, delays, true)) return false;
     cargo.material = MATERIAL_NONE;
     return true;
 }
@@ -474,8 +518,9 @@ bool PlaceTaskCargoToWorkArea(
         const uint8_t workAreaCode = static_cast<uint8_t>(positionCodes[i]);
         Serial.printf("[Material] cargo %u -> work area %u, layer %u, release height %.1f\n",
                       i + 1, workAreaCode, layer, releaseHeights[i]);
-        if (!pickAt(materialTransferLayout.cargo[i])
-                || !placeAt(materialTransferLayout.workArea[workAreaCode - 1], releaseHeights[i])) return false;
+        const auto &delays = cargoToWorkAreaDelays[i][workAreaCode - 1];
+        if (!pickAt(materialTransferLayout.cargo[i], delays, true)
+                || !placeAt(materialTransferLayout.workArea[workAreaCode - 1], releaseHeights[i], delays, true)) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;
@@ -544,16 +589,16 @@ bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force) {
                  materialMotionSteps.discApproach.turretAngle,
                  materialMotionSteps.discOpenAngle,
                  materialMotionSteps.discApproachSpeed)) return false;
-    waitForArm(680);
+    waitForArm(materialAuxiliaryDelays.discApproachMs);
     if (!MoveArm(materialMotionSteps.discApproach.high,
                  materialMotionSteps.discApproach.length,
                  materialMotionSteps.discApproach.turretAngle,
                  materialTransferLayout.clawClosedAngle,
                  materialMotionSteps.discGripSpeed)) return false;
-    waitForArm(340);
+    waitForArm(materialAuxiliaryDelays.discGripMs);
     if (!MoveArm(materialMotionSteps.discLiftHeight, -1, -1, -1,
                  materialMotionSteps.discLiftSpeed)) return false;
-    waitForArm(680);
+    waitForArm(materialAuxiliaryDelays.discLiftMs);
 
     if (!placeAt(destination, destination.high)) return false;
     cargo.material = static_cast<MaterialType>(materialCode);

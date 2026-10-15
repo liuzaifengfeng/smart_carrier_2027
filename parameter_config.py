@@ -2,6 +2,7 @@
 import json
 import math
 from pathlib import Path
+from action_group_config import DELAY_PREFIX
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("robot_parameters.json")
 
@@ -65,6 +66,9 @@ def export_config(path, parameters, edits):
     }
     groups = {}
     for p in parameters.values():
+        # 动作组延时单独写回 C++，避免 JSON 默认值覆盖已调好的源码配置。
+        if p.name.startswith(DELAY_PREFIX):
+            continue
         category = p.name.split("/", 1)[0]
         group = groups.setdefault(category, {
             "description": template["groups"].get(category, {}).get("description", "固件运行参数"),

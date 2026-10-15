@@ -48,7 +48,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"CHASSIS", "MOVE"}, {"CHASSIS", "MOVE_POSITION"},
         {"ARM", "MOVE1"}, {"ARM", "MOVE2"}, {"ARM", "SERVO"},
         {"ARM", "ENABLE"}, {"ARM", "DEMO1"}, {"ARM", "DEMO2"}, {"ARM", "DEMO3"},
-        {"ARM", "DEMO4"},
+        {"ARM", "DEMO4"}, {"ARM", "TRANSFER"},
         {"ARM", "INIT_START"}, {"ARM", "INIT_LOOK"}, {"ARM", "INIT_LOOK2"},
         {"CFG", "GET"}, {"CFG", "BEGIN"}, {"CFG", "SET"}, {"CFG", "COMMIT"},
     };
@@ -243,6 +243,24 @@ static void serialDiscGrab(const SerialFrame &frame) {
     discMaterialColor = 0; // 消费颜色，下一次抓取必须有新的颜色反馈或显式颜色参数。
     Serial.printf("{RSP,VISION,GRAB,ACK,%lu,%lu}\n", color, cargo);
     serialExecuteTaskGrab(static_cast<uint8_t>(color), static_cast<uint8_t>(cargo));
+}
+
+static void serialTransfer(const SerialFrame &frame) {
+    if (!serialDebugMode) { serialError(frame, "MODE"); return; }
+    uint32_t cargoCode = 0, workAreaCode = 0;
+    if (!serialUInt(frame.fields[3], cargoCode, MATERIAL_STATION_COUNT) || cargoCode == 0
+            || !serialUInt(frame.fields[4], workAreaCode, MATERIAL_STATION_COUNT) || workAreaCode == 0) {
+        serialError(frame, "RANGE"); return;
+    }
+    serialReply(frame, "ACK");
+    CargoPlatform &cargo = cargoPlatforms[cargoCode - 1];
+    const MaterialType previousMaterial = cargo.material;
+    // 与 DEMO1 相同：手动装料后允许试跑，未登记时临时按红色记录。
+    if (cargo.material == MATERIAL_NONE) cargo.material = MATERIAL_RED;
+    const bool ok = MoveCargoToWorkArea(cargoCode, workAreaCode);
+    if (!ok) cargo.material = previousMaterial;
+    Serial.printf("{EVT,ARM,TRANSFER,%s,%lu,%lu}\n", ok ? "DONE" : "FAILED",
+                  static_cast<unsigned long>(cargoCode), static_cast<unsigned long>(workAreaCode));
 }
 
 static void serialDispatch(const SerialFrame &frame) {
@@ -524,6 +542,8 @@ static void serialDispatch(const SerialFrame &frame) {
         if (!serialUInt(frame.fields[3], enabled, 1)) { serialError(frame, "RANGE"); return; }
         Serial.printf("{RSP,ARM,ENABLE,ACK,%u}\n", static_cast<unsigned>(enabled));
         Emm_V5_En_Control_all(enabled);
+    } else if (frame.is("ARM", "TRANSFER", 2)) {
+        serialTransfer(frame);
     } else if (frame.is("ARM", "DEMO1", 0) || frame.is("ARM", "DEMO2", 0)
                || frame.is("ARM", "DEMO3", 0) || frame.is("ARM", "DEMO4", 0)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }

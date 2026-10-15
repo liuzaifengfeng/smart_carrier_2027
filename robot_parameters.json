@@ -27,7 +27,7 @@
           "integer": false
         },
         "搬运/载物台1/高度(mm)": {
-          "value": 102.0,
+          "value": 100.0,
           "description": "载物台1：升降轴绝对高度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 175.0,
@@ -69,7 +69,7 @@
           "integer": false
         },
         "搬运/载物台2/高度(mm)": {
-          "value": 102.0,
+          "value": 100.0,
           "description": "载物台2：升降轴绝对高度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 175.0,
@@ -111,7 +111,7 @@
           "integer": false
         },
         "搬运/载物台3/高度(mm)": {
-          "value": 102.0,
+          "value": 100.0,
           "description": "载物台3：升降轴绝对高度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 175.0,

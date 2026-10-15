@@ -4,7 +4,8 @@ import unittest
 from unittest.mock import patch
 
 from upper_computer import (Parameter, ParameterPanel, parse_parameter,
-                            parameter_matches_stage, build_parameter_test_command)
+                            ActionGroupPanel, parameter_matches_stage, build_parameter_test_command)
+from action_group_config import DELAY_NAMES, DELAY_PREFIX, TRANSFER_GROUPS, load_action_group_delays
 
 
 class ValidationTests(unittest.TestCase):
@@ -228,6 +229,164 @@ class PanelTests(unittest.TestCase):
         self.panel.receive(f"{{RSP,CFG,BEGIN,OK,{seq}}}")
         self.panel.receive(f"{{RSP,CFG,SET,ERR,{seq},RANGE}}")
         self.assertNotIn("ARM,MOVE1", " ".join(self.sent))
+
+
+class ActionGroupPanelTests(unittest.TestCase):
+    def setUp(self):
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.sent = []
+        self.controller = ParameterPanel(self.root, self.sent.append, lambda *_: None)
+        self.panel = ActionGroupPanel(self.root, self.controller)
+        self.defaults = load_action_group_delays()
+
+    def tearDown(self):
+        self.controller.cancel_timer()
+        self.root.destroy()
+
+    def feed(self, edits=None, old_firmware=False):
+        seq = self.controller.sequence
+        self.controller.receive(f"{{RSP,CFG,GET,VALUE,{seq},0,搬运/速度,300,1,300,0}}")
+        values = {} if old_firmware else self.defaults | (edits or {})
+        for index, (name, value) in enumerate(values.items(), 1):
+            self.controller.receive(f"{{RSP,CFG,GET,VALUE,{seq},{index},{name},{value},0,60000,1}}")
+        self.controller.receive(f"{{RSP,CFG,GET,END,{seq},{len(values)+1}}}")
+        self.root.update()
+
+    def read(self):
+        self.controller.read()
+        self.feed()
+
+    def choose(self, group):
+        self.panel.group.set(group)
+        self.panel.change_group()
+        self.root.update()
+
+    def enter(self, step, value):
+        name = f"{DELAY_PREFIX}{self.panel.group.get()}/{step}(ms)"
+        self.panel.tree.selection_set(name)
+        self.root.update()
+        self.panel.value.set(str(value))
+        return next(p for p in self.controller.parameters.values() if p.name == name)
+
+    def confirm_write(self):
+        while self.controller.mode == "write":
+            seq = self.controller.sequence
+            action, *args = self.controller.expected.split(",")
+            suffix = "," + args[0] if args else ""
+            self.controller.receive(f"{{RSP,CFG,{action},OK,{seq}{suffix}}}")
+
+    def test_new_motion_labels_preserve_parameter_keys_and_other_groups(self):
+        labels = {"取料抬升": "抬升后等待（缩回前）", "放料平移": "缩回后等待",
+                  "放料稳定": "转向前稳定", "放料下降": "伸出并下降"}
+        for group in TRANSFER_GROUPS[1:]:
+            self.choose(group)
+            self.assertEqual(len(self.panel.tree.get_children()), 12)
+            for old, new in labels.items():
+                name = f"{DELAY_PREFIX}{group}/{old}(ms)"
+                self.assertEqual(self.panel.tree.set(name, "step"), new)
+                self.assertEqual(self.panel.tree.set(name, "source"), str(self.defaults[name]))
+            self.assertIn("缩回到 0", self.panel.note.get())
+            self.assertIn("抬升 → 等待 → 缩回到 0", self.panel.note.get())
+        for group in ("公共", "圆盘", "扫码准备1", "扫码准备2"):
+            self.choose(group)
+            for name in self.panel.tree.get_children():
+                self.assertEqual(self.panel.tree.set(name, "step"), name.rsplit("/", 1)[-1].removesuffix("(ms)"))
+        self.assertEqual(load_action_group_delays(), self.defaults)
+
+    def test_routes_are_independent_and_group_switch_preserves_edits(self):
+        self.read()
+        first = self.enter("放料下降", 100)
+        self.choose("载物台1到工作区2")
+        self.assertEqual(self.controller.edits[first.index], "100")
+        second = self.enter("放料下降", 200)
+        self.assertTrue(self.panel.edit())
+        self.assertEqual(self.controller.edits, {first.index: "100", second.index: "200"})
+        self.choose("载物台1到工作区1")
+        self.assertEqual(self.panel.tree.set(first.name, "edit"), "100")
+
+    def test_trial_waits_for_readback_and_matching_result(self):
+        self.read()
+        self.choose("载物台2到工作区3")
+        p = self.enter("放料下降", 100)
+        self.panel.trial()
+        self.assertEqual(self.controller.mode, "write")
+        self.assertFalse(any("ARM,TRANSFER" in line for line in self.sent))
+        self.confirm_write()
+        self.assertEqual(self.controller.mode, "read")
+        self.assertFalse(any("ARM,TRANSFER" in line for line in self.sent))
+        self.feed({p.name: 100})
+        self.assertEqual(self.sent[-1], "{CMD,ARM,TRANSFER,2,3}")
+        self.assertEqual(str(self.panel.save_button["state"]), "disabled")
+        self.controller.receive_test_result("{EVT,ARM,TRANSFER,DONE,1,1}")
+        self.assertIsNotNone(self.controller.test_running)
+        self.controller.receive_test_result("{EVT,ARM,TRANSFER,DONE,2,3}")
+        self.assertIsNone(self.controller.test_running)
+        self.assertEqual(str(self.panel.save_button["state"]), "normal")
+
+    def test_readback_failure_prevents_trial_and_saving(self):
+        self.read()
+        self.enter("放料下降", 100)
+        self.panel.trial()
+        self.confirm_write()
+        self.feed()  # 小车仍返回旧值。
+        self.assertFalse(self.controller.ready)
+        self.assertFalse(any("ARM,TRANSFER" in line for line in self.sent))
+        with patch("upper_computer.save_action_group_delays") as save:
+            self.panel.save_to_cpp()
+            save.assert_not_called()
+
+    def test_save_requires_confirmed_values_and_saves_selected_or_all(self):
+        self.read()
+        p = self.enter("放料下降", 100)
+        with patch("upper_computer.save_action_group_delays", return_value=12) as save:
+            self.panel.save_to_cpp()
+            save.assert_not_called()
+            self.panel.send()
+            self.confirm_write()
+            self.feed({p.name: 100})
+            self.panel.save_to_cpp()
+            selected = save.call_args.args[0]
+            self.assertEqual(len(selected), 12)
+            self.assertEqual(selected[p.name], "100")
+            self.assertTrue(all("载物台1到工作区1/" in name for name in selected))
+            self.panel.save_to_cpp(True)
+            self.assertEqual(set(save.call_args.args[0]), set(DELAY_NAMES))
+
+    def test_hidden_parameter_editor_cannot_restore_old_delay(self):
+        self.read()
+        p = self.enter("放料下降", 100)
+        self.controller.tree.selection_set(str(p.index))
+        self.controller.select()
+        self.panel.send()
+        self.controller.receive(f"{{RSP,CFG,BEGIN,OK,{self.controller.sequence}}}")
+        self.assertEqual(self.sent[-1], f"{{CMD,CFG,SET,{self.controller.sequence},{p.index},100}}")
+
+    def test_invalid_wait_and_common_group_cannot_trial(self):
+        self.read()
+        for value in (-1, 60001, 0.5, "nan"):
+            self.enter("放料下降", value)
+            with patch("upper_computer.messagebox.showerror") as error:
+                self.assertFalse(self.panel.edit())
+                error.assert_called_once()
+        self.enter("放料下降", 0)
+        self.assertTrue(self.panel.edit())
+        self.choose("公共")
+        self.assertEqual(str(self.panel.trial_button["state"]), "disabled")
+        previous = list(self.sent)
+        self.panel.trial()
+        self.assertEqual(self.sent, previous)
+
+    def test_old_firmware_and_disconnect_disable_writes(self):
+        self.controller.read()
+        self.feed(old_firmware=True)
+        self.assertEqual(str(self.panel.trial_button["state"]), "disabled")
+        self.assertEqual(str(self.panel.save_button["state"]), "disabled")
+        self.assertIn("新版固件", self.panel.note.get())
+        self.controller.disconnected()
+        with patch("upper_computer.save_action_group_delays") as save:
+            self.panel.save_to_cpp(True)
+            save.assert_not_called()
 
 
 if __name__ == "__main__":

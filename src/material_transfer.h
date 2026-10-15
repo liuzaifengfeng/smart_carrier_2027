@@ -72,6 +72,29 @@ struct MaterialMotionSteps {
 
 extern MaterialMotionSteps materialMotionSteps;
 
+// 每一项均为毫秒，0 表示跳过该处等待；只控制衔接，不改变 MoveArm 速度。
+struct MaterialApproachDelays {
+    uint32_t translateMs, settleMs, rotateMs;
+};
+
+struct MaterialTransferDelays {
+    MaterialApproachDelays pickAbove;
+    uint32_t pickDescendMs, pickGripMs, pickLiftMs;
+    MaterialApproachDelays placeAbove;
+    uint32_t placeDescendMs, placeReleaseMs, placeLiftMs;
+};
+
+struct MaterialAuxiliaryDelays {
+    uint32_t discApproachMs, discGripMs, discLiftMs;
+    uint32_t lidarZone1LiftMs, lidarZone1TurnMs;
+    uint32_t lidarZone2LiftMs, lidarZone2TurnMs;
+};
+
+// 9 组分别按 [载物台编号-1][工作区编号-1] 索引；圆盘及反向搬运用公共配置。
+extern MaterialTransferDelays commonMaterialDelays;
+extern MaterialTransferDelays cargoToWorkAreaDelays[MATERIAL_STATION_COUNT][MATERIAL_STATION_COUNT];
+extern MaterialAuxiliaryDelays materialAuxiliaryDelays;
+
 // materialTransferLayout：所有固定位置和动作参数，标定值在 cpp 文件顶部填写。
 // cargoPlatforms：三个载物台当前的物料状态，下标 0~2 对应载物台编号 1~3。
 // 位姿未填写完整时，程序会拒绝执行搬运动作，不会控制机械臂移动。

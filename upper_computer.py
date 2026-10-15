@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from parameter_config import DEFAULT_CONFIG_PATH, load_config, config_edits, export_config
+from action_group_config import (DELAY_NAMES, DELAY_PREFIX, TRANSFER_GROUPS,
+                                load_action_group_delays, save_action_group_delays)
 
 try:
     import serial
@@ -396,6 +398,7 @@ class ParameterPanel(ttk.Frame):
         self.test_after_verify = None
         self.test_running = None
         self.active_test_vision_mode = None
+        self.action_group_panel = None
         self.descriptions = {}
         try:
             for group in load_config(DEFAULT_CONFIG_PATH)["groups"].values():
@@ -404,7 +407,7 @@ class ParameterPanel(ttk.Frame):
         except (OSError, ValueError):
             pass
         ttk.Label(self, text="运行参数", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w")
-        ttk.Label(self, text="发送后保存在小车内存；重启恢复最近一次烧录的 JSON 默认值。\n读写前停止视觉对齐；写入需调试模式。", justify=tk.LEFT).pack(anchor="w", pady=5)
+        ttk.Label(self, text="发送后保存在小车内存；重启恢复烧录默认值。\n普通参数保存到 JSON；动作组延时在“动作组调试”页保存到 C++。", justify=tk.LEFT).pack(anchor="w", pady=5)
         toolbar = ttk.Frame(self)
         toolbar.pack(fill=tk.X)
         edit_actions = ttk.Frame(toolbar)
@@ -520,6 +523,8 @@ class ParameterPanel(ttk.Frame):
         self.run_button.configure(state=tk.NORMAL if idle and self.ready and self.run_main else tk.DISABLED)
         self.test_button.configure(state=tk.NORMAL if idle and self.ready and not self.test_running else tk.DISABLED)
         self.stop_test_button.configure(state=tk.NORMAL if idle and self.ready else tk.DISABLED)
+        if self.action_group_panel is not None:
+            self.action_group_panel.refresh()
 
     def refresh_tree(self, _event=None):
         stage = self.category.get()
@@ -548,6 +553,9 @@ class ParameterPanel(ttk.Frame):
         else:
             self.selected = None
             self.value.set("")
+
+        if self.action_group_panel is not None:
+            self.action_group_panel.refresh()
 
     def focus_editor(self, _event=None):
         self.select()
@@ -648,6 +656,8 @@ class ParameterPanel(ttk.Frame):
             return
         action, request = self.test_running
         category, command = request[1:3]
+        if command == "TRANSFER" and fields[0] == "EVT" and fields[4:] != request[3:]:
+            return  # 忽略其他载物台/工作区组合的迟到结果。
         complete = False
         result = ""
         if fields[:3] == ("RSP", category, command) and len(fields) >= 4 and fields[3] == "ERR":
@@ -679,7 +689,7 @@ class ParameterPanel(ttk.Frame):
         except (OSError, ValueError, OverflowError) as exc:
             messagebox.showerror("保存失败", str(exc), parent=self)
             return
-        self.status.set("已保存到 robot_parameters.json；下次 PlatformIO 上传后成为重启默认值。")
+        self.status.set("普通参数已保存到 JSON；动作组延时请在“动作组调试”页另存到 C++。重新烧录后成为默认值。")
 
     def send_and_run(self):
         if self.mode or not self.ready or not self.run_main or not self.edit():
@@ -723,7 +733,7 @@ class ParameterPanel(ttk.Frame):
         except (OSError, ValueError, OverflowError) as exc:
             messagebox.showerror("导出失败", str(exc), parent=self)
             return
-        self.status.set("已导出当前值和待发送编辑；导出不会向小车发送参数。")
+        self.status.set("已导出普通参数和待发送编辑；动作组延时另存到 C++。导出不会向小车发送参数。")
 
     def cancel_timer(self):
         if self.timer is not None:
@@ -821,6 +831,8 @@ class ParameterPanel(ttk.Frame):
                 self.edits[p.index] = value
         self.tree.item(str(p.index), values=(p.name, p.value, self.edits.get(p.index, "")), tags=("dirty",) if p.index in self.edits else ())
         self.status.set(f"已修改 {len(self.edits)} 项，点击“发送修改”后生效。")
+        if self.action_group_panel is not None:
+            self.action_group_panel.refresh()
         return True
 
     def revert(self):
@@ -915,6 +927,211 @@ class ParameterPanel(ttk.Frame):
                     self.read(verify=True)
         except (ValueError, IndexError) as exc:
             self.fail("参数回复异常：" + str(exc))
+
+
+class ActionGroupPanel(ttk.Frame):
+    """动作组使用参数页的同一份回读与事务，避免两页同时下发 CFG 命令。"""
+    def __init__(self, parent, controller):
+        super().__init__(parent, padding=8)
+        self.controller = controller
+        self.selected = None
+        self.snapshot = None
+        self.source_values = {}
+        self.group = tk.StringVar(value=TRANSFER_GROUPS[1])
+        self.current_group = self.group.get()
+        self.value = tk.StringVar()
+        ttk.Label(self, text="动作组调试", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w")
+        ttk.Label(self, text="每组独立调整，单位 ms；0 表示跳过等待。先发送并回读，再保存。\n试跑前手动装料并停在目标区；速度仍在“参数”页调整。",
+                  wraplength=530, justify=tk.LEFT).pack(anchor="w", pady=5)
+        bar = ttk.Frame(self)
+        bar.pack(fill=tk.X)
+        ttk.Label(bar, text="动作组").pack(side=tk.LEFT)
+        self.group_box = ttk.Combobox(bar, textvariable=self.group, state="readonly", width=23,
+            values=(*TRANSFER_GROUPS[1:], "公共", "圆盘", "扫码准备1", "扫码准备2"))
+        self.group_box.pack(side=tk.LEFT, padx=5)
+        self.group_box.bind("<<ComboboxSelected>>", self.change_group)
+        ttk.Button(bar, text="重读源码", command=self.reload_source).pack(side=tk.LEFT)
+        actions = ttk.Frame(self)
+        actions.pack(fill=tk.X, pady=5)
+        self.read_button = ttk.Button(actions, text="读取小车参数", command=controller.read)
+        self.read_button.pack(side=tk.LEFT)
+        self.send_button = ttk.Button(actions, text="发送修改并回读", command=self.send)
+        self.send_button.pack(side=tk.LEFT, padx=5)
+        self.trial_button = ttk.Button(actions, text="应用并试跑当前组", command=self.trial)
+        self.trial_button.pack(side=tk.LEFT)
+        saves = ttk.Frame(self)
+        saves.pack(fill=tk.X)
+        self.save_button = ttk.Button(saves, text="保存当前组到 C++", command=self.save_to_cpp)
+        self.save_button.pack(side=tk.LEFT)
+        self.save_all_button = ttk.Button(saves, text="保存全部延时到 C++", command=lambda: self.save_to_cpp(True))
+        self.save_all_button.pack(side=tk.LEFT, padx=5)
+        self.note = tk.StringVar()
+        ttk.Label(self, textvariable=self.note, wraplength=530, foreground="#59636e").pack(anchor="w", pady=5)
+        body = ttk.Frame(self)
+        self.tree = ttk.Treeview(body, columns=("step", "current", "edit", "source"), show="headings", height=12, selectmode="browse")
+        for key, title, width in (("step", "动作 / 等待位置", 195), ("current", "当前(ms)", 85),
+                                  ("edit", "待发送(ms)", 90), ("source", "C++默认(ms)", 100)):
+            self.tree.heading(key, text=title)
+            self.tree.column(key, width=width, minwidth=65, stretch=(key == "step"))
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll = ttk.Scrollbar(body, orient=tk.VERTICAL, command=self.tree.yview)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.configure(yscrollcommand=scroll.set)
+        self.tree.tag_configure("dirty", foreground="#b05b00")
+        self.tree.bind("<<TreeviewSelect>>", self.select)
+        self.tree.bind("<Double-1>", self.focus_editor)
+        editor = ttk.Frame(self)
+        editor.pack(fill=tk.X, pady=6)
+        ttk.Label(editor, text="等待时间(ms)").pack(side=tk.LEFT)
+        self.entry = ttk.Entry(editor, textvariable=self.value, width=12)
+        self.entry.pack(side=tk.LEFT, padx=5)
+        self.entry.bind("<Return>", lambda _event: self.send())
+        self.edit_button = ttk.Button(editor, text="暂存此项", command=self.edit)
+        self.edit_button.pack(side=tk.LEFT)
+        ttk.Label(self, textvariable=controller.status, wraplength=530).pack(anchor="w", pady=5)
+        ttk.Label(self, text="保存会改写本工程 material_transfer.cpp 的延时数值；重新编译烧录后成为开机默认值。",
+                  wraplength=530, foreground="#59636e").pack(anchor="w")
+        body.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
+        controller.action_group_panel = self
+        self.reload_source()
+
+    def names(self):
+        prefix = f"{DELAY_PREFIX}{self.group.get()}/"
+        return tuple(name for name in DELAY_NAMES if name.startswith(prefix))
+
+    def reload_source(self):
+        self.source_values = {}
+        try:
+            self.source_values = load_action_group_delays()
+        except (OSError, ValueError) as exc:
+            self.controller.status.set(f"源码默认值读取失败：{exc}")
+        self.refresh()
+
+    def refresh(self):
+        c = self.controller
+        by_name = {p.name: p for p in c.parameters.values()}
+        names = self.names()
+        transfer = self.group.get() in TRANSFER_GROUPS[1:]
+        # 只调整显示名称；行标识、串口参数名和 C++ 保存键继续使用原名称。
+        labels = {"取料抬升": "抬升后等待（缩回前）", "放料平移": "缩回后等待",
+                  "放料稳定": "转向前稳定", "放料下降": "伸出并下降"} if transfer else {}
+        selection = self.tree.selection()
+        self.tree.delete(*self.tree.get_children())
+        for name in names:
+            p = by_name.get(name)
+            step = name.rsplit("/", 1)[-1].removesuffix("(ms)")
+            self.tree.insert("", tk.END, iid=name, values=(labels.get(step, step),
+                p.value if p and c.ready else "未读取", c.edits.get(p.index, "") if p else "",
+                self.source_values.get(name, "未知")), tags=("dirty",) if p and p.index in c.edits else ())
+        snapshot = (id(c.parameters), self.group.get())
+        if names:
+            self.tree.selection_set(selection[0] if selection and selection[0] in names else names[0])
+        if snapshot != self.snapshot:
+            self.snapshot = snapshot
+            self.current_group = self.group.get()
+            self.select()
+        idle = not c.mode and not c.test_running
+        available = c.ready and bool(names) and all(name in by_name for name in names)
+        self.group_box.configure(state="readonly" if idle else tk.DISABLED)
+        self.read_button.configure(state=tk.NORMAL if idle else tk.DISABLED)
+        for widget in (self.entry, self.edit_button, self.send_button, self.save_button):
+            widget.configure(state=tk.NORMAL if idle and available else tk.DISABLED)
+        self.trial_button.configure(state=tk.NORMAL if idle and available and self.group.get() in TRANSFER_GROUPS[1:] else tk.DISABLED)
+        self.save_all_button.configure(state=tk.NORMAL if idle and c.ready and all(name in by_name for name in DELAY_NAMES) else tk.DISABLED)
+        note = ("夹紧后：抬升 → 等待 → 缩回到 0 → 等待 → 转向目标 → 伸出并下降。"
+                "“抬升后等待（缩回前）”控制抬升与缩回两条指令的间隔。"
+                "“缩回后等待”和“转向前稳定”是额外等待，可设为 0。" if transfer else
+                "公共延时用于圆盘放料和工作区取回；9 种载物台到工作区组合各用自己的延时。")
+        self.note.set(note
+                      if available or not c.ready else "当前固件缺少本组延时参数，请先烧录新版固件。")
+
+    def select(self, _event=None):
+        selection = self.tree.selection()
+        self.selected = selection[0] if selection else None
+        p = next((p for p in self.controller.parameters.values() if p.name == self.selected), None)
+        self.value.set(self.controller.edits.get(p.index, p.value) if p else "")
+
+    def focus_editor(self, _event=None):
+        self.select()
+        self.entry.focus_set()
+        self.entry.select_range(0, tk.END)
+
+    def edit(self):
+        c = self.controller
+        if c.mode or c.test_running or not c.ready:
+            return False
+        selected, text = self.selected, self.value.get()
+        if not c.edit():
+            return False
+        p = next((p for p in c.parameters.values() if p.name == selected), None)
+        if p is None:
+            return False
+        try:
+            value = p.validate(text)
+        except ValueError as exc:
+            messagebox.showerror("延时无效", str(exc), parent=self)
+            return False
+        if float(value) == float(p.value):
+            c.edits.pop(p.index, None)
+        else:
+            c.edits[p.index] = value
+        # 隐藏的参数页编辑器不能再次用旧值覆盖动作组编辑。
+        c.selected = None
+        c.value.set("")
+        c.tree.selection_remove(*c.tree.selection())
+        c.refresh_tree()
+        c.status.set(f"已暂存 {len(c.edits)} 项修改；发送并回读后可保存到 C++。")
+        return True
+
+    def change_group(self, _event=None):
+        previous = self.current_group
+        if self.controller.ready and not self.edit():
+            self.group.set(previous)
+            self.snapshot = None
+            self.refresh()
+            return
+        self.snapshot = None
+        self.refresh()
+
+    def send(self):
+        if self.edit():
+            self.controller.send()
+
+    def trial(self):
+        c = self.controller
+        group = self.group.get()
+        if group not in TRANSFER_GROUPS[1:] or not self.edit():
+            return
+        if not all(any(p.name == name for p in c.parameters.values()) for name in self.names()):
+            return
+        cargo, work = divmod(TRANSFER_GROUPS.index(group) - 1, 3)
+        line = build_frame("CMD", "ARM", "TRANSFER", cargo + 1, work + 1)
+        if c.edits:
+            c.run_after_verify = False
+            c.test_after_verify = (group, line)
+            c.send()
+        else:
+            c.dispatch_test(group, line)
+
+    def save_to_cpp(self, all_groups=False):
+        c = self.controller
+        if not self.edit():
+            return
+        if c.edits:
+            c.status.set("还有待发送修改；请先发送并回读确认，再保存到 C++。")
+            return
+        by_name = {p.name: p for p in c.parameters.values()}
+        names = DELAY_NAMES if all_groups else self.names()
+        if not names or not all(name in by_name for name in names):
+            c.status.set("小车尚未完整回读所需延时，未保存。")
+            return
+        try:
+            count = save_action_group_delays({name: by_name[name].value for name in names})
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("保存延时失败", str(exc), parent=self)
+            return
+        self.reload_source()
+        c.status.set(f"已将 {count} 项延时写回 material_transfer.cpp；重新编译烧录后成为开机默认值。")
 
 
 FIELD_SIZE_MM = 2400.0
@@ -2340,6 +2557,7 @@ class UpperComputerApp:
             run_main=lambda: self.send_command("Mode:Release"),
         )
         notebook.add(self.parameter_panel, text="参数")
+        notebook.add(ActionGroupPanel(notebook, self.parameter_panel), text="动作组调试")
 
         led_page = ScrollableTab(notebook, padding=12)
         led_tab = led_page.content
