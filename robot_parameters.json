@@ -251,7 +251,7 @@
           "integer": false
         },
         "搬运/速度/移至工位平移": {
-          "value": 250.0,
+          "value": 300.0,
           "description": "每次取料/放料前：升至安全高度、伸向目标并设置夹爪角度。",
           "minimum": 1.0,
           "maximum": 300.0,
@@ -286,7 +286,7 @@
           "integer": false
         },
         "搬运/速度/放料下降": {
-          "value": 250.0,
+          "value": 300.0,
           "description": "放入载物台或工作区：下降到目标高度。",
           "minimum": 1.0,
           "maximum": 300.0,
@@ -300,7 +300,7 @@
           "integer": false
         },
         "搬运/速度/放料提起": {
-          "value": 250.0,
+          "value": 300.0,
           "description": "放入载物台或工作区：升至安全高度。",
           "minimum": 1.0,
           "maximum": 300.0,

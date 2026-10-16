@@ -434,7 +434,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
                 return false;
             } else {
                 uint32_t pulses = (uint32_t)(high * HEIGHT_PULSE);
-                Emm_V5_Pos_Control(5, 1, speed*3, acc, pulses, true, false);
+                Emm_V5_Pos_Control(5, 1, speed*4, acc, pulses, true, false);
                 vTaskDelay(pdMS_TO_TICKS(10));
                 currentArm.high = high;
             }
@@ -447,7 +447,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
                 return false;
             } else {
                 uint32_t pulses = (uint32_t)(length * LENGTH_PULSE);
-                Emm_V5_Pos_Control(6, 1, speed*3, acc, pulses, true, false);
+                Emm_V5_Pos_Control(6, 1, speed*4, acc, pulses, true, false);
                 vTaskDelay(pdMS_TO_TICKS(10));
                 currentArm.length = length;
             }
