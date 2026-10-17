@@ -1,0 +1,6 @@
+// Shared map geometry, millimetres. Python preview and firmware both read this file.
+FIELD_BOUNDS(2400, 300)
+FIELD_OBSTACLE(550, 1000, 550, 1000)
+FIELD_OBSTACLE(1400, 1850, 550, 1000)
+FIELD_OBSTACLE(550, 1000, 1400, 1850)
+FIELD_OBSTACLE(1400, 1850, 1400, 1850)

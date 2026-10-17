@@ -321,6 +321,12 @@ bool executeNodeSegment(uint8_t startNode, uint8_t endNode,
 
 } // namespace
 
+bool ChassisGetNodePosition(uint8_t node,float &x,float &y) {
+    NodePosition p;
+    if(!getNodePosition(node,p))return false;
+    x=p.x;y=p.y;return true;
+}
+
 // 注册原变量地址，上位机修改后由底盘和 PID 算法直接使用。
 void RegisterChassisParameters() {
     PidController *controllers[] = {&s_alignVisualXPid, &s_alignVisualYPid, &s_alignAnglePid};

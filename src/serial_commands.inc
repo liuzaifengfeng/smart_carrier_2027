@@ -1,7 +1,10 @@
 // 由 robot_runtime.cpp 在业务状态与动作函数之后包含。仅此任务读取 Serial0。
 #include <float.h>
 #include "debug_release_button.h"
+#include "h30_usb.h"
+#include "continuous_trial.h"
 static bool serialDebugMode = true;
+static bool serialTrial(const SerialFrame &frame);
 static DebugReleaseButton bootReleaseButton;
 static portMUX_TYPE bootReleaseMux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -16,7 +19,7 @@ void PollDebugBootButton() {
 
 static void serialBootSetIdle(bool idle) {
     portENTER_CRITICAL(&bootReleaseMux);
-    bootReleaseButton.setIdle(serialDebugMode && idle);
+    bootReleaseButton.setIdle(serialDebugMode && idle && !ContinuousTrialActive());
     portEXIT_CRITICAL(&bootReleaseMux);
 }
 static void serialReply(const SerialFrame &frame, const char *status) {
@@ -37,6 +40,8 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"TASK", "SET"},
         {"LED", "SET"}, {"LED", "GET"}, {"LED", "FREQ"},
         {"NAV", "START_ZONE"}, {"NAV", "ROUTE"},
+        {"NAV", "TRIAL_BEGIN"}, {"NAV", "TRIAL_POLICY"}, {"NAV", "TRIAL_NODE"}, {"NAV", "TRIAL_START"},
+        {"NAV", "TRIAL_STATUS"}, {"NAV", "TRIAL_STOP"},
         {"VISION", "ALIGN_START"}, {"VISION", "ALIGN_STOP"},
         {"VISION", "START_REQUEST"},
         {"VISION", "STOP_REQUEST"},
@@ -45,6 +50,8 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"VISION", "FORCE_GRAB"},
         {"VISION", "CONFIRM"}, {"VISION", "LIDAR_POSE"},
         {"POSE", "GET"}, {"POSE", "SET"}, {"POSE", "GOTO_REL"},
+        {"IMU", "GET"},
+        {"IMU", "HEADING"},
         {"CHASSIS", "MOVE"}, {"CHASSIS", "MOVE_POSITION"},
         {"ARM", "MOVE1"}, {"ARM", "MOVE2"}, {"ARM", "SERVO"},
         {"ARM", "ENABLE"}, {"ARM", "DEMO1"}, {"ARM", "DEMO2"}, {"ARM", "DEMO3"},
@@ -134,7 +141,7 @@ static void serialRelease(const SerialFrame &frame) {
 
 static void serialBootReleaseAtIdle(bool idle) {
     portENTER_CRITICAL(&bootReleaseMux);
-    bootReleaseButton.setIdle(serialDebugMode && idle);
+    bootReleaseButton.setIdle(serialDebugMode && idle && !ContinuousTrialActive());
     const bool requested = bootReleaseButton.takeRequest();
     portEXIT_CRITICAL(&bootReleaseMux);
     if (!requested) return;
@@ -264,6 +271,12 @@ static void serialTransfer(const SerialFrame &frame) {
 }
 
 static void serialDispatch(const SerialFrame &frame) {
+    if(ContinuousTrialActive() && !frame.is("IMU","GET",0) && !frame.is("IMU","HEADING",0)
+        && !frame.is("NAV","TRIAL_STATUS",1) && !frame.is("NAV","TRIAL_STOP",1)
+        && !frame.is("SYS","HELLO",0) && !frame.is("SYS","HELP",0)) {
+        serialError(frame,"BUSY");return;
+    }
+    if(serialTrial(frame))return;
     // 每个分支必须先完整匹配动作及参数数量，再读取参数或调用运动函数。
     // 1. 通用命令与共享业务状态。
     if (frame.is("SYS", "HELLO", 0)) {
@@ -300,6 +313,20 @@ static void serialDispatch(const SerialFrame &frame) {
         serialReply(frame, "OK");
     } else if (frame.is("POSE", "GET", 0)) {
         sendPoseQueryReply();
+    } else if (frame.is("IMU", "GET", 0)) {
+        H30Attitude sample;
+        uint32_t age = 0;
+        const char *error = H30UsbGetAttitude(sample, age);
+        if (error) { serialError(frame, error); return; }
+        Serial.printf("{RSP,IMU,GET,OK,%.6f,%.6f,%.6f,%lu}\n",
+                      sample.pitch, sample.roll, sample.yaw, static_cast<unsigned long>(age));
+    } else if (frame.is("IMU", "HEADING", 0)) {
+        float heading = 0;
+        uint32_t age = 0;
+        const char *error = H30UsbGetHeading(heading, age);
+        if (error) { serialError(frame, error); return; }
+        Serial.printf("{RSP,IMU,HEADING,OK,%.6f,%lu}\n",
+                      heading, static_cast<unsigned long>(age));
     } else if (frame.is("LED", "SET", 1) || frame.is("LED", "GET", 0)
                || frame.is("LED", "FREQ", 1)) {
         uint32_t percent = 0;
@@ -326,8 +353,11 @@ static void serialDispatch(const SerialFrame &frame) {
             serialError(frame, "RANGE"); return;
         }
         currentStartZone = static_cast<StartZone>(zone);
-        if (serialDebugMode) currentPose = zone == 1 ? RobotPose{2250, 150, START_ZONE_HEADING}
-                                                      : RobotPose{150, 150, START_ZONE_HEADING};
+        if (serialDebugMode) {
+            currentPose = zone == 1 ? RobotPose{2250, 150, START_ZONE_HEADING}
+                                   : RobotPose{150, 150, START_ZONE_HEADING};
+            CalibrateH30MapHeading(currentPose.theta);
+        }
         Serial.printf("{RSP,NAV,START_ZONE,OK,%u}\n", static_cast<unsigned>(zone));
     } else if (frame.starts("NAV", "ROUTE")) {
         serialRoute(frame);
@@ -438,10 +468,17 @@ static void serialDispatch(const SerialFrame &frame) {
         runLidarPoseAction(true);
     } else if (frame.starts("CFG", "GET") || frame.starts("CFG", "BEGIN")
                || frame.starts("CFG", "SET") || frame.starts("CFG", "COMMIT")) {
-        if (alignmentEnabled) { serialCfgError(frame, "BUSY_OR_MODE"); return; }
+        const bool reading = frame.starts("CFG", "GET");
+        if (!reading && alignmentEnabled) { serialCfgError(frame, "BUSY_OR_MODE"); return; }
+        const char *arguments[SERIAL_MAX_FIELDS];
+        for (size_t i = 2; i < frame.count; ++i) arguments[i - 2] = frame.fields[i];
+        if (reading) {
+            // 参数写入也只由此串口任务执行。只读流式回传无需持有运动锁，
+            // 否则几秒的目录回读会阻塞视觉闭环；不启停视觉、不重置PID。
+            HandleRuntimeParameters(arguments, frame.count - 2, false);
+            return;
+        }
         if (xAlignmentMotionMutex && xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
-            const char *arguments[SERIAL_MAX_FIELDS];
-            for (size_t i = 2; i < frame.count; ++i) arguments[i - 2] = frame.fields[i];
             HandleRuntimeParameters(arguments, frame.count - 2, serialDebugMode);
             xSemaphoreGive(xAlignmentMotionMutex);
         } else serialCfgError(frame, "LOCK");
@@ -457,7 +494,10 @@ static void serialDispatch(const SerialFrame &frame) {
         if (!serialFloats(frame, values, minimum, maximum, 3)) {
             serialError(frame, "RANGE"); return;
         }
-        if (set) currentPose = {values[0], values[1], values[2]};
+        if (set) {
+            currentPose = {values[0], values[1], values[2]};
+            CalibrateH30MapHeading(currentPose.theta);
+        }
         Serial.printf("{RSP,POSE,%s,ACK,%.3f,%.3f,%.3f}\n", frame.fields[2],
                       values[0], values[1], values[2]);
         if (!set) GotoPose(values[0], values[1], values[2], true);
@@ -556,6 +596,56 @@ static void serialDispatch(const SerialFrame &frame) {
     } else if (frame.count >= 3) {
         serialError(frame, serialKnownAction(frame) ? "FORMAT" : "UNKNOWN_ACTION");
     }
+}
+
+static bool serialTrial(const SerialFrame &frame) {
+    if(strcmp(frame.fields[1],"NAV")!=0||strncmp(frame.fields[2],"TRIAL_",6)!=0)return false;
+    uint32_t id=0;
+    if(!serialDebugMode){serialError(frame,"MODE");return true;}
+    if(frame.count<4||!serialUInt(frame.fields[3],id,9999999)||id==0){serialError(frame,"RANGE");return true;}
+    const char *error=nullptr;
+    if(frame.is("NAV","TRIAL_BEGIN",12)) {
+        uint32_t count=0;
+        continuous::Config cfg;cfg.id=id;
+        if(!serialUInt(frame.fields[4],count,25)||count<2){serialError(frame,"RANGE");return true;}
+        cfg.count=count;
+        float *dest[]={&cfg.startHeading,&cfg.endHeading,&cfg.maxRpm,&cfg.accel,&cfg.lateralAccel,
+            &cfg.lateralPpm,&cfg.forwardPpm,&cfg.kp,&cfg.maxOmega,&cfg.correction};
+        const float low[]={0,0,1,1,1,0.01f,0.01f,0.1f,5,1};
+        const float high[]={359.999f,359.999f,5000,2000,3000,1000,1000,10,90,89};
+        for(size_t i=0;i<10;++i)if(!serialFloat(frame.fields[i+5],*dest[i],low[i],high[i])) {
+            serialError(frame,"RANGE");return true;
+        }
+        if(cfg.correction>=cfg.maxOmega){serialError(frame,"RANGE");return true;}
+        error=ContinuousTrialBegin(cfg);
+    } else if(frame.is("NAV","TRIAL_POLICY",5)) {
+        uint32_t policy=0,geometry=0;float outset=0,margin=0;
+        if(!serialUInt(frame.fields[4],policy,2)||policy<1
+            ||!serialFloat(frame.fields[5],outset,0,100)||!serialFloat(frame.fields[6],margin,10,40)
+            ||!serialUInt(frame.fields[7],geometry,UINT32_MAX)) {serialError(frame,"RANGE");return true;}
+        error=ContinuousTrialPolicy(id,policy,outset,margin,geometry);
+    } else if(frame.is("NAV","TRIAL_NODE",6)) {
+        uint32_t index=0,node=0;float radius=0,x=0,y=0;
+        if(!serialUInt(frame.fields[4],index,24)||!serialUInt(frame.fields[5],node,24)
+            ||!serialFloat(frame.fields[6],radius,0,1000)
+            ||!serialFloat(frame.fields[7],x,0,2400)||!serialFloat(frame.fields[8],y,0,2400)) {
+            serialError(frame,"RANGE");return true;
+        }
+        error=ContinuousTrialNode(id,index,node,radius,x,y);
+    } else if(frame.is("NAV","TRIAL_START",1))error=ContinuousTrialPrepare(id);
+    else if(frame.is("NAV","TRIAL_STOP",1))error=ContinuousTrialStop(id);
+    else if(frame.is("NAV","TRIAL_STATUS",1)) {
+        error=ContinuousTrialStatus(id);if(!error)return true;
+    } else {serialError(frame,"FORMAT");return true;}
+    if(error){
+        Serial.printf("{RSP,NAV,%s,ERR,%lu,%s}\n",frame.fields[2],static_cast<unsigned long>(id),error);
+    } else {
+        if(frame.is("NAV","TRIAL_NODE",6))
+            Serial.printf("{RSP,NAV,TRIAL_NODE,ACK,%lu,%s}\n",static_cast<unsigned long>(id),frame.fields[4]);
+        else Serial.printf("{RSP,NAV,%s,ACK,%lu}\n",frame.fields[2],static_cast<unsigned long>(id));
+        if(frame.is("NAV","TRIAL_START",1))ContinuousTrialLaunch();
+    }
+    return true;
 }
 
 void Task_Serial_CMD(void *pvParameters) {

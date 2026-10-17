@@ -20,6 +20,8 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 from parameter_config import DEFAULT_CONFIG_PATH, load_config, config_edits, export_config
 from action_group_config import (DELAY_NAMES, DELAY_PREFIX, TRANSFER_GROUPS,
                                 load_action_group_delays, save_action_group_delays)
+from continuous_trial import ContinuousTrialPanel
+from field_geometry import OBSTACLES
 
 try:
     import serial
@@ -1329,6 +1331,39 @@ def parse_gotopose_echo(text: str) -> Pose | None:
     return Pose(*values)
 
 
+def parse_imu_response(text: str) -> tuple[float, float, float, int] | None:
+    """H30 原始 Pitch/Roll/Yaw（度）及样本年龄（毫秒）。"""
+    fields = parse_frame(text)
+    if fields is None or fields[:4] != ("RSP", "IMU", "GET", "OK") or len(fields) != 8:
+        return None
+    try:
+        angles = tuple(float(part) for part in fields[4:7])
+        if not fields[7].isascii() or not fields[7].isdigit():
+            return None
+        age = int(fields[7])
+    except ValueError:
+        return None
+    if not all(math.isfinite(value) and abs(value) <= 2148 for value in angles) or age > 200:
+        return None
+    return (*angles, age)
+
+
+def parse_imu_heading_response(text: str) -> tuple[float, int] | None:
+    fields = parse_frame(text)
+    if fields is None or fields[:4] != ("RSP", "IMU", "HEADING", "OK") or len(fields) != 6:
+        return None
+    try:
+        heading = float(fields[4])
+        if not fields[5].isascii() or not fields[5].isdigit():
+            return None
+        age = int(fields[5])
+    except ValueError:
+        return None
+    if not math.isfinite(heading) or not 0 <= heading < 360 or age > 200:
+        return None
+    return heading, age
+
+
 def parse_pose_response(text: str) -> tuple[Pose, ArmPose] | None:
     """解析七轴回读，最后两轴为舵机实测角度；拒绝无效值。"""
     fields = parse_frame(text)
@@ -2164,9 +2199,8 @@ class FieldCanvas(tk.Canvas):
         )
 
         # 中央四块淡黄色区域；中间保留 400 mm 十字通道。
-        for x_min, x_max in ((550.0, 1000.0), (1400.0, 1850.0)):
-            for y_min, y_max in ((550.0, 1000.0), (1400.0, 1850.0)):
-                self._draw_zone(x_min, x_max, y_min, y_max, fill="#fffde2", outline="")
+        for x_min, x_max, y_min, y_max in OBSTACLES:
+            self._draw_zone(x_min, x_max, y_min, y_max, fill="#fffde2", outline="")
 
         center_start = self.world_to_canvas(0.0, 1200.0)
         center_end = self.world_to_canvas(2400.0, 1200.0)
@@ -2473,6 +2507,7 @@ class UpperComputerApp:
         self.position_move_status = tk.StringVar(value="尚未发送位置移动指令")
         self.pending_relative_move: Pose | None = None
         self.pose_query_timer: str | None = None
+        self.imu_query_timer: str | None = None
         self.protocol_timer: str | None = None
         self.pressed_drive_keys: list[str] = []
         self.active_drive_key: str | None = None
@@ -2511,6 +2546,19 @@ class UpperComputerApp:
         self.pose_query_status = tk.StringVar(value="尚未回读：舵机实测，其余轴为理想值")
         ttk.Label(connection, textvariable=self.pose_query_status).grid(
             row=1, column=2, columnspan=4, sticky="w", pady=(6, 0)
+        )
+        ttk.Button(connection, text="查询陀螺仪姿态（单次）", command=self.query_imu).grid(
+            row=5, column=0, columnspan=2, sticky="w", pady=(6, 0)
+        )
+        self.imu_status = tk.StringVar(value="H30：尚未查询 · Pitch / Roll / Yaw（度）")
+        ttk.Label(connection, textvariable=self.imu_status).grid(
+            row=5, column=2, columnspan=4, sticky="w", pady=(6, 0)
+        )
+        ttk.Button(connection, text="查询地图航向（单次）", command=self.query_imu_heading).grid(
+            row=6, column=0, columnspan=2, sticky="w", pady=(6, 0)
+        )
+        ttk.Label(connection, text="先按实车朝向选区或校准位姿，再查询地图航向").grid(
+            row=6, column=2, columnspan=4, sticky="w", pady=(6, 0)
         )
         self.task_code_var = tk.StringVar(value="尚未收到任务码")
         self.debug_display_var = tk.StringVar(value="等待小车信息")
@@ -2558,6 +2606,15 @@ class UpperComputerApp:
         )
         notebook.add(self.parameter_panel, text="参数")
         notebook.add(ActionGroupPanel(notebook, self.parameter_panel), text="动作组调试")
+        trial_page = ScrollableTab(notebook, padding=4)
+        notebook.add(trial_page, text="连续试跑")
+        self.trial_panel = ContinuousTrialPanel(
+            trial_page.content, self.serial_link.send_line, self.append_log,
+            build_frame, parse_frame, self._trial_node_positions,
+            heading_provider=lambda: self.field.current_pose.theta,
+            calibrate=self._trial_calibrate, on_result=self._trial_result,
+        )
+        self.trial_panel.pack(fill=tk.BOTH, expand=True)
 
         led_page = ScrollableTab(notebook, padding=12)
         led_tab = led_page.content
@@ -3187,6 +3244,9 @@ class UpperComputerApp:
             self.connection_var.set("未安装 pyserial")
 
     def toggle_connection(self) -> None:
+        if hasattr(self, "trial_panel"):
+            self.trial_panel.shutdown()
+        self._reset_imu_query("连接已变更，请重新查询 H30")
         self.led_status.set("连接已变更，请重新查询亮度")
         self.parameter_panel.disconnected()
         self._cancel_protocol_timer()
@@ -3717,6 +3777,107 @@ class UpperComputerApp:
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
 
+    def _trial_calibrate(self, x, y, heading):
+        pose = Pose(x, y, heading)
+        line = build_pose_calibration_command(pose)
+        self.serial_link.send_line(line)
+        self.append_log("TX", line)
+        if self.pending_target is not None:
+            self._clear_pending_target()
+        self._trial_result(x, y, heading)
+
+    def _trial_result(self, x, y, heading):
+        self.field.set_current_pose(Pose(x, y, heading))
+        for variable, value in zip(self.current_vars, (x, y, heading)):
+            variable.set(f"{value:g}")
+
+    def _trial_node_positions(self):
+        if not self.parameter_panel.ready:
+            raise RuntimeError("请先在参数页完整回读固件参数，确保预览地图与车上地图一致")
+        # ParameterPanel 的键是固件整数索引，不能用参数名称直接索引。
+        values = {p.name: p for p in self.parameter_panel.parameters.values()}
+        required = [f"地图/节点{i}/{axis}(mm)" for i in range(FIELD_NODE_COUNT) for axis in ("X", "Y")]
+        missing = [name for name in required if name not in values]
+        if missing:
+            raise RuntimeError(f"固件地图缺少 {len(missing)} 项：{'、'.join(missing[:3])}；请完整回读或检查固件版本")
+        positions = {}
+        for i in range(FIELD_NODE_COUNT):
+            pair = []
+            for axis in ("X", "Y"):
+                name = f"地图/节点{i}/{axis}(mm)"
+                try:
+                    value = float(values[name].value)
+                except (ValueError, TypeError) as exc:
+                    raise RuntimeError(f"地图参数 {name} 不是有效数值") from exc
+                if not math.isfinite(value) or not 0 <= value <= FIELD_SIZE_MM:
+                    raise RuntimeError(f"地图参数 {name} 超出有效场地范围")
+                pair.append(value)
+            positions[i] = tuple(pair)
+        return positions
+
+    def query_imu(self) -> None:
+        self._query_imu_action("GET")
+
+    def query_imu_heading(self) -> None:
+        self._query_imu_action("HEADING")
+
+    def _query_imu_action(self, action: str) -> None:
+        try:
+            line = build_frame("CMD", "IMU", action)
+            self.serial_link.send_line(line)
+        except (RuntimeError, OSError) as exc:
+            self._reset_imu_query(f"H30 查询未发送：{exc}")
+            return
+        self.append_log("TX", line)
+        self._reset_imu_query("等待 H30 三轴姿态回复…")
+        self.imu_query_timer = self.root.after(3000, self._imu_query_timeout)
+
+    def _reset_imu_query(self, message: str) -> None:
+        if self.imu_query_timer is not None:
+            self.root.after_cancel(self.imu_query_timer)
+            self.imu_query_timer = None
+        self.imu_status.set(message)
+
+    def _imu_query_timeout(self) -> None:
+        self.imu_query_timer = None
+        self.imu_status.set("H30 查询超时，请在动作结束后重试")
+
+    def _accept_imu_response(self, text: str) -> None:
+        fields = parse_frame(text)
+        if fields is None:
+            return
+        if fields[:3] == ("EVT", "IMU", "REFERENCE"):
+            if len(fields) == 5 and fields[3] == "OK":
+                self.imu_status.set(f"H30 地图航向参考已同步至 {fields[4]}°，可查询验证")
+            elif len(fields) == 5 and fields[3] == "ERR":
+                self.imu_status.set(f"理想位姿已设置，H30 航向参考未同步（{fields[4]}），需重新标定")
+            return
+        if fields[:3] not in (("RSP", "IMU", "GET"), ("RSP", "IMU", "HEADING")):
+            return
+        errors = {"INIT": "USB Host 初始化失败", "OFFLINE": "设备离线或正在重连",
+                  "NO_DATA": "尚无有效姿态帧", "STALE": "姿态数据已过期",
+                  "NOT_CALIBRATED": "尚未标定地图航向，请按实车朝向重新设置位姿"}
+        if len(fields) == 5 and fields[3] == "ERR":
+            self._reset_imu_query("H30：" + errors.get(fields[4], fields[4]))
+            return
+        if fields[2] == "HEADING":
+            result = parse_imu_heading_response(text)
+            if result is None:
+                self._reset_imu_query("H30 地图航向回复无效，请重新查询")
+            else:
+                heading, age = result
+                self._reset_imu_query(f"H30 地图航向={heading:.3f}° · 样本年龄 {age} ms（本次快照）")
+            return
+        result = parse_imu_response(text)
+        if result is None:
+            self._reset_imu_query("H30 回复无效，请重新查询")
+            return
+        pitch, roll, yaw, age = result
+        self._reset_imu_query(
+            f"H30：Pitch={pitch:.3f}°  Roll={roll:.3f}°  Yaw={yaw:.3f}°"
+            f" · 样本年龄 {age} ms（本次快照）"
+        )
+
     def query_poses(self) -> None:
         """串口查询七轴状态，显示仅在收到合法回复后更新。"""
         try:
@@ -3820,6 +3981,8 @@ class UpperComputerApp:
                 break
             self.append_log(kind, text, timestamp)
             if kind == "RX":
+                if hasattr(self, "trial_panel"):
+                    self.trial_panel.receive(text)
                 fields = parse_frame(text)
                 if fields is not None and fields[:4] == ("RSP", "SYS", "HELLO", "OK"):
                     if len(fields) == 5 and fields[4] == PROTOCOL_VERSION:
@@ -3864,11 +4027,18 @@ class UpperComputerApp:
                         FIELD_NODES = tuple((i, values[f"地图/节点{i}/X(mm)"], values[f"地图/节点{i}/Y(mm)"]) for i in range(FIELD_NODE_COUNT))
                         self.field.redraw()
                 if text.startswith("version:") or text in ("Debug mode", "Release mode"):
+                    if hasattr(self, "trial_panel"):
+                        self.trial_panel.disconnected("设备启动或模式改变")
+                    self._reset_imu_query("设备启动或模式改变，请重新查询 H30")
                     self.parameter_panel.disconnected()
                     self.led_status.set("设备启动或模式改变，请重新查询亮度")
                 self._accept_target_echo(text)
                 self._accept_pose_response(text)
+                self._accept_imu_response(text)
             if kind == "ERROR":
+                if hasattr(self, "trial_panel"):
+                    self.trial_panel.disconnected("串口异常断开")
+                self._reset_imu_query("串口异常断开，请重新查询 H30")
                 self.led_status.set("串口异常断开，亮度回读已失效")
                 self._cancel_protocol_timer()
                 self._cancel_pose_query_timeout()
@@ -3886,6 +4056,9 @@ class UpperComputerApp:
         self.root.after(60, self.poll_serial_events)
 
     def on_close(self) -> None:
+        if hasattr(self, "trial_panel"):
+            self.trial_panel.shutdown()
+        self._reset_imu_query("已关闭")
         self._cancel_protocol_timer()
         self._stop_keyboard_drive()
         self.pressed_rotation_keys.clear()

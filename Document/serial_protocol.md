@@ -41,6 +41,9 @@ Debug空闲时按BOOT0（GPIO0，低电平）等效执行 `{CMD,SYS,RELEASE}`，
 | `{ok}` | `{CMD,VISION,CONFIRM}` | Release | `{RSP,VISION,CONFIRM,ACK}` |
 | `{LidarPose}` | `{CMD,VISION,LIDAR_POSE}` | 两者 | `{RSP,VISION,LIDAR_POSE,ACK}`，随后完成或失败事件 |
 | `{POSE:GET}` | `{CMD,POSE,GET}` | 两者 | `{RSP,POSE,GET,OK,x,y,theta,h,l,turret,pawl}` |
+| 无 | `{CMD,IMU,GET}` | 两者 | 单次快照：`{RSP,IMU,GET,OK,pitch,roll,yaw,age_ms}`；角度单位 °，H30 原始坐标，数据年龄不超过 200 ms |
+| 无 | `{CMD,IMU,HEADING}` | 两者 | 单次地图航向：`{RSP,IMU,HEADING,OK,heading,age_ms}`；heading 为 0~360°（不含 360），无参考时返回 `ERR,NOT_CALIBRATED` |
+| 无 | `{CMD,NAV,TRIAL_BEGIN,...}` / `TRIAL_POLICY` / `TRIAL_NODE` / `TRIAL_START` / `TRIAL_STATUS` / `TRIAL_STOP` | Debug | 独立混合路径试跑：窄路停转、外围外绕、完整车身碰障碍校验、H30转向完成确认。POLICY及几何签名必需；完整参数和回复见 [连续试跑说明](continuous_trial.md) |
 | `{SetPose:x,y,theta}` | `{CMD,POSE,SET,x,y,theta}` | Debug | `{RSP,POSE,SET,ACK,x,y,theta}` |
 | `{GOTOpose:x,y,theta}` | `{CMD,POSE,GOTO_REL,x,y,theta}` | Debug | `{RSP,POSE,GOTO_REL,ACK,x,y,theta}` |
 | `{Movepose:dir,speed,stop}` | `{CMD,CHASSIS,MOVE,dir,speed,stop}` | Debug | `{RSP,CHASSIS,MOVE,ACK,dir,speed,stop}` |

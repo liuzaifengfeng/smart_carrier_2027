@@ -8,6 +8,8 @@
 **********************************************************/
 
 #include "robot_runtime.h"
+#include "h30_usb.h"
+#include "continuous_trial.h"
 
 void Task_MainStateMachine(void *pvParameters) {
     vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -67,6 +69,8 @@ void Task_MainStateMachine(void *pvParameters) {
                 updateDisplay("DISPLAY", "DEBUG", "ERR:start_zone: unknown");
                 break;
             }
+            // 已按实际摆车方向建立地图位姿；仅此处同步，不使用运动推算值反复校准。
+            CalibrateH30MapHeading(currentPose.theta);
             // Release 开局自动执行一次。动作未标定或执行失败时返回 ERR，
             // 仍停留在开局等待阶段，便于通过串口修正后再次手动调用。
             runLidarPoseAction();
@@ -833,7 +837,7 @@ void setup() {
     Servo_Init();    // 总线舵机初始化 (默认 Serial2: RX=16, TX=15, 115200bps)
     Emm_V5_Init();   // 电机初始化
     Scanner_Init();  // 扫码模块初始化 (软串口 RX=IO4, 9600bps)
-    // [TODO] 若有传感器/定位硬件, 在此初始化
+    if (!H30UsbBegin()) Serial.println("[H30] USB Host initialization failed");
     FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
     FastLED.setBrightness(10);
 
@@ -857,6 +861,7 @@ void setup() {
     // 视觉 PID 对齐只保留 20 Hz 连续反馈中的最新一帧。
     xAlignmentQueue = xQueueCreate(1, sizeof(VisualAlignmentFrame_t));
     xAlignmentMotionMutex = xSemaphoreCreateMutex();
+    if (!ContinuousTrialInit()) Serial.println("[Trial] task initialization failed");
     if (xAlignmentQueue != NULL && xAlignmentMotionMutex != NULL) {
         xTaskCreate(
             Task_VisualAlignment, "Task_VisualAlignment",

@@ -4,7 +4,9 @@ import unittest
 from unittest.mock import patch
 
 from upper_computer import (Parameter, ParameterPanel, parse_parameter,
-                            ActionGroupPanel, parameter_matches_stage, build_parameter_test_command)
+                            ActionGroupPanel, parameter_matches_stage, build_parameter_test_command,
+                            UpperComputerApp)
+from continuous_trial import TrialPlan, TrialConfig
 from action_group_config import DELAY_NAMES, DELAY_PREFIX, TRANSFER_GROUPS, load_action_group_delays
 
 
@@ -88,6 +90,27 @@ class PanelTests(unittest.TestCase):
         self.panel.receive(f"{{RSP,CFG,GET,END,{seq},2}}")
         self.assertFalse(self.panel.ready)
         self.assertIn("不完整", self.panel.status.get())
+
+    def test_full_map_readback_can_preview_trial(self):
+        self.panel.read()
+        seq = self.panel.sequence
+        expected = {}
+        for node in range(25):
+            row, column = divmod(node, 5)
+            if row % 2:
+                column = 4 - column
+            expected[node] = (240 + column * 480, 240 + row * 480)
+            for offset, axis in enumerate(("X", "Y")):
+                index = node * 2 + offset
+                self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq},{index},地图/节点{node}/{axis}(mm),{expected[node][offset]},0,2400,0}}")
+        self.panel.receive(f"{{RSP,CFG,GET,END,{seq},50}}")
+        self.assertTrue(self.panel.ready)
+        app = UpperComputerApp.__new__(UpperComputerApp)
+        app.parameter_panel = self.panel
+        actual = app._trial_node_positions()
+        self.assertEqual(actual, expected)
+        plan = TrialPlan((0, 1, 8), (0, 120, 0), actual, TrialConfig())
+        self.assertGreater(plan.length, 0)
 
     def test_batch_waits_for_each_ack_and_verifies(self):
         seq = self.start_write()

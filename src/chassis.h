@@ -28,6 +28,8 @@ struct ArmPose {
 };
 
 extern RobotPose currentPose;   // 主控维护的"理想位姿"
+// 只读访问已生效的地图配置，供独立试跑规划使用。
+bool ChassisGetNodePosition(uint8_t node,float &x,float &y);
 extern ArmPose currentArm;     // 升降/伸缩为最近下发的绝对目标，非驱动器实测位置。
 
 // 运动标定系数

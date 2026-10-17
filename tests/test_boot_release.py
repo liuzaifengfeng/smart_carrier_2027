@@ -37,6 +37,8 @@ void vHomeTimerCallback(int);
 struct Log { constexpr void println(const char*) {} };
 struct Led { int updates=0; constexpr void show() { ++updates; } };
 struct Run {
+    bool trialActive=false;
+    constexpr bool ContinuousTrialActive() { return trialActive; }
     DebugReleaseButton bootReleaseButton;
     int bootReleaseMux=0;
     bool serialDebugMode=true, discMaterialActive=true, taskMotionAborted=true;
@@ -131,6 +133,13 @@ static_assert(releaseViaButton(0), "button uses actual release flow exactly once
 static_assert(releaseViaButton(1), "timer allocation failure remains Debug and allows re-press");
 static_assert(releaseViaButton(2), "task allocation failure deletes timer and allows re-press");
 static_assert(busyAndPartialFrame(), "busy/partial-frame press must not start a deferred task");
+constexpr bool trialBlocksBoot() {
+    Run r;r.trialActive=true;
+    r.serialBootSetIdle(true);r.sample(false,0);r.sample(false,40);
+    r.sample(true,50);r.sample(true,100);r.serialBootReleaseAtIdle(true);
+    return r.timerCreates==0;
+}
+static_assert(trialBlocksBoot(), "active trial must not enter Release through BOOT");
 '''.replace("ACTUAL", actual)
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory) / "boot_release.cpp"

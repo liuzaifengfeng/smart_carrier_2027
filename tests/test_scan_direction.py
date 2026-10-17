@@ -21,13 +21,15 @@ class ScanDirectionTests(unittest.TestCase):
                        if line.startswith("constexpr float START_ZONE_HEADING ="))
         start = main[main.index("            switch (homeStartZone) {"):]
         start = start[:start.index("            // Release 开局自动执行一次。")]
-        debug = serial[serial.index("        if (serialDebugMode) currentPose = zone == 1"):]
-        debug = debug[:debug.index(";") + 1]
+        zone_branch = serial.index('frame.is("NAV", "START_ZONE", 1)')
+        debug = serial[serial.index("        if (serialDebugMode) {", zone_branch):]
+        debug = debug[:debug.index('        Serial.printf("{RSP,NAV,START_ZONE')]
         harness = heading + r'''
 #include "node_route_heading.h"
 enum StartZone { START_ZONE_UNKNOWN, START_ZONE_1, START_ZONE_2 };
 struct RobotPose { float x, y, theta; };
 constexpr void updateDisplay(const char *, const char *, const char *) {}
+constexpr void CalibrateH30MapHeading(float) {}
 constexpr RobotPose automatic(StartZone homeStartZone) {
     RobotPose currentPose{};
 ''' + start + r'''

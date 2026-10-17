@@ -47,6 +47,10 @@ robot_chassis:
 | jetson_nano | ✅ Type-C UART | — | 双向通信 |
 
 ## 目录结构
+
+H30 惯导已接入 ESP32-S3 原生 USB Host，上位机连接栏提供三轴姿态单次查询。接线、协议和验收参见 [H30 USB 接入说明](Document/H30_USB.md)。
+上位机“连续试跑”页支持中心窄路停转、外围安全外绕和H30航向纠偏；转向用新姿态样本确认稳定，直线距离仍为估算。已去掉逐节点半径填写，高级参数默认折叠；原比赛导航保持原行为。操作及验收见 [安全混合路径试跑](Document/continuous_trial.md)。
+
 ```
 src/
 ├── main.cpp        # 主控：新赛制状态机 + 机载电脑通信 + 任务码解析
@@ -71,8 +75,9 @@ src/
 
 ## 机载电脑 ↔ 主控 串口协议（Serial0）
 
-调试上位机只需运行 `upper_computer.py`。串口协议处理和参数面板已内置于这个文件，
-不依赖仓库内的其他 Python 模块；需要安装 `pyserial`，图形界面使用 Python 自带的 Tkinter。
+在完整工程目录内运行 `python upper_computer.py`。上位机需要同目录的参数/动作组模块、
+`continuous_trial.py`、`hybrid_plan.py`、`field_geometry.py` 以及 `src/field_geometry.def`，
+不要仅复制一个上位机文件。需要安装 `pyserial`，图形界面使用 Python 自带的 Tkinter。
 `tests/` 里是开发时运行的自动测试，不是上位机启动文件。可用
 `python -m unittest discover -s tests -v` 执行。
 
