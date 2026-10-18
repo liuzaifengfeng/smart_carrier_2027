@@ -87,5 +87,12 @@
         }
     ],
     "python-envs.defaultEnvManager": "ms-python.python:system",
-    "python.defaultInterpreterPath": "D:\\Python\\python.exe"
+    "python.defaultInterpreterPath": "D:\\Python\\python.exe",
+    "python-envs.pythonProjects": [
+        {
+            "path": "upper_computer.py",
+            "envManager": "ms-python.python:system",
+            "packageManager": "ms-python.python:pip"
+        }
+    ]
 }
