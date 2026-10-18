@@ -386,17 +386,18 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
         return false;
     }
     int acc = 220;
-    // 2号转台按实际转角计时：180度用1050ms，最短400ms；加减速时间固定。
+    // 舵机动作时间统一缩短为原标定值的 1/3。
+    // 2号转台按实际转角计时：180度用350ms，最短133ms；加减速时间同比缩短。
     constexpr float TURRET_REFERENCE_ANGLE_DEG = 180.0f;
-    constexpr uint32_t TURRET_REFERENCE_TIME_MS = 1050;
-    constexpr uint32_t TURRET_MIN_TIME_MS = 400;
-    constexpr uint16_t TURRET_ACCEL_TIME_MS = 100;
-    constexpr uint16_t TURRET_DECEL_TIME_MS = 300;
-    // 夹爪速度标定：MoveArm 速度输入200对应约90°/s。
+    constexpr uint32_t TURRET_REFERENCE_TIME_MS = 350;
+    constexpr uint32_t TURRET_MIN_TIME_MS = 133;
+    constexpr uint16_t TURRET_ACCEL_TIME_MS = 33;
+    constexpr uint16_t TURRET_DECEL_TIME_MS = 100;
+    // 夹爪原标定为 speed=200 对应约90°/s；时间缩短至1/3后等效为270°/s。
     // 实际指令耗时按回读角度到最近等效目标的行程计算，不再使用与角度无关的线性映射。
     constexpr float GRIPPER_REFERENCE_COMMAND_SPEED = 200.0f;
-    constexpr float GRIPPER_REFERENCE_ANGULAR_SPEED_DEG_S = 90.0f;
-    constexpr uint32_t GRIPPER_MIN_TIME_MS = 200;
+    constexpr float GRIPPER_REFERENCE_ANGULAR_SPEED_DEG_S = 270.0f;
+    constexpr uint32_t GRIPPER_MIN_TIME_MS = 67;
     float safeTurretTarget = 0.0f;
     uint32_t turretIntervalMs = TURRET_MIN_TIME_MS;
     if (turret_angle != -1.0f) {
@@ -453,7 +454,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
                 return false;
             } else {
                 uint32_t pulses = (uint32_t)(high * HEIGHT_PULSE);
-                Emm_V5_Pos_Control(5, 1, speed*4, acc, pulses, true, false);
+                Emm_V5_Pos_Control(5, 1, speed*8, 240, pulses, true, false);
                 vTaskDelay(pdMS_TO_TICKS(10));
                 currentArm.high = high;
             }
@@ -466,7 +467,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
                 return false;
             } else {
                 uint32_t pulses = (uint32_t)(length * LENGTH_PULSE);
-                Emm_V5_Pos_Control(6, 1, speed*4, acc, pulses, true, false);
+                Emm_V5_Pos_Control(6, 1, speed*6, 230, pulses, true, false);
                 vTaskDelay(pdMS_TO_TICKS(10));
                 currentArm.length = length;
             }

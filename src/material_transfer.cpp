@@ -40,7 +40,7 @@ MaterialMotionSteps materialMotionSteps = {
 // 上位机只改写本区域的延时数值；单位 ms，0 表示不等待。
 // 每行顺序：取料平移/稳定/转向，下降/夹紧/抬升，放料平移/稳定/转向，下降/松爪/抬升。
 MaterialTransferDelays commonMaterialDelays =
-    {{1000, 0, 700}, 700, 700, 700, {700, 0, 1000}, 700, 300, 500};
+    {{1000, 0, 700}, 700, 700, 700, {700, 0, 1000}, 700, 300, 300};
 MaterialTransferDelays cargoToWorkAreaDelays[MATERIAL_STATION_COUNT][MATERIAL_STATION_COUNT] = {
     {
         {{100, 0, 300}, 700, 500, 400, {300, 0, 300}, 1200, 300, 1500}, // 1 -> 1

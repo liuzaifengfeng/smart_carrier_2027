@@ -161,7 +161,7 @@ struct Run {
 };
 constexpr bool timed(const Command& c, float angle, uint32_t time) {
     return c.id==2 && c.advanced && c.angle==angle && c.time==time
-        && c.acc==100 && c.dec==300 && c.power==0;
+        && c.acc==33 && c.dec==100 && c.power==0;
 }
 constexpr bool turn(float current, float target, float finalTarget, uint32_t time, float speed=250) {
     Run r;
@@ -200,26 +200,26 @@ constexpr bool mixedAxes() {
     Run r;
     return r.MoveArm(10,20,180,50,250) && r.count==4
         && r.commands[0].id==5 && r.commands[1].id==6
-        && timed(r.commands[2],180,1050)
+        && timed(r.commands[2],180,350)
         && r.commands[3].id==1 && !r.commands[3].advanced
-        && r.commands[3].angle==50 && r.commands[3].time==444 && r.commands[3].power==0;
+        && r.commands[3].angle==50 && r.commands[3].time==148 && r.commands[3].power==0;
 }
-static_assert(turn(0,180,180,1050), "180 degrees uses 1050 ms");
-static_assert(turn(0,90,90,525), "90 degrees uses 525 ms");
-static_assert(turn(0,45,45,400), "small moves clamp to 400 ms");
-static_assert(turn(0,0,0,400), "zero angle is valid and keeps 400 ms minimum");
-static_assert(turn(90,180,180,525), "use measured displacement rather than target value");
-static_assert(turn(180,90,90,525), "reverse direction uses absolute displacement");
-static_assert(turn(0,99,99,578), "round fractional milliseconds to nearest integer");
-static_assert(turn(10,350,-10,400), "choose nearest equivalent within cable limits");
-static_assert(turn(350,10,10,1983), "reject shorter equivalent outside cable limits");
-static_assert(turn(-150,180,180,1925), "large permitted displacement scales beyond reference");
-static_assert(turn(0,180,180,1050,100) && turn(0,180,180,1050,300), "turret timing ignores old speed mapping");
-static_assert(grip(90,200,90,1000), "gripper reference speed uses measured angular travel");
-static_assert(grip(45,200,45,500), "gripper duration scales with angular travel");
-static_assert(grip(10,200,10,200), "gripper short moves use minimum duration");
+static_assert(turn(0,180,180,350), "180 degrees uses one-third timing: 350 ms");
+static_assert(turn(0,90,90,175), "90 degrees uses one-third timing: 175 ms");
+static_assert(turn(0,45,45,133), "small moves clamp to one-third minimum: 133 ms");
+static_assert(turn(0,0,0,133), "zero angle is valid and keeps 133 ms minimum");
+static_assert(turn(90,180,180,175), "use measured displacement rather than target value");
+static_assert(turn(180,90,90,175), "reverse direction uses absolute displacement");
+static_assert(turn(0,99,99,193), "round fractional milliseconds to nearest integer");
+static_assert(turn(10,350,-10,133), "choose nearest equivalent within cable limits");
+static_assert(turn(350,10,10,661), "reject shorter equivalent outside cable limits");
+static_assert(turn(-150,180,180,642), "large permitted displacement scales beyond reference");
+static_assert(turn(0,180,180,350,100) && turn(0,180,180,350,300), "turret timing ignores old speed mapping");
+static_assert(grip(90,200,90,333), "gripper duration is one third of original timing");
+static_assert(grip(45,200,45,167), "gripper duration scales with angular travel");
+static_assert(grip(10,200,10,67), "gripper short moves use one-third minimum duration");
 static_assert(grip(0,200,0,0), "gripper zero travel needs no artificial duration");
-static_assert(grip(350,200,-10,200), "gripper selects nearest equivalent angle before timing");
+static_assert(grip(350,200,-10,67), "gripper selects nearest equivalent angle before timing");
 static_assert(guards(), "query failures, invalid angles, startup fault, abort and sentinel");
 static_assert(mixedAxes(), "retain motor and gripper command order and gripper timing");
 '''.replace("LIMITS", limits).replace("ACTUAL", actual)
