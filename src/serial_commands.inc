@@ -282,8 +282,15 @@ static void serialDiscPositions(const SerialFrame &frame) {
         }
         candidates[i] = {static_cast<uint8_t>(position), static_cast<uint8_t>(color)};
     }
-    if (!discMaterialActive) { serialError(frame, "NOT_ACTIVE"); return; }
     const RobotState state = currentState;
+    // 自动抓放期间已经结束了旧识别会话。优先返回 NOT_READY，明确表示
+    // 这是一帧跨越抓取边界的旧位置数据，而不是普通的“功能未开启”。
+    if (!serialDebugMode
+            && (state == STATE_GRAB_ROUND1 || state == STATE_GRAB_ROUND2)
+            && !firstDiscGrabReady) {
+        serialError(frame, "NOT_READY"); return;
+    }
+    if (!discMaterialActive) { serialError(frame, "NOT_ACTIVE"); return; }
     const int progress = roundProgress;
     const int *colors = state == STATE_GRAB_ROUND2 ? currentTask.round2_colors
         : state == STATE_GRAB_ROUND1 || serialDebugMode ? currentTask.round1_colors : nullptr;
@@ -291,7 +298,6 @@ static void serialDiscPositions(const SerialFrame &frame) {
     if (!colors) { serialError(frame, "NOT_WAITING"); return; }
     if (progress < 0 || progress >= 3) { serialError(frame, "ROUND_COMPLETE"); return; }
     if (alignmentEnabled) { serialError(frame, "ALIGN_ACTIVE"); return; }
-    if (!serialDebugMode && !firstDiscGrabReady) { serialError(frame, "NOT_READY"); return; }
     const uint8_t cargo = static_cast<uint8_t>(progress + 1);
     if (cargoPlatforms[cargo - 1].material != MATERIAL_NONE) {
         serialError(frame, "OCCUPIED"); return;
@@ -306,15 +312,41 @@ static void serialDiscPositions(const SerialFrame &frame) {
     const auto candidate = candidates[selected];
     Serial.printf("{EVT,VISION,DISC_POSITIONS,SELECTED,%u,%u,%u}\n",
                   candidate.position, candidate.color, cargo);
-    switch (candidate.position) {
-        case 1: GrabDiscPosition1(candidate.color, cargo); break;
-        case 2: GrabDiscPosition2(candidate.color, cargo); break;
-        case 3: GrabDiscPosition3(candidate.color, cargo); break;
+    const RobotState grabState = state;
+    const bool automaticGrab = !serialDebugMode
+        && (grabState == STATE_GRAB_ROUND1 || grabState == STATE_GRAB_ROUND2);
+    if (automaticGrab) {
+        // 选中即结束旧位置识别会话。圆盘会在本次抓放期间旋转，因此恢复后
+        // 必须由主状态机重新开启识别，只接受新会话得到的位置快照。
+        firstDiscGrabReady = false;
+        discMessageResumeRequested = false;
+        requestVisionStop(VisionStartMode::DISC_MATERIAL);
     }
-    // 占位函数没有真实完成结果，禁止推进任务或复用本帧的其他位置。
     discMaterialColor = 0;
-    Serial.printf("{EVT,VISION,DISC_POSITIONS,STUB,%u,%u,%u}\n",
+    bool completed = false;
+    switch (candidate.position) {
+        case 1: completed = GrabDiscPosition1(candidate.color, cargo); break;
+        case 2: completed = GrabDiscPosition2(candidate.color, cargo); break;
+        case 3: completed = GrabDiscPosition3(candidate.color, cargo); break;
+    }
+    const int next = AdvanceDiscGrabProgress(progress, cargo, completed);
+    Serial.printf("{EVT,VISION,DISC_POSITIONS,%s,%u,%u,%u}\n",
+                  completed ? "DONE" : "FAILED",
                   candidate.position, candidate.color, cargo);
+    if (automaticGrab && !completed) {
+        // 夹取或放置可能已执行一部分，禁止按后续位置帧自动重试。
+        if (discMaterialActive) requestVisionStop(VisionStartMode::DISC_MATERIAL);
+        updateDisplay("DISPLAY", "DEBUG", "DISC GRAB ERR");
+        if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
+        if (currentState == grabState) currentState = STATE_TRANSFER_FAILED;
+        return;
+    }
+    // 超时任务可能在阻塞动作期间改变状态，此时不再发布旧抓取进度。
+    if (automaticGrab && currentState != grabState) return;
+    if (next != progress) {
+        if (next == 3 && discMaterialActive) requestVisionStop(VisionStartMode::DISC_MATERIAL);
+        roundProgress = next;
+    }
 }
 
 static void serialTransfer(const SerialFrame &frame) {
@@ -546,7 +578,7 @@ static void serialDispatch(const SerialFrame &frame) {
         if (xVisualTaskQueue) xQueueSend(xVisualTaskQueue, &command, 0);
         serialReply(frame, "ACK");
     } else if (frame.is("VISION", "LIDAR_POSE", 0)) {
-        runLidarPoseAction(true);
+        runLidarPoseAction(true, serialDebugMode);
     } else if (frame.starts("CFG", "GET") || frame.starts("CFG", "BEGIN")
                || frame.starts("CFG", "SET") || frame.starts("CFG", "COMMIT")) {
         const bool reading = frame.starts("CFG", "GET");
@@ -626,7 +658,7 @@ static void serialDispatch(const SerialFrame &frame) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         const bool first = strcmp(frame.fields[2], "MOVE1") == 0;
         const float minimum[] = {first ? -1.0f : TURRET_CABLE_MIN_DEG, first ? -1.0f : -360.0f, 1.0f};
-        const float maximum[] = {first ? ARM_HEIGHT_LIMIT_MM : 360.0f, first ? 170.0f : 360.0f, 1000.0f};
+        const float maximum[] = {first ? ARM_HEIGHT_LIMIT_MM : 360.0f, first ? 170.0f : 360.0f, 300.0f};
         float values[3];
         if (!serialFloats(frame, values, minimum, maximum, 3)
                 || (first && ((values[0] < 0 && values[0] != -1)
@@ -738,7 +770,7 @@ void Task_Serial_CMD(void *pvParameters) {
     bool discResumeDraining = false;
     size_t discOldBytesRemaining = 0;
     // 固定旧数据的边界，持续新来帧不能无限延长屏蔽时间。
-    // 旧数据仍正常分发（COLOR 在未 ready 时丢弃），非颜色指令不受影响。
+    // 旧数据仍正常分发：COLOR静默丢弃，DISC_POSITIONS回复NOT_READY且不动作；其他指令不受影响。
     const auto resumeDiscAtFrameBoundary = [&]() {
         if (discMessageResumeRequested && !discResumeDraining) {
             discOldBytesRemaining = static_cast<size_t>(Serial.available());
@@ -754,7 +786,7 @@ void Task_Serial_CMD(void *pvParameters) {
                 && (currentState == STATE_GRAB_ROUND1 || currentState == STATE_GRAB_ROUND2)
                 && discMaterialActive && progress >= 0 && progress < 3) {
             firstDiscGrabReady = true;
-            Serial.printf("[DISC] Color handling resumed: expected=%d, cargo=%d\n",
+            Serial.printf("[DISC] Material handling resumed: expected=%d, cargo=%d\n",
                           (currentState == STATE_GRAB_ROUND2 ? currentTask.round2_colors
                                                                : currentTask.round1_colors)[progress], progress + 1);
         }

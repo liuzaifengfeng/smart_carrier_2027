@@ -9,15 +9,19 @@ using namespace node_position;
 static Route route;
 struct Sim : IO {
     uint32_t time=1000;double actual[4]={},goal[4]={},pending[4]={};
-    uint16_t rpm[4]={},stagedRpm[4]={},peak=0;
+    uint16_t rpm[4]={},stagedRpm[4]={},peak=0;uint8_t lastAcceleration=0;
     bool frozen=false,falseArrived=false,cancel=false,missing=false,reject=false;
     bool disturb=false,injected=false,correctedMoving=false,differential=false;
     bool residualTest=false,residualInjected=false,residualActive=false,hardOverrun=false;
     bool persistentResidual=false;float disturbanceReference=0,disturbanceAngle=3;
+    int residualEncoderUnits=6000;
     uint32_t cancelAt=0,missingAt=0;
     uint32_t rippleAt=0,firstZeroAt=0;bool rippleInjected=false;
-    bool neverStops=false;
+    bool neverStops=false,badZero=false,stall=false;
+    int startupQueries=0;bool targetSent=false;
     uint32_t latencyMs=0;
+    uint32_t flagDelayMs=0,rpmTailMs=0,doneAt[4]={};
+    int sentMarks=0,arrivalMarks=0,waitReports=0;
     int recoveries=0,diagnostics=0;
     int actions=0,updates=0,syncs=0,halts=0,zeroGroups=0;float heading=0;Vec location={310,1200};
     uint32_t arrivalAt=0,maxGap=0;bool wasMoving=false,newAction=false;
@@ -47,26 +51,39 @@ struct Sim : IO {
         return nullptr;
     }
     const char *read(uint8_t id,Motor &m)override {
+        if(!targetSent)startupQueries+=3;
         int i=id-1;wait(1+3*latencyMs);bool done=fabs(goal[i]-actual[i])<.001;
         m.position=llround(actual[i]*65536/PULSES_PER_REV);
         if(residualTest&&done&&pending[i]!=0&&!residualInjected){residualInjected=true;residualActive=true;}
-        if(done&&pending[i]!=0&&residualActive)m.position+=(actual[i]>=0?1:-1)*(hardOverrun?5000:410);
+        if(done&&pending[i]!=0&&residualActive)m.position+=(actual[i]>=0?1:-1)*(hardOverrun?12000:residualEncoderUnits);
         m.position*=encoderPolarity[i];
-        m.flags=1|((done||falseArrived)?2:0);m.rpm=(done||falseArrived)?0:rpm[i];
-        if(neverStops){m.rpm=2;m.position+=time*10;}
+        if(done&&pending[i]!=0&&!doneAt[i])doneAt[i]=time;
+        bool flagReady=done&&(!flagDelayMs||time-doneAt[i]>=flagDelayMs);
+        m.flags=1|((flagReady||falseArrived)?2:0);m.rpm=(done||falseArrived)?0:rpm[i];
+        if(done&&pending[i]!=0&&time-doneAt[i]<rpmTailMs)m.rpm=6;
+        if(stall&&actions>0&&id==4)m.flags=133;
+        if(neverStops){m.rpm=6;m.position+=time*10;}
         if(rippleAt&&time>=rippleAt&&!rippleInjected&&actions==0){m.rpm=6;rippleInjected=true;}
+        return nullptr;
+    }
+    const char *readPosition(uint8_t id,int64_t &position)override {
+        if(!targetSent)++startupQueries;
+        wait(1+latencyMs);
+        position=badZero?100:llround(actual[id-1]*65536/PULSES_PER_REV)*encoderPolarity[id-1];
         return nullptr;
     }
     const char *zero(uint8_t id)override {
         int i=id-1;CHECK(fabs(goal[i]-actual[i])<.01);actual[i]=goal[i]=pending[i]=0;
         if(id==1){if(!firstZeroAt)firstZeroAt=time;++zeroGroups;}return nullptr;
     }
-    const char *target(uint8_t id,bool positive,uint16_t speed,uint32_t count)override {
+    const char *target(uint8_t id,bool positive,uint16_t speed,uint8_t acceleration,uint32_t count)override {
+        CHECK(acceleration>0); // 每条位置命令必须携带驱动板加减速曲线档位
+        targetSent=true;
         if(reject)return "MOTOR_COMMAND_REJECTED";
         if(latencyMs)wait(latencyMs); // ACK后硬件适配器不再固定等待5ms
         int i=id-1;double next=positive?count:-double(count);
-        if(pending[i]!=0)CHECK(next==pending[i]); // 速度更新不能增加目标距离
-        pending[i]=next;stagedRpm[i]=speed;peak=fmaxf(peak,speed);++updates;return nullptr;
+        CHECK(pending[i]==0); // 同一动作禁止重复装载位置指令，含低速补位重发
+        pending[i]=next;stagedRpm[i]=speed;lastAcceleration=acceleration;peak=fmaxf(peak,speed);++updates;return nullptr;
     }
     const char *sync()override {
         if(newAction){if(arrivalAt&&time-arrivalAt>maxGap)maxGap=time-arrivalAt;newAction=false;}
@@ -74,7 +91,19 @@ struct Sim : IO {
         if(stagedRpm[0]!=stagedRpm[1])differential=true;
         for(int i=0;i<4;++i){goal[i]=pending[i];rpm[i]=stagedRpm[i];}++syncs;return nullptr;
     }
-    void beginAction()override{++actions;newAction=true;for(int i=0;i<4;++i)pending[i]=0;}
+    void beginAction()override{
+        // 新动作（包括停止后校角）不能在上一动作仍运动时插入。
+        for(int i=0;i<4;++i)CHECK(fabs(goal[i]-actual[i])<.01);
+        ++actions;newAction=true;for(int i=0;i<4;++i){pending[i]=0;doneAt[i]=0;}
+    }
+    void timing(const char *stage)override {
+        if(strstr(stage,"_SENT"))++sentMarks;
+        if(strstr(stage,"_ARRIVED"))++arrivalMarks;
+    }
+    void arrivalDiagnostic(float,const Motor (&m)[4])override {
+        for(int i=0;i<4;++i)CHECK(abs(m[i].rpm)<=3);
+        ++waitReports;
+    }
     void halt()override {for(int i=0;i<4;++i){goal[i]=actual[i];pending[i]=0;rpm[i]=0;}++halts;}
     void report(const char *stage,const Result&,float)override{if(!strcmp(stage,"POSITION_RECOVER"))++recoveries;}
     void motorDiagnostic(uint8_t,const char*,double,const Motor&)override{++diagnostics;}
@@ -94,6 +123,9 @@ int main() {
     CHECK(!guard.update(35,3100,true,true));CHECK(guard.update(35,3300,true,true));
     CHECK(!guard.update(35,3500,true,true,false)); // IMU降级不累计保护计时
     CHECK(rpmFor(200,13.6f)==51);CHECK(rpmFor(400,13.6f)==102);
+    CHECK(driverAccelerationFor(1600,13.6f)==207);
+    CHECK(driverAccelerationFor(360,51.8f)==199);
+    CHECK(driverAccelerationFor(1,13.6f)==1);
     EmmFeedbackParser parser;EmmReply reply;
     const uint8_t state[]={1,0x3A,3,0x6B};
     for(int i=0;i<3;++i)CHECK(!parser.feed(state[i],reply));CHECK(parser.feed(state[3],reply));
@@ -106,33 +138,61 @@ int main() {
     CHECK(EmmFeedbackParser::rpm(reply)==107);
     Config cfg;cfg.policy=2;cfg.count=4;cfg.startHeading=0;cfg.endHeading=90;cfg.forwardPpm=13.6f;
     Node nodes[]={{{310,1200},0},{{720,1200},0},{{1200,1200},0},{{1200,1680},0}};
-    CHECK(!route.build(nodes,cfg));Settings settings;CHECK(settings.speedMmS==1200&&settings.accelMmS2==1600&&settings.turnDegS==150&&settings.turnAccelDegS2==360);
+    CHECK(!route.build(nodes,cfg));Settings settings;CHECK(settings.speedMmS==2000&&settings.accelMmS2==2000&&settings.turnDegS==200&&settings.turnAccelDegS2==400);
     settings.speedMmS=200;settings.accelMmS2=200;settings.turnDegS=20;settings.turnAccelDegS2=30;Result result;Sim sim;
     const char *error=run(route,settings,sim,result);if(error)fprintf(stderr,"run: %s\n",error);CHECK(!error);
     CHECK(sim.actions==3); // 两条直线（共线节点合并）+一次转向
     CHECK(sim.zeroGroups==1&&sim.halts==2); // 仅起步清零一次，动作间不重复halt/清零
-    CHECK(sim.maxGap>=100&&sim.maxGap<=180); // 无串口延迟模型下接续接近100ms
-    CHECK(sim.updates>sim.actions*4);CHECK(sim.peak<=51);
+    CHECK(sim.maxGap<100); // 到位后不附加100ms窗口或重复整组查询
+    CHECK(sim.startupQueries==16&&sim.firstZeroAt==1004); // 一组12次查询+4次仅位置验证
+    CHECK(sim.updates==sim.actions*4&&sim.syncs==sim.actions);CHECK(sim.peak==51);
+    CHECK(sim.sentMarks==sim.actions&&sim.arrivalMarks==sim.actions&&sim.waitReports==0);
+    CHECK(sim.lastAcceleration==1); // 200mm/s²低于驱动器最小非零档，使用最慢曲线档1
     CHECK(norm(sim.location-Vec(1200,1680))<2);CHECK(fabsf(turn(sim.heading,90))<=1);
     CHECK(norm(result.estimated-Vec(1200,1680))<1);
-    Sim ripple;ripple.rippleAt=sim.firstZeroAt;
+    Sim delayed;delayed.flagDelayMs=60000; // 到位标志整条路径均未置位
+    error=run(route,settings,delayed,result);CHECK(!error);
+    CHECK(delayed.waitReports==0&&delayed.time==sim.time); // 实际位置/转速到位即接续
+    CHECK(delayed.updates==delayed.actions*4&&delayed.syncs==delayed.actions);
+    Sim coasting;coasting.rpmTailMs=300;
+    error=run(route,settings,coasting,result);CHECK(!error);
+    CHECK(coasting.time>sim.time+750); // 位置已到但仍有转速，不能提前转向
+    Sim ripple;ripple.rippleAt=1000;
     error=run(route,settings,ripple,result);CHECK(!error&&ripple.rippleInjected&&ripple.actions==3);
-    CHECK(ripple.firstZeroAt>sim.firstZeroAt); // 起步再检6RPM波动：重等稳定而非直接报错
+    CHECK(ripple.firstZeroAt>sim.firstZeroAt); // 起步6RPM波动仍重新读近零转速
+    Sim zeroFailed;zeroFailed.badZero=true;
+    error=run(route,settings,zeroFailed,result);
+    CHECK(error&&!strcmp(error,"MOTOR_ZERO_FAILED")&&zeroFailed.updates==0);
     Sim moving;moving.neverStops=true;
     error=run(route,settings,moving,result);CHECK(error&&!strcmp(error,"MOTOR_STOP_TIMEOUT")&&moving.actions==0);
-    Sim disturbed;disturbed.disturb=true;
+    Sim disturbed;disturbed.disturb=true;disturbed.disturbanceAngle=5;
     error=run(route,settings,disturbed,result);if(error)fprintf(stderr,"disturb: %s\n",error);CHECK(!error);
-    CHECK(disturbed.injected&&disturbed.differential&&disturbed.correctedMoving);
+    CHECK(disturbed.injected&&!disturbed.differential&&!disturbed.correctedMoving&&disturbed.actions==3);
     CHECK(fabsf(turn(disturbed.heading,90))<=1);
-    Sim fast;fast.disturb=true;Settings fastSettings=settings;fastSettings.speedMmS=400;
+    Sim fast;fast.disturb=true;fast.disturbanceAngle=5;Settings fastSettings=settings;fastSettings.speedMmS=400;
     error=run(route,fastSettings,fast,result);CHECK(!error);
-    CHECK(fast.correctedMoving&&fast.differential&&fast.peak<=102);
+    CHECK(!fast.correctedMoving&&!fast.differential&&fast.actions==3&&fast.peak<=102);
+    // 直行允许每轮5000编码器单位误差，覆盖实车1181及正负边界；转向门槛独立。
+    Config straightCfg=cfg;straightCfg.count=3;straightCfg.endHeading=0;
+    Route straight;CHECK(!straight.build(nodes,straightCfg));
+    const int acceptedResiduals[]={1181,5000,-1181,-5000};
+    for(int units:acceptedResiduals) {
+        Sim accepted;accepted.residualTest=true;accepted.residualEncoderUnits=units;
+        error=run(straight,settings,accepted,result);
+        if(error||accepted.actions!=1)fprintf(stderr,"residual %d: %s, actions %d\n",units,error?error:"OK",accepted.actions);
+        CHECK(!error&&accepted.actions==1&&accepted.updates==4&&accepted.syncs==1);
+        CHECK(accepted.waitReports==0);
+    }
+    Sim outside;outside.residualTest=true;outside.residualEncoderUnits=5001;
+    error=run(straight,settings,outside,result);
+    CHECK(error&&!strcmp(error,"MOTOR_RESIDUAL_TIMEOUT")&&outside.actions==1);
     Sim residual;residual.residualTest=true;
-    error=run(route,settings,residual,result);CHECK(!error);
-    CHECK(residual.recoveries>=1); // ~1.47mm静止残差不是立刻判超限
+    error=run(route,settings,residual,result);
+    CHECK(error&&!strcmp(error,"MOTOR_RESIDUAL_TIMEOUT"));
+    CHECK(residual.recoveries==0&&residual.updates==4&&residual.syncs==1); // 残差超时也不补位重发
     Sim persistent;persistent.residualTest=true;persistent.persistentResidual=true;
     error=run(route,settings,persistent,result);
-    CHECK(error&&!strcmp(error,"MOTOR_RESIDUAL_TIMEOUT")&&persistent.recoveries==2&&persistent.actions==1);
+    CHECK(error&&!strcmp(error,"MOTOR_RESIDUAL_TIMEOUT")&&persistent.recoveries==0&&persistent.actions==1&&persistent.updates==4);
     Sim overrun;overrun.residualTest=true;overrun.hardOverrun=true;
     error=run(route,settings,overrun,result);
     CHECK(error&&!strcmp(error,"MOTOR_POSITION_OVERRUN")&&overrun.diagnostics==1);
@@ -142,9 +202,10 @@ int main() {
     error=run(route,settings,reverse,result);CHECK(!error);
     CHECK(reverse.actions==1); // 保持车头，倒退通过共线节点
     CHECK(norm(reverse.location-Vec(1200,1200))<2);
-    Sim reverseDisturbed;reverseDisturbed.heading=180;reverseDisturbed.disturb=true;reverseDisturbed.disturbanceReference=180;
+    Sim reverseDisturbed;reverseDisturbed.heading=180;reverseDisturbed.disturb=true;reverseDisturbed.disturbanceReference=180;reverseDisturbed.disturbanceAngle=5;
     error=run(route,fastSettings,reverseDisturbed,result);CHECK(!error);
-    CHECK(reverseDisturbed.correctedMoving&&fabsf(turn(reverseDisturbed.heading,180))<=fastSettings.headingDeadbandDeg);
+    CHECK(!reverseDisturbed.correctedMoving&&!reverseDisturbed.differential&&reverseDisturbed.actions==2);
+    CHECK(fabsf(turn(reverseDisturbed.heading,180))<=fastSettings.headingDeadbandDeg);
     cfg.startHeading=0;cfg.endHeading=90;cfg.count=4;
     CHECK(!route.build(nodes,cfg));
     Sim excessive;excessive.disturb=true;excessive.disturbanceAngle=35;
@@ -161,6 +222,9 @@ int main() {
     CHECK(!error&&missing.actions==3); // H30离线仍按有限脉冲/编码器完成，不伪造IMU到位
     Sim rejected;rejected.reject=true;error=run(route,settings,rejected,result);
     CHECK(error&&strcmp(error,"MOTOR_COMMAND_REJECTED")==0&&rejected.syncs==0);
+    Sim stalled;stalled.stall=true;error=run(route,settings,stalled,result);
+    CHECK(error&&!strcmp(error,"MOTOR_STALL")&&stalled.diagnostics==1);
+    CHECK(stalled.updates==4&&stalled.syncs==1); // 驱动报警后立即终止，不重发
     Sim cancelled;cancelled.cancel=true;error=run(route,settings,cancelled,result);
     CHECK(error&&strcmp(error,"STOPPED")==0&&cancelled.actions==0);
     // 与实车日志相同的1850mm+90度路线，加上串口查询/发令耗时作配置对比。
@@ -173,13 +237,13 @@ int main() {
     error=run(route,oldProfile,previous,result);CHECK(!error);
     Settings newProfile;error=run(route,newProfile,upgraded,result);if(error)fprintf(stderr,"bench: %s\n",error);CHECK(!error);
     CHECK(upgraded.time<previous.time*.75f);
-    CHECK(upgraded.peak<=node_position::rpmFor(1200,13.6f));
+    CHECK(upgraded.peak<=node_position::rpmFor(2000,13.6f));
     CHECK(norm(upgraded.location-Vec(2090,1200))<3&&fabsf(turn(upgraded.heading,90))<=1);
     Sim opposite;opposite.location={1200,240};opposite.heading=180;opposite.encoderPolarity[0]=opposite.encoderPolarity[2]=-1;
     error=run(route,newProfile,opposite,result);CHECK(!error&&opposite.zeroGroups==1);
     CHECK(norm(opposite.location-Vec(2090,1200))<3);
     printf("serial model max transition gap=%ums\n",upgraded.maxGap);
-    CHECK(upgraded.zeroGroups==1&&upgraded.maxGap<=300); // 串口延时可增加实际间隔，不承诺恒定100ms
+    CHECK(upgraded.zeroGroups==1&&upgraded.maxGap<=120); // 逐轮反馈跨越到位时刻可再占一轮查询，加上目标ACK
     Node shortNodes[]={{{310,1200},0},{{410,1200},0}};cfg.count=2;cfg.startHeading=0;cfg.endHeading=0;
     CHECK(!route.build(shortNodes,cfg));
     Sim tolerant;tolerant.heading=2;error=run(route,settings,tolerant,result);CHECK(!error&&tolerant.actions==1);
@@ -191,7 +255,7 @@ int main() {
     CHECK(norm(returning.location-Vec(720,1200))<2);
     for(int field=0;field<4;++field) {
         Settings invalid;float *values[]={&invalid.speedMmS,&invalid.accelMmS2,&invalid.turnDegS,&invalid.turnAccelDegS2};
-        const float maxima[]={1600,4000,240,720};*values[field]=maxima[field]+1;
+        const float maxima[]={2000,4000,240,720};*values[field]=maxima[field]+1;
         Sim untouched;error=run(route,invalid,untouched,result);
         CHECK(error&&!strcmp(error,"RANGE")&&untouched.syncs==0);
     }

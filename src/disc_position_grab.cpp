@@ -1,17 +1,52 @@
 #include "disc_position_grab.h"
+#include "chassis.h"
+#include "material_transfer.h"
 #include <Arduino.h>
 
-void GrabDiscPosition1(uint8_t color, uint8_t cargo) {
-    // TODO: 移至圆盘位置1，抓取、提起，再放入 cargo。
-    Serial.printf("[DISC_POSITION] STUB position=1 color=%u cargo=%u\n", color, cargo);
+//圆盘上三个位置从左到右是1、2、3
+
+//机械臂速度
+int armSpeed = 300;
+
+bool GrabDiscPosition1(uint8_t color, uint8_t cargo) {
+    
+    if (!ValidateDiscPositionTransfer(color, cargo)) return false;
+    if (!MoveArm(120, 150, 71, 80, armSpeed)) return false;
+    delay(900);
+    if (!MoveArm(80, 150, 71, 80, armSpeed)) return false;
+    delay(600);
+    if (!MoveArm(80, 150, 71, -8, armSpeed)) return false;
+    delay(500);
+    if (!MoveArm(170, 150, 71, -8, armSpeed)) return false;
+    delay(1000);
+    return PlaceHeldDiscMaterialToCargo(color, cargo);
 }
 
-void GrabDiscPosition2(uint8_t color, uint8_t cargo) {
-    // TODO: 移至圆盘位置2，抓取、提起，再放入 cargo。
-    Serial.printf("[DISC_POSITION] STUB position=2 color=%u cargo=%u\n", color, cargo);
+bool GrabDiscPosition2(uint8_t color, uint8_t cargo) {
+    if (!ValidateDiscPositionTransfer(color, cargo)) return false;
+    // 从物料观察姿态开始：先在安全高度收回并张爪，再垂直下探。
+    if (!MoveArm(120, 0, 90, 80, armSpeed)) return false;
+    delay(800);
+    if (!MoveArm(80, 0, 90, 80, armSpeed)) return false;
+    delay(600);
+    // 实车确认的抓到物料瞬间，保持该动作不变。
+    if (!MoveArm(80, 0, 90, -8, armSpeed)) return false;
+    delay(500);
+    // 保持夹紧并垂直抬升到安全高度。
+    if (!MoveArm(170, 0, 90, -8, armSpeed)) return false;
+    delay(1000);
+    return PlaceHeldDiscMaterialToCargo(color, cargo);
 }
 
-void GrabDiscPosition3(uint8_t color, uint8_t cargo) {
-    // TODO: 移至圆盘位置3，抓取、提起，再放入 cargo。
-    Serial.printf("[DISC_POSITION] STUB position=3 color=%u cargo=%u\n", color, cargo);
+bool GrabDiscPosition3(uint8_t color, uint8_t cargo) {
+    if (!ValidateDiscPositionTransfer(color, cargo)) return false;
+    if (!MoveArm(120, 150, 102, 80, armSpeed)) return false;
+    delay(900);
+    if (!MoveArm(80, 150, 102, 80, armSpeed)) return false;
+    delay(600);
+    if (!MoveArm(80, 150, 102, -8, armSpeed)) return false;
+    delay(500);
+    if (!MoveArm(170, 150, 102, -8, armSpeed)) return false;
+    delay(1000);
+    return PlaceHeldDiscMaterialToCargo(color, cargo);
 }

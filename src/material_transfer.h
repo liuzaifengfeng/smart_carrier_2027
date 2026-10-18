@@ -187,6 +187,11 @@ bool StackRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]);
 // true 表示预设动作执行完成并已登记物料；不代表传感器确认实物。
 bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force = false);
 
+// 新版圆盘位置抓取分为“位置专用夹取”和“公共载物台放置”两段。
+// 夹取前先调用校验；夹住并抬升后调用放置，成功后登记载物台颜色。
+bool ValidateDiscPositionTransfer(uint8_t materialCode, uint8_t cargoCode);
+bool PlaceHeldDiscMaterialToCargo(uint8_t materialCode, uint8_t cargoCode);
+
 
 
 #endif // MATERIAL_TRANSFER_H

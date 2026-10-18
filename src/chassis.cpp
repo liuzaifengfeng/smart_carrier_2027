@@ -378,6 +378,13 @@ void RegisterChassisParameters() {
  */
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
     if (taskMotionAborted) return false;
+    constexpr float ARM_COMMAND_SPEED_MIN = 1.0f;
+    constexpr float ARM_COMMAND_SPEED_MAX = 300.0f;
+    if (!isfinite(speed) || speed < ARM_COMMAND_SPEED_MIN
+            || speed > ARM_COMMAND_SPEED_MAX) {
+        Serial.println("[Arm] ERR: speed must be in 1~300 range");
+        return false;
+    }
     int acc = 220;
     // 2号转台按实际转角计时：180度用1050ms，最短400ms；加减速时间固定。
     constexpr float TURRET_REFERENCE_ANGLE_DEG = 180.0f;
@@ -385,6 +392,11 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
     constexpr uint32_t TURRET_MIN_TIME_MS = 400;
     constexpr uint16_t TURRET_ACCEL_TIME_MS = 100;
     constexpr uint16_t TURRET_DECEL_TIME_MS = 300;
+    // 夹爪速度标定：MoveArm 速度输入200对应约90°/s。
+    // 实际指令耗时按回读角度到最近等效目标的行程计算，不再使用与角度无关的线性映射。
+    constexpr float GRIPPER_REFERENCE_COMMAND_SPEED = 200.0f;
+    constexpr float GRIPPER_REFERENCE_ANGULAR_SPEED_DEG_S = 90.0f;
+    constexpr uint32_t GRIPPER_MIN_TIME_MS = 200;
     float safeTurretTarget = 0.0f;
     uint32_t turretIntervalMs = TURRET_MIN_TIME_MS;
     if (turret_angle != -1.0f) {
@@ -484,8 +496,19 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
                         Serial.println("[Arm] ERR: gripper multi-turn target out of servo range");
                         return false;
                     }
+                    const float travelDeg = fabsf(nearestAngle - measuredAngle);
+                    const float angularSpeedDegS = speed
+                        * GRIPPER_REFERENCE_ANGULAR_SPEED_DEG_S
+                        / GRIPPER_REFERENCE_COMMAND_SPEED;
+                    uint32_t gripperIntervalMs = 0;
+                    if (travelDeg > 0.0f) {
+                        const float calculatedMs = travelDeg * 1000.0f / angularSpeedDegS;
+                        gripperIntervalMs = calculatedMs < GRIPPER_MIN_TIME_MS
+                            ? GRIPPER_MIN_TIME_MS
+                            : static_cast<uint32_t>(calculatedMs + 0.5f);
+                    }
                     if (taskMotionAborted) return false;
-                    Servo_SetAngleMTurn(1, nearestAngle, (300-speed)*10, 0);
+                    Servo_SetAngleMTurn(1, nearestAngle, gripperIntervalMs, 0);
                     currentArm.pawl_angle = pawl_angle;
                 }
             }
@@ -711,8 +734,7 @@ void OmniMove(float xVelocity, float yVelocity, float rotationVelocity,
     Emm_V5_Synchronous_motion(0);
 }
 
-bool MovePosition(float x, float y, float theta, float speed,
-                  bool (*shouldStop)()) {
+bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)()) {
     // 完整验证后才下发命令，避免四轮只装载了一部分参数。
     if (!isfinite(x) || !isfinite(y) || !isfinite(theta)
             || !isfinite(speed) || speed < 1.0f || speed > 5000.0f
@@ -790,8 +812,7 @@ bool MovePosition(float x, float y, float theta, float speed,
             // 合成后不需转动的轮子同步停车，避免发送零转速位置命令。
             Emm_V5_Stop_Now(motor, true);
         } else {
-            Emm_V5_Pos_Control(motor, wheelPulses[motor - 1] >= 0.0 ? 1 : 0,
-                               wheelRpm[motor - 1], 0, pulses[motor - 1], false, true);
+            Emm_V5_Pos_Control(motor, wheelPulses[motor - 1] >= 0.0 ? 1 : 0, wheelRpm[motor - 1], 180, pulses[motor - 1], false, true);
         }
         vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
     }
@@ -834,11 +855,8 @@ void ResetDiscAlignmentPid() {
  * @param speedRpm 目标速度（RPM）
  * @return 是否成功对齐
  */
-bool AlignToDiscContinuous(float angleErrorDeg, float visualXError,
-                           float visualYError, float dtSeconds,
-                           uint16_t speedRpm) {
-    return AlignToVisionContinuous(VisionStartMode::DISC, angleErrorDeg,
-                                  visualXError, visualYError, dtSeconds, speedRpm);
+bool AlignToDiscContinuous(float angleErrorDeg, float visualXError,  float visualYError, float dtSeconds,  uint16_t speedRpm) {
+    return AlignToVisionContinuous(VisionStartMode::DISC, angleErrorDeg,  visualXError, visualYError, dtSeconds, speedRpm);
 }
 
 void ResetAlignmentWait() {
@@ -931,8 +949,8 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
         Serial.println("[Route] Error: path requires at least two nodes");
         return false;
     }
-    if (!isfinite(speedMmS) || speedMmS < 10 || speedMmS > 1600) {
-        Serial.println("[Route] Error: speed must be in 10~1600 mm/s range");
+    if (!isfinite(speedMmS) || speedMmS < 10 || speedMmS > 2000) {
+        Serial.println("[Route] Error: speed must be in 10~2000 mm/s range");
         return false;
     }
     if (!isfinite(currentPose.theta) || (!isnan(finalHeading) && !isfinite(finalHeading))) {
@@ -1007,10 +1025,34 @@ bool InitArm_look2() {
  * @brief 机械臂初始化归视觉位（圆盘物料定位视觉）
  */
 bool InitArm_look3() {
-    if (!MoveArm(170,30,-1,-1,200)) return false;
+    if (!MoveArm(170,40,-1,-1,200)) return false;
     vTaskDelay(pdMS_TO_TICKS(1500));
     if (!MoveArm(-1, -1, 90, 80, 200)) return false;
-    return true;
+
+    // MoveArm 只表示命令已成功下发。圆盘下一次识别必须等转台真实到达观察位，
+    // 否则动作期间积压的视觉结果可能被误当成下一件物料的新数据。
+    constexpr float LOOK3_TURRET_TARGET_DEG = 90.0f;
+    constexpr float LOOK3_TURRET_TOLERANCE_DEG = 5.0f;
+    constexpr uint32_t LOOK3_TURRET_TIMEOUT_MS = 2500;
+    constexpr uint32_t LOOK3_TURRET_POLL_MS = 50;
+    const uint32_t startedAt = millis();
+    float measuredAngle = NAN;
+    do {
+        if (taskMotionAborted) return false;
+        if (Servo_QueryAngleMTurn(2, measuredAngle, 100)
+                && isfinite(measuredAngle)
+                && fabsf(measuredAngle - LOOK3_TURRET_TARGET_DEG)
+                    <= LOOK3_TURRET_TOLERANCE_DEG) {
+            Serial.printf("[Arm] look3 ready: turret=%.1f deg, target=90.0+/-5.0 deg\n",
+                          measuredAngle);
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(LOOK3_TURRET_POLL_MS));
+    } while (millis() - startedAt < LOOK3_TURRET_TIMEOUT_MS);
+
+    Serial.printf("[Arm] ERR: look3 turret not ready: actual=%.1f deg, target=90.0+/-5.0 deg\n",
+                  measuredAngle);
+    return false;
 }
 
 /**

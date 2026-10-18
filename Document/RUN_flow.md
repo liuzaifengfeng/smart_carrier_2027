@@ -137,23 +137,23 @@ flowchart TD
 ### 4.1 STATE_GRAB_ROUND1：导航与圆盘定位
 
 1. 显示 `GRAB R1`。首次请求路径 `2→14`；路径成功后置 `discRouteCompleted=true`，清零 `roundProgress`，关闭抓取准备标志。
-2. 调用 **`InitArm_look3()`**，成功后请求 `START_REQUEST,DISC`。look3失败显示 `DISC ARM ERR`，停止总定时器，进入搬运故障。
+2. 调用 **`InitArm_look2()`**，成功后请求 `START_REQUEST,DISC`。look2失败显示 `DISC ARM ERR`，停止总定时器，进入搬运故障。
 3. `requestVisionStart(DISC)`先清空旧反馈并开启自动连续闭环，再发送视觉启动事件。机载电脑持续回传 `{CMD,VISION,ALIGN_DATA,angle,x,y}`。
 4. 对齐处于WAITING时留在本状态轮询。对齐结束时先保存结果，再关闭底盘PID并请求 `STOP_REQUEST,DISC`。
 5. 只有DONE允许继续；FAILED或IDLE显示 `DISC ALIGN ERR`，停止计时并进入 `STATE_ALIGN_FAILED`。
-6. DONE后清空视觉命令队列，依次等待100 ms和1000 ms。源码中的 `GotoPose(-45,0,0,true)` 已注释，这里不执行该位移。
-7. 调用 `InitArm_look2()`，成功后设置 `firstDiscGrabReady=true`，请求 `START_REQUEST,DISC_MATERIAL`，置 `discMaterialRequested=true`，显示 `WAIT DISC MATERIAL`。
+6. DONE后清空视觉命令队列并短暂等待。源码中的 `GotoPose(-45,0,0,true)` 已注释，这里不执行该位移。
+7. 调用 `InitArm_look3()`；命令下发后持续读取2号转台多圈角度，只有实测进入90°±5°才算成功。随后请求 `START_REQUEST,DISC_MATERIAL`，由串口任务丢弃此前积压数据和跨边界半帧，再设置 `firstDiscGrabReady=true`，显示 `WAIT DISC MATERIAL`。超时未到位则进入搬运故障。
 
 ### 4.2 STATE_GRAB_ROUND1：三件颜色驱动抓取
 
 1. 机载电脑发送 `{CMD,VISION,COLOR,color}`。主控按 `round1_colors[roundProgress]` 判定，目标载物台为 `roundProgress+1`。
 2. 颜色不匹配时回复接收OK，报告 `COLOR,SKIP,color,cargo,COLOR_MISMATCH`，继续等待，不改变进度。
 3. 匹配且状态允许、底盘对齐已停、载物台为空时，报告 `COLOR,GRAB,color,cargo`，串口任务执行 `GrabDiscMaterial(color,cargo)`。匹配但条件不允许时报告BLOCKED及原因。
-4. 抓取开始前令 `firstDiscGrabReady=false`，清除恢复请求。相机继续识别，主控屏蔽颜色触发；此阶段COLOR仅回复OK并丢弃，不缓存下一件颜色。
-5. `GrabDiscMaterial`完成圆盘抓取、抬升、放入指定载物台；成功后登记载物台颜色，报告 `GRAB,DONE`并推进进度。失败报告 `GRAB,FAILED`，保持进度，结束物料视觉，显示 `DISC GRAB ERR`并进入搬运故障，不自动重试。
-6. 第1、2件成功后，主状态机打印 `[DISC] Restoring observation after grab N`，各执行一次 `InitArm_look2()`。成功后更新 `discPreparedProgress`，请求串口任务清理固定旧缓存及跨边界旧半帧。
-7. 串口任务到达旧数据后的完整帧边界，再恢复抓取准备并打印 `[DISC] Color handling resumed: expected=..., cargo=...`。持续新帧不会让等待无限延长；恢复过程不反复启停相机。
-8. 第3件成功时，串口任务先请求 `STOP_REQUEST,DISC_MATERIAL`，再发布 `roundProgress=3`。主状态机关闭准备标志、清零进度，进入 `STATE_PLACE_COARSE1`；不再执行第三次恢复观察。
+4. 新版位置帧选中后令 `firstDiscGrabReady=false`，清除恢复请求，并发送 `STOP_REQUEST,DISC_MATERIAL` 结束旧位置识别会话。抓放期间的位置消息只回复NOT_READY，不缓存为下一件。
+5. 旧 COLOR/GRAB 使用 `GrabDiscMaterial`；新版 DISC_POSITIONS 使用对应 `GrabDiscPosition1/2/3`，随后共用载物台放置。成功后登记载物台颜色、报告 DONE 并推进进度；失败保持进度，结束物料视觉，显示 `DISC GRAB ERR`并进入搬运故障，不自动重试。
+6. 第1、2件成功后，主状态机打印 `[DISC] Restoring observation after grab N`，各执行一次 `InitArm_look3()`。2号转台实测进入90°±5°后更新 `discPreparedProgress`，发送新的 `START_REQUEST,DISC_MATERIAL`，并请求串口任务清理 look3 完成前的旧缓存及跨边界旧半帧。
+7. 串口任务到达旧数据后的完整帧边界，再恢复抓取准备并打印 `[DISC] Material handling resumed: expected=..., cargo=...`。只有此后新识别会话上报的位置才会触发下一次抓取，确保使用圆盘旋转后的新位置。
+8. 第3件在选中时同样结束旧 DISC_MATERIAL 会话；成功后直接发布 `roundProgress=3`。主状态机关闭准备标志、清零进度，进入 `STATE_PLACE_COARSE1`；不再执行第三次恢复观察或重启物料识别。
 
 抓取在串口任务内阻塞执行，长动作期间可能积压输入，返回后日志会集中出现COLOR应答。COLOR,OK表示接收；确认本次抓取结果应看GRAB,DONE/FAILED，而非OK数量。
 
@@ -331,7 +331,7 @@ flowchart TD
 | 开局 | Release mode → TASK start → WAIT start_zone → start_zone → 雷达姿态结果 → WAIT START → READ TASK |
 | 扫码 | SCANNER recv/task code OK → DISPLAY TASK_CODE → TASK OK |
 | 圆盘 | GRAB R1/R2 → ROUTE_REQUEST → ROUTE_DONE,ESTIMATED → START_REQUEST,DISC → ALIGN_DONE → STOP_REQUEST,DISC → START_REQUEST,DISC_MATERIAL |
-| 每件抓取 | COLOR,GRAB → Material placed → GRAB,DONE；前两件随后Restoring observation → Color handling resumed |
+| 每件抓取 | COLOR/位置帧选中 → Material placed → DONE；前两件随后 Restoring observation → Material handling resumed |
 | 粗加工 | GO COARSE1/2 → 路径完成 → START_REQUEST,WORK_AREA → ALIGN_DONE → STOP_REQUEST,WORK_AREA → PLACE C1/C2 |
 | 粗加工直接取回 | WAIT RETRIEVE C1/C2 → 至少等待1秒 → RETRIEVE C1/C2 → GO TEMP1/2；正常此段无ALIGN LOADED或LOADED ALIGN ERR |
 | 暂存第一层 | 路径完成 → START_REQUEST,WORK_AREA → ALIGN TEMP1 → ALIGN_DONE → STOP_REQUEST,WORK_AREA → PLACE T1 |

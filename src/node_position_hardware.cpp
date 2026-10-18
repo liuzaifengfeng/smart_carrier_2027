@@ -54,14 +54,20 @@ public:
         }
         return nullptr;
     }
+    const char *readPosition(uint8_t id,int64_t &position)override {
+        if(cancelled())return "STOPPED";
+        drain();uint8_t cmd[]={id,0x36,0x6B};Serial1.write(cmd,3);Serial1.flush();
+        EmmReply out;const char *error=reply(id,0x36,out);
+        if(!error)position=EmmFeedbackParser::position(out);return error;
+    }
     const char *zero(uint8_t id)override {
         if(cancelled())return "STOPPED";
         drain();Emm_V5_Reset_CurPos_To_Zero(id);Serial1.flush();EmmReply out;return reply(id,0x0A,out);
     }
-    const char *target(uint8_t id,bool positive,uint16_t rpm,uint32_t pulses)override {
+    const char *target(uint8_t id,bool positive,uint16_t rpm,uint8_t acceleration,uint32_t pulses)override {
         if(cancelled())return "STOPPED";
         drain();
-        Emm_V5_Pos_Control(id,positive?1:0,rpm,0,pulses,true,true);Serial1.flush();
+        Emm_V5_Pos_Control(id,positive?1:0,rpm,acceleration,pulses,true,true);Serial1.flush();
         // ACK已确认装载完成，不再每轮额外固定等待5ms。
         EmmReply out;return reply(id,0xFD,out);
     }
@@ -80,6 +86,14 @@ public:
     void motorDiagnostic(uint8_t id,const char *reason,double goal,const node_position::Motor &m)override {
         Serial.printf("{EVT,NAV,ROUTE_MOTOR,%u,%s,%.0f,%lld,%d,%u}\n",id,reason,goal,
             static_cast<long long>(m.position),m.rpm,m.flags);
+    }
+    void timing(const char *stage)override {
+        Serial.printf("{EVT,NAV,ROUTE_TIMING,%s,%lu}\n",stage,static_cast<unsigned long>(millis()));
+    }
+    void arrivalDiagnostic(float residual,const node_position::Motor (&m)[4])override {
+        Serial.printf("{EVT,NAV,ROUTE_WAIT,%lu,%.3f,%u,%d,%u,%d,%u,%d,%u,%d}\n",
+            static_cast<unsigned long>(millis()),residual,
+            m[0].flags,m[0].rpm,m[1].flags,m[1].rpm,m[2].flags,m[2].rpm,m[3].flags,m[3].rpm);
     }
 };
 }

@@ -169,6 +169,13 @@ constexpr bool turn(float current, float target, float finalTarget, uint32_t tim
     return r.MoveArm(-1,-1,target,-1,speed) && r.count==1 && r.turretQueries==1
         && timed(r.commands[0],finalTarget,time) && r.currentArm.turret_angle==finalTarget;
 }
+constexpr bool grip(float target, float speed, float finalTarget, uint32_t time) {
+    Run r;
+    return r.MoveArm(-1,-1,-1,target,speed) && r.count==1
+        && r.commands[0].id==1 && !r.commands[0].advanced
+        && r.commands[0].angle==finalTarget && r.commands[0].time==time
+        && r.commands[0].power==0 && r.currentArm.pawl_angle==target;
+}
 constexpr bool guards() {
     Run missing; missing.queryOk=false;
     Run invalid; invalid.measuredTurret=__builtin_nanf("");
@@ -177,12 +184,16 @@ constexpr bool guards() {
     Run startup; startup.s_turretStartupReferenceFault=true;
     Run aborted; aborted.taskMotionAborted=true;
     Run skip;
+    Run zeroSpeed, excessiveSpeed, invalidSpeed;
     return !missing.MoveArm(-1,-1,90,-1,250) && missing.count==0
         && !invalid.MoveArm(-1,-1,90,-1,250) && invalid.count==0
         && !outside.MoveArm(-1,-1,90,-1,250) && outside.count==0
         && !badTarget.MoveArm(-1,-1,TURRET_CABLE_MIN_DEG-1,-1,250) && badTarget.count==0
         && !startup.MoveArm(-1,-1,90,-1,250) && startup.count==0 && startup.turretQueries==0
         && !aborted.MoveArm(-1,-1,90,-1,250) && aborted.count==0 && aborted.turretQueries==0
+        && !zeroSpeed.MoveArm(-1,-1,-1,0,0) && zeroSpeed.count==0
+        && !excessiveSpeed.MoveArm(-1,-1,-1,0,301) && excessiveSpeed.count==0
+        && !invalidSpeed.MoveArm(-1,-1,-1,0,__builtin_nanf("")) && invalidSpeed.count==0
         && skip.MoveArm(-1,-1,-1,-1,250) && skip.count==0 && skip.turretQueries==0;
 }
 constexpr bool mixedAxes() {
@@ -191,7 +202,7 @@ constexpr bool mixedAxes() {
         && r.commands[0].id==5 && r.commands[1].id==6
         && timed(r.commands[2],180,1050)
         && r.commands[3].id==1 && !r.commands[3].advanced
-        && r.commands[3].angle==50 && r.commands[3].time==500 && r.commands[3].power==0;
+        && r.commands[3].angle==50 && r.commands[3].time==444 && r.commands[3].power==0;
 }
 static_assert(turn(0,180,180,1050), "180 degrees uses 1050 ms");
 static_assert(turn(0,90,90,525), "90 degrees uses 525 ms");
@@ -204,6 +215,11 @@ static_assert(turn(10,350,-10,400), "choose nearest equivalent within cable limi
 static_assert(turn(350,10,10,1983), "reject shorter equivalent outside cable limits");
 static_assert(turn(-150,180,180,1925), "large permitted displacement scales beyond reference");
 static_assert(turn(0,180,180,1050,100) && turn(0,180,180,1050,300), "turret timing ignores old speed mapping");
+static_assert(grip(90,200,90,1000), "gripper reference speed uses measured angular travel");
+static_assert(grip(45,200,45,500), "gripper duration scales with angular travel");
+static_assert(grip(10,200,10,200), "gripper short moves use minimum duration");
+static_assert(grip(0,200,0,0), "gripper zero travel needs no artificial duration");
+static_assert(grip(350,200,-10,200), "gripper selects nearest equivalent angle before timing");
 static_assert(guards(), "query failures, invalid angles, startup fault, abort and sentinel");
 static_assert(mixedAxes(), "retain motor and gripper command order and gripper timing");
 '''.replace("LIMITS", limits).replace("ACTUAL", actual)

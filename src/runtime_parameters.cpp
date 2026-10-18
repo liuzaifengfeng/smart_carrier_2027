@@ -107,7 +107,7 @@ void initialize() {
     }
     RegisterRuntimeFloat("搬运/安全高度(mm)", materialTransferLayout.approachHeight, 0, ARM_HEIGHT_LIMIT_MM);
     RegisterRuntimeFloat("搬运/二层高度增量(mm)", materialTransferLayout.secondLayerOffset, 0, ARM_HEIGHT_LIMIT_MM);
-    // MoveArm 中舵机时间使用 (300-speed)*10，速度不得超过 300。
+    // MoveArm 公共速度指令范围为1~300；夹爪按实际角差与标定角速度换算时间。
     RegisterRuntimeFloat("搬运/速度", materialTransferLayout.moveSpeed, 1, 300);
     RegisterRuntimeFloat("搬运/夹爪张开(deg)", materialTransferLayout.clawOpenAngle, -360, 360);
     RegisterRuntimeFloat("搬运/夹爪夹紧(deg)", materialTransferLayout.clawClosedAngle, -360, 360);
@@ -127,7 +127,7 @@ void initialize() {
     RegisterRuntimeFloat("搬运/速度/放料松爪", materialMotionSteps.placeReleaseSpeed, 1, 300);
     RegisterRuntimeFloat("搬运/速度/放料提起", materialMotionSteps.placeLiftSpeed, 1, 300);
     RegisterChassisParameters();
-    RegisterRuntimeFloat("底盘/节点导航速度(mm/s)", NODE_PATH_SPEED_MM_S, 10, 1600);
+    RegisterRuntimeFloat("底盘/节点导航速度(mm/s)", NODE_PATH_SPEED_MM_S, 10, 2000);
     RegisterRuntimeUInt("底盘/扫码接近轮速(RPM)", SCAN_APPROACH_SPEED_RPM, 1, 5000);
     RegisterRuntimeUInt("底盘/扫码往返轮速(RPM)", SCAN_SEARCH_SPEED_RPM, 1, 5000);
     RegisterRuntimeUInt("对齐/最大轮速(RPM)", ALIGN_PID_MAX_SPEED_RPM, 1, 5000);

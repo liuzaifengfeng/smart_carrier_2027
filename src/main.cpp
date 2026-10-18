@@ -182,7 +182,7 @@ void Task_MainStateMachine(void *pvParameters) {
                 firstDiscGrabReady = false;
                 // 先清除旧反馈并开启连续闭环，再通知机载电脑发送 DISC 数据。
                 // 路径执行完后请求圆盘定位视觉；上位机应切到圆盘定位流程。
-                if (!InitArm_look3()) {
+                if (!InitArm_look2()) {
                     updateDisplay("DISPLAY", "DEBUG", "DISC ARM ERR");
                     if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
                     currentState = STATE_TRANSFER_FAILED;
@@ -218,18 +218,19 @@ void Task_MainStateMachine(void *pvParameters) {
                 xQueueReset(xVisualTaskQueue);
                 // 圆盘定位成功后、物料识别前的位置调整，仅在首次切换时执行。
                 vTaskDelay(pdMS_TO_TICKS(100));
-                //GotoPose(-45, 0, 0, true);
-                vTaskDelay(pdMS_TO_TICKS(100));
-                // 观察姿态命令成功后才开放抓取，失败时不启动物料识别。
-                if (!InitArm_look2()) {
+                // look3 实测转台进入 90°±5° 后才启动新识别；开放前继续丢弃旧帧。
+                if (!InitArm_look3()) {
                     updateDisplay("DISPLAY", "DEBUG", "DISC ARM ERR");
                     if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
                     currentState = STATE_TRANSFER_FAILED;
                     break;
                 }
-                firstDiscGrabReady = true;
+                firstDiscGrabReady = false;
                 // 启用物料识别接收状态，并向机载电脑发送圆盘物料识别启动请求。
                 requestVisionStart(VisionStartMode::DISC_MATERIAL);
+                // 串口任务先排空 look3 完成前已经到达的数据及跨边界半帧，
+                // 再置 firstDiscGrabReady；因此只响应新识别会话的新鲜数据。
+                discMessageResumeRequested = true;
                 // 标记请求已发送，避免下一轮重复调整机械臂和启动识别；不代表识别已完成。
                 discMaterialRequested = true;
                 // 显示正在等待圆盘物料识别结果。
@@ -238,12 +239,12 @@ void Task_MainStateMachine(void *pvParameters) {
                 // 并将 roundProgress 推进到 3，由下方判断切换主状态。
             }
             // COLOR 的匹配和抓取由串口任务执行，此处只衔接每件完成后的观察准备。
-            // 抓取期间视觉保持开启，串口任务屏蔽颜色处理；成功放上载物台才增加进度。
+            // 抓取开始时结束旧位置识别；成功放上载物台才增加进度。
             // 使用进度变化触发，避免等待下一种颜色时反复调用机械臂初始化。
             const int completedGrabs = roundProgress;
             if (completedGrabs > discPreparedProgress && completedGrabs < 3) {
                 Serial.printf("[DISC] Restoring observation after grab %d\n", completedGrabs);
-                if (!InitArm_look2()) {
+                if (!InitArm_look3()) {
                     firstDiscGrabReady = false;
                     requestVisionStop(VisionStartMode::DISC_MATERIAL);
                     updateDisplay("DISPLAY", "DEBUG", "DISC ARM ERR");
@@ -255,7 +256,9 @@ void Task_MainStateMachine(void *pvParameters) {
                 if (currentState != STATE_GRAB_ROUND1) break;
                 xQueueReset(xVisualTaskQueue);
                 discPreparedProgress = completedGrabs;
-                // 不启停视觉；串口任务处理固定的旧缓存及旧半帧后开放下一件。
+                // 圆盘已旋转：开启一轮新的物料位置识别，再清理启停边界附近的
+                // 串口旧数据；只有新识别会话后续上报的位置才能触发下一件。
+                requestVisionStart(VisionStartMode::DISC_MATERIAL);
                 discMessageResumeRequested = true;
                 updateDisplay("DISPLAY", "DEBUG", "WAIT DISC MATERIAL");
             }
@@ -334,40 +337,13 @@ void Task_MainStateMachine(void *pvParameters) {
             }
             roundProgress = 0;
             if (currentState != STATE_PLACE_COARSE1 || taskMotionAborted) break;
-            /* 暂时跳过粗加工放料后的带物料定位及观察姿态。
-            // 先显式执行观察姿态，成功后再启用工位视觉定位。
-            setAlignmentEnabled(false);
-            if (!InitArm_look()) {
-                if (currentState != STATE_PLACE_COARSE1) break;
-                updateDisplay("DISPLAY", "DEBUG", "WORK AREA ARM ERR");
-                if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
-                currentState = STATE_TRANSFER_FAILED;
-                break;
-            }
-            if (currentState != STATE_PLACE_COARSE1 || taskMotionAborted) break;
-            requestVisionStart(VisionStartMode::WORK_AREA_LOADED);
-            */
+
             currentState = STATE_PLACE_TEMP1;
             break;
         }
 
         case STATE_PLACE_TEMP1: {
             if (!temp1CargoRetrieved) {
-                /* 暂时跳过带物料对齐等待；放料时已完成工位定位。
-                // COARSE1 已开启 WORK_AREA_LOADED；等待达标，不能把请求当作完成。
-                updateDisplay("DISPLAY", "DEBUG", "ALIGN LOADED C1");
-                const auto alignmentState = getAutoAlignmentState();
-                if (alignmentState == AutoAlignmentState::WAITING) break;
-                // 达标后连续 PID 仍在运行，取料前必须先停车。
-                setAlignmentEnabled(false);
-                if (alignmentState != AutoAlignmentState::DONE) {
-                    requestVisionStop(VisionStartMode::WORK_AREA_LOADED);
-                    updateDisplay("DISPLAY", "DEBUG", "LOADED ALIGN ERR");
-                    if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
-                    currentState = STATE_ALIGN_FAILED;
-                    break;
-                }
-                */
                 setAlignmentEnabled(false);
                 if (taskMotionAborted) break;
                 updateDisplay("DISPLAY", "DEBUG", "WAIT RETRIEVE C1");
@@ -504,16 +480,19 @@ void Task_MainStateMachine(void *pvParameters) {
                 vTaskDelay(pdMS_TO_TICKS(100));
                 //GotoPose(-45, 0, 0, true);
                 vTaskDelay(pdMS_TO_TICKS(100));
-                // 观察姿态命令成功后才开放抓取，失败时不启动物料识别。
-                if (!InitArm_look2()) {
+                // look3 实测转台进入 90°±5° 后才启动新识别；开放前继续丢弃旧帧。
+                if (!InitArm_look3()) {
                     updateDisplay("DISPLAY", "DEBUG", "DISC ARM ERR");
                     if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
                     currentState = STATE_TRANSFER_FAILED;
                     break;
                 }
-                firstDiscGrabReady = true;
+                firstDiscGrabReady = false;
                 // 启用物料识别接收状态，并向机载电脑发送圆盘物料识别启动请求。
                 requestVisionStart(VisionStartMode::DISC_MATERIAL);
+                // 串口任务先排空 look3 完成前已经到达的数据及跨边界半帧，
+                // 再置 firstDiscGrabReady；因此只响应新识别会话的新鲜数据。
+                discMessageResumeRequested = true;
                 // 标记请求已发送，避免下一轮重复调整机械臂和启动识别；不代表识别已完成。
                 disc2MaterialRequested = true;
                 // 显示正在等待圆盘物料识别结果。
@@ -522,12 +501,12 @@ void Task_MainStateMachine(void *pvParameters) {
                 // 并将 roundProgress 推进到 3，由下方判断切换主状态。
             }
             // COLOR 的匹配和抓取由串口任务执行，此处只衔接每件完成后的观察准备。
-            // 抓取期间视觉保持开启，串口任务屏蔽颜色处理；成功放上载物台才增加进度。
+            // 抓取开始时结束旧位置识别；成功放上载物台才增加进度。
             // 使用进度变化触发，避免等待下一种颜色时反复调用机械臂初始化。
             const int completedGrabs = roundProgress;
             if (completedGrabs > disc2PreparedProgress && completedGrabs < 3) {
                 Serial.printf("[DISC] Restoring observation after grab %d\n", completedGrabs);
-                if (!InitArm_look2()) {
+                if (!InitArm_look3()) {
                     firstDiscGrabReady = false;
                     requestVisionStop(VisionStartMode::DISC_MATERIAL);
                     updateDisplay("DISPLAY", "DEBUG", "DISC ARM ERR");
@@ -539,7 +518,9 @@ void Task_MainStateMachine(void *pvParameters) {
                 if (currentState != STATE_GRAB_ROUND2) break;
                 xQueueReset(xVisualTaskQueue);
                 disc2PreparedProgress = completedGrabs;
-                // 不启停视觉；串口任务处理固定的旧缓存及旧半帧后开放下一件。
+                // 圆盘已旋转：开启一轮新的物料位置识别，再清理启停边界附近的
+                // 串口旧数据；只有新识别会话后续上报的位置才能触发下一件。
+                requestVisionStart(VisionStartMode::DISC_MATERIAL);
                 discMessageResumeRequested = true;
                 updateDisplay("DISPLAY", "DEBUG", "WAIT DISC MATERIAL");
             }

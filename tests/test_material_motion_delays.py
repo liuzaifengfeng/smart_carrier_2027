@@ -46,6 +46,7 @@ struct Run {
         commands[moves++]={h,l,t,c,s,waits}; return moves != failAt;
     }
     constexpr void GotoPose(float, float, float, bool) {}
+    constexpr bool MovePosition(float, float, float, float) { return true; }
     constexpr void vTaskDelay(int ms) { delays[waits++]=ms; }
     SOURCE
 };
@@ -139,9 +140,28 @@ constexpr bool commonAndAuxiliary() {
     if (r.delays[0]!=101 || r.delays[1]!=102 || r.delays[2]!=103
             || r.delays[3]!=507 || r.delays[8]!=512) return false;
     r.waits=0;
-    if (!r.PrepareLidarScanPose(1) || r.delays[0]!=201 || r.delays[1]!=202) return false;
+    if (!r.PrepareLidarScanPose(1) || r.waits!=2
+            || r.delays[0]!=202 || r.delays[1]!=201) return false;
     r.waits=0;
-    return r.PrepareLidarScanPose(2) && r.delays[0]==301 && r.delays[1]==302;
+    return r.PrepareLidarScanPose(2) && r.waits==2
+        && r.delays[0]==301 && r.delays[1]==301;
+}
+constexpr bool positionPlacement() {
+    Run r; r.commonMaterialDelays=uniqueDelays(700);
+    if (!r.ValidateDiscPositionTransfer(3,2)
+            || !r.PlaceHeldDiscMaterialToCargo(3,2)
+            || r.moves!=5 || r.waits!=6
+            || r.cargoPlatforms[1].material!=MATERIAL_BLUE) return false;
+    if (r.commands[0].high!=r.materialTransferLayout.approachHeight
+            || r.commands[0].length!=r.materialTransferLayout.cargo[1].length
+            || r.commands[1].turret!=r.materialTransferLayout.cargo[1].turretAngle
+            || r.commands[2].high!=r.materialTransferLayout.cargo[1].high
+            || r.commands[3].claw!=r.materialTransferLayout.clawOpenAngle
+            || r.commands[4].high!=r.materialTransferLayout.approachHeight) return false;
+    if (r.ValidateDiscPositionTransfer(1,2)) return false;
+    Run failed; failed.commonMaterialDelays=uniqueDelays(800); failed.failAt=3;
+    return !failed.PlaceHeldDiscMaterialToCargo(5,1)
+        && failed.cargoPlatforms[0].material==MATERIAL_NONE;
 }
 constexpr bool stackEntrypoints() {
     for (uint8_t c=1;c<=3;++c) for (uint8_t w=1;w<=3;++w) {
@@ -167,6 +187,7 @@ static_assert(nineRoutes(true), "all 9 routes independently select their own 12 
 static_assert(automaticPermutations(), "all 6 task permutations and 3 layers use matching profiles");
 static_assert(failuresAndZero(), "failure stops subsequent moves; zero skips waits");
 static_assert(commonAndAuxiliary(), "reverse, disc and lidar use their own common/auxiliary delays");
+static_assert(positionPlacement(), "position pickup uses common cargo placement and updates only on success");
 static_assert(stackEntrypoints(), "single stack and both stack demos follow the new motion order");
 '''.replace("HEADER", header).replace("SOURCE", source)
         self.compile_harness(harness)

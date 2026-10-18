@@ -10,7 +10,7 @@ struct DiscPositionCandidate {
 
 // 一帧是一次可抓快照；按下一件任务颜色选择，重复颜色时优先位置号较小者。
 // 返回候选下标，-1 表示无匹配。位置号与载物台编号互相独立。
-constexpr int SelectDiscPosition(const DiscPositionCandidate *candidates, size_t count,
+inline int SelectDiscPosition(const DiscPositionCandidate *candidates, size_t count,
                                  const int *colors, int progress, bool taskValid) {
     if (!candidates || count == 0 || count > 3 || !colors || !taskValid
             || progress < 0 || progress >= 3) return -1;

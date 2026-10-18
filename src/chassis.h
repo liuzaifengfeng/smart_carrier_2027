@@ -63,8 +63,6 @@ void GotoPose(float x, float y, float theta, bool isRelative);
  * 调用期间须独占底盘，不能同时使用 MovePose/OmniMove/视觉对齐。
  * @return true 命令已下发并等待结束（开环估计），false 参数无效或超范围。
  */
-// shouldStop 可在等待期间轮询外部事件；返回 true 时立即停车并返回 false，
-// 中断时不将理想位姿更新为目标点。省略回调时保持原有行为。
 bool MovePosition(float x, float y, float theta, float speed,
                   bool (*shouldStop)() = nullptr);
 
@@ -116,6 +114,7 @@ void ResetAlignmentWait();
 
 // @brief 机械臂移动到位.
 // 升降/伸缩使用 EMM V5 绝对位置模式，以开机当前位置清零为原点；-1 跳过该轴。
+// speed 是1~300的公共速度指令；夹爪以200≈90°/s的标定按实际角差换算耗时。
 // 返回值表示所请求的控制命令是否全部成功下发，不代表机构已物理到位。
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
 
@@ -145,7 +144,7 @@ bool InitArm_look4();
  *
  * @param path         节点序号数组，例如 {0, 1, 8, 7}
  * @param pathLength   数组中的节点数量，2~25
- * @param speedMmS     平移速度上限，范围10~1600mm/s；转向速度/加速度可在参数页独立调整
+ * @param speedMmS     平移速度上限，范围10~2000mm/s；转向速度/加速度可在参数页独立调整
  * @param acceleration 保留旧接口参数；新节点控制器不使用此位置模式档位
  * @param finalHeading 终点车头的场地角度，默认 NaN 不约束；有限角度归一化到 0~360 度
  * @return true 路径有效且全部运动指令已执行；false 参数或路径无效

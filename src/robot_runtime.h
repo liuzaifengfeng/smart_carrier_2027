@@ -104,7 +104,7 @@ extern volatile StartZone currentStartZone;
 extern volatile bool taskReceived;
 extern volatile int  roundProgress;
 extern volatile bool firstDiscGrabReady;
-extern volatile bool discMessageResumeRequested; // look2 完成后，处理固定旧缓存至帧边界再恢复颜色处理。
+extern volatile bool discMessageResumeRequested; // look3 实测到位后，排空此前旧帧再开放圆盘抓取。
 extern volatile bool enableRun;
 extern QueueHandle_t xAlignmentQueue;
 extern SemaphoreHandle_t xAlignmentMotionMutex;
@@ -116,7 +116,7 @@ bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode, float finalHeadi
 AutoAlignmentState getAutoAlignmentState();
 void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false,
                          VisionStartMode owner = VisionStartMode::NONE, bool onlyOwner = false);
-bool runLidarPoseAction(bool fromCommand = false);
+bool runLidarPoseAction(bool fromCommand = false, bool allowRepeat = false);
 bool updateDisplay(const char *commandType, const char *displayType, const char *content);
 void requestVisionStart(VisionStartMode mode);
 void requestVisionStop(VisionStartMode mode);

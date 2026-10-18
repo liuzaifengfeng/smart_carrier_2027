@@ -251,7 +251,7 @@ const char *ContinuousTrialStatus(uint32_t id) {
 
 bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async) {
     ConfigurationGuard guard;if(!guard.held)return false;
-    if(!worker||otaBusy()||!path||count<2||count>MAX_NODES||!isfinite(speedMmS)||speedMmS<10||speedMmS>1600||taskMotionAborted)return false;
+    if(!worker||otaBusy()||!path||count<2||count>MAX_NODES||!isfinite(speedMmS)||speedMmS<10||speedMmS>2000||taskMotionAborted)return false;
     // 预留共享规划/任务资源；上传和其他运动不能在构建过程中插入。
     portENTER_CRITICAL(&trialMux);
     if(status.state==RUNNING||status.state==STOPPING){portEXIT_CRITICAL(&trialMux);return false;}
@@ -301,7 +301,7 @@ bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float fina
         return false;
     }
     configured=false;referenceVersion=version;initialHeading=heading;
-    Serial.printf("[Route] Transition window: 100ms; separate heading correction deadband: %.2f deg\n",formalSettings.headingDeadbandDeg);
+    Serial.printf("[Route] Transition window: disabled; separate heading correction deadband: %.2f deg\n",formalSettings.headingDeadbandDeg);
     Serial.printf("[Route] Profile: %.1f mm/s, %.1f mm/s2, %.1f deg/s, %.1f deg/s2\n",
         formalSettings.speedMmS,formalSettings.accelMmS2,formalSettings.turnDegS,formalSettings.turnAccelDegS2);
     Serial.printf("[Route] Profile: %.1f mm/s, %.1f mm/s2, %.1f deg/s, %.1f deg/s2\n",

@@ -384,27 +384,29 @@ bool PrepareLidarScanPose(uint8_t startZoneCode) {
         case 1:
             Serial.println("[LidarPose] start zone 1");
 
-            MovePosition(125,100,0,300);
+            if (!MovePosition(125,100,0,200)) return false;
             //GotoPose(125, 0, 0, true);
-            MoveArm(170, 100, -1, -1, 200);
-            waitForArm(materialAuxiliaryDelays.lidarZone1LiftMs);
+            if (!MoveArm(170, 100, -1, -1, 200)) return false;
+            //waitForArm(materialAuxiliaryDelays.lidarZone1LiftMs);
             //GotoPose(0, 100, 0, true);
-            MoveArm(-1, -1, 45, -1, 200);
+            if (!MoveArm(-1, -1, 45, -1, 200)) return false;
             waitForArm(materialAuxiliaryDelays.lidarZone1TurnMs);
-            MoveArm(0, 100, -1, -1, 200);
+            if (!MoveArm(0, 100, -1, -1, 200)) return false;
+            waitForArm(materialAuxiliaryDelays.lidarZone1LiftMs);
 
             break;
 
         case 2:
             Serial.println("[LidarPose] start zone 2");
-            MovePosition(125,-100,0,300);
+            if (!MovePosition(125,-100,0,200)) return false;
             //GotoPose(125, 0, 0, true);
-            MoveArm(170, 100, -1, -1, 200);
+            if (!MoveArm(170, 100, 135, -1, 200)) return false;
             waitForArm(materialAuxiliaryDelays.lidarZone2LiftMs);
             //GotoPose(0, -100, 0, true);
-            MoveArm(-1, 100, -1, -1, 200);
-            waitForArm(materialAuxiliaryDelays.lidarZone2TurnMs);
-            MoveArm(0, 100, 135, -1, 200);
+            //if (!MoveArm(-1, 100, -1, -1, 200)) return false;
+            //waitForArm(materialAuxiliaryDelays.lidarZone2TurnMs);
+            if (!MoveArm(0, 100, 135, -1, 200)) return false;
+            waitForArm(materialAuxiliaryDelays.lidarZone2LiftMs);
             break;
 
         default:
@@ -412,7 +414,7 @@ bool PrepareLidarScanPose(uint8_t startZoneCode) {
             return false;
     }
 
-    // 只有底盘和全部机械臂动作均执行完毕后才返回 true；调用方随后发送 OK 应答。
+    // 已发完指令并等待配置时长；此处没有硬件到位反馈。
     return true;
 }
 
@@ -607,5 +609,33 @@ bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force) {
     cargo.material = static_cast<MaterialType>(materialCode);
     Serial.printf("[Material] disc -> cargo %u, material %u placed\n",
                   cargoCode, materialCode);
+    return true;
+}
+
+bool ValidateDiscPositionTransfer(uint8_t materialCode, uint8_t cargoCode) {
+    if (!isMaterialCodeValid(materialCode) || !isStationCodeValid(cargoCode)) {
+        Serial.println("[DISC_POSITION] ERR: invalid material/cargo code");
+        return false;
+    }
+    if (cargoPlatforms[cargoCode - 1].material != MATERIAL_NONE) {
+        Serial.println("[DISC_POSITION] ERR: cargo platform is occupied");
+        return false;
+    }
+    const MaterialStationPose &destination = materialTransferLayout.cargo[cargoCode - 1];
+    if (!isLayoutParameterValid() || !isPoseValid(destination)) {
+        Serial.println("[DISC_POSITION] ERR: cargo pose is not calibrated");
+        return false;
+    }
+    return true;
+}
+
+bool PlaceHeldDiscMaterialToCargo(uint8_t materialCode, uint8_t cargoCode) {
+    if (!ValidateDiscPositionTransfer(materialCode, cargoCode)) return false;
+    CargoPlatform &cargo = cargoPlatforms[cargoCode - 1];
+    const MaterialStationPose &destination = materialTransferLayout.cargo[cargoCode - 1];
+    if (!placeAt(destination, destination.high)) return false;
+    cargo.material = static_cast<MaterialType>(materialCode);
+    Serial.printf("[DISC_POSITION] material %u placed on cargo %u\n",
+                  materialCode, cargoCode);
     return true;
 }

@@ -37,10 +37,11 @@ Debug空闲时按BOOT0（GPIO0，低电平）等效执行 `{CMD,SYS,RELEASE}`，
 | `{ALIGN:STOP}` | `{CMD,VISION,ALIGN_STOP}` | 两者 | `{RSP,VISION,ALIGN_STOP,OK}` |
 | `{ALIGN:angle,x,y}` | `{CMD,VISION,ALIGN_DATA,angle,x,y}` | 两者 | 正常连续反馈不逐帧回复 |
 | `{color:N}` | `{CMD,VISION,COLOR,N}` | 两者，须开启 DISC_MATERIAL | `{RSP,VISION,COLOR,OK}`，随后报告 GRAB/SKIP/BLOCKED 决策 |
+| 无 | `{CMD,VISION,DISC_POSITIONS,pos1,color1[,pos2,color2[,pos3,color3]]}` | 两者，须开启 DISC_MATERIAL | ACK 后报告 SELECTED、DONE/FAILED 或 SKIP；按位置抓取新入口，详见文末使用说明 |
 | 无 | `{CMD,VISION,GRAB,cargo}` | 两者，须开启 DISC_MATERIAL | 使用最近 COLOR，回复 ACK 后发送 DONE/FAILED（动作结果） |
 | 无 | `{CMD,VISION,GRAB,color,cargo}` | 两者，须开启 DISC_MATERIAL | 同帧指定颜色与载物台，回复 ACK 后发送 DONE/FAILED（动作结果） |
 | `{ok}` | `{CMD,VISION,CONFIRM}` | Release | `{RSP,VISION,CONFIRM,ACK}` |
-| `{LidarPose}` | `{CMD,VISION,LIDAR_POSE}` | 两者 | `{RSP,VISION,LIDAR_POSE,ACK}`，随后完成或失败事件 |
+| `{LidarPose}` | `{CMD,VISION,LIDAR_POSE}` | 两者 | 首次执行返回 `{RSP,VISION,LIDAR_POSE,ACK}`，随后完成或失败事件；执行中返回 `ERR,BUSY`；Release 成功后的重复请求返回 `OK` 和 `LIDAR_POSE_DONE`，不重复移动；Debug 允许重新执行 |
 | `{POSE:GET}` | `{CMD,POSE,GET}` | 两者 | `{RSP,POSE,GET,OK,x,y,theta,h,l,turret,pawl}` |
 | 无 | `{CMD,IMU,GET}` | 两者 | 单次快照：`{RSP,IMU,GET,OK,pitch,roll,yaw,age_ms}`；角度单位 °，H30 原始坐标，数据年龄不超过 200 ms |
 | 无 | `{CMD,IMU,HEADING}` | 两者 | 单次地图航向：`{RSP,IMU,HEADING,OK,heading,age_ms}`；heading 为 0~360°（不含 360），无参考时返回 `ERR,NOT_CALIBRATED` |
@@ -95,20 +96,22 @@ TASK SET 在 Debug 可修改任务码并重置抓取进度为 0；开启 DISC_MA
 - `POSE SET`：x、y 为 0～2400 mm，theta 为有限角度。`GOTO_REL`：x、y 各为 ±3394.113 mm，theta 为 ±360 度；都是**相对移动量**，ACK 后执行动作。
 - `CHASSIS MOVE_POSITION`：调用 `MovePosition(x,y,theta,speed)`，x/y 是移动前车身坐标系中的终点位移，各为 ±3394.113 mm；theta 是本次转角（±360°，正值左转），speed 是最大轮速（1～5000 RPM，驱动器按整数执行）。四輪同步启动，平移和旋转同时进行，混合运动走圆弧。参数数量错误回复 FORMAT，非法数值回复 RANGE，Release 回复 MODE，锁失败回复 LOCK；均不执行位置动作。有效参数先关闭视觉对齐并独占底盘运动锁，再回复 ACK；函数参数/标定检查失败会报告 FAILED，成功报告 DONE,ESTIMATED。全圈旋转同时平移不能用单段圆弧表示，函数拒绝。ACK 只表示接令，DONE,ESTIMATED 只表示下发和估算等待结束，不是实测到位。等待期间串口控制任务阻塞，后续串口指令延后处理；结束后视觉对齐保持关闭。上位机入口为“底盘 → 麦轮位置移动”，结束后可查询 POSE GET 回读底盘理想位姿。
 - `CHASSIS MOVE`：方向 `0` 前、`1` 后、`2` 左、`3` 右；速度 0～1000；`stop` 为 0 或 1。
-- `ARM MOVE1`：高度 `-1` 或 0～175 mm，伸出 `-1` 或 0～170 mm；`ARM MOVE2`：转台目标 -180～360 度、夹爪目标 -360～360 度，`-1` 表示跳过该轴；两种动作速度均为 1～1000。`SERVO`：ID 0～253 整数，角度 -135～135 度；ID 2 通过转台线缆保护。`ENABLE`：0 或 1。
+- `ARM MOVE1`：高度 `-1` 或 0～175 mm，伸出 `-1` 或 0～170 mm；`ARM MOVE2`：转台目标 -150～360 度、夹爪目标 -360～360 度，`-1` 表示跳过该轴；两种动作速度均为 1～300。`SERVO`：ID 0～253 整数，角度 -135～135 度；ID 2 通过转台线缆保护。`ENABLE`：0 或 1。
 - 升降（5号电机）和伸缩（6号电机）均通过 `Emm_V5_Pos_Control` 的绝对位置模式执行：`raF=true`、`snF=false`，脉冲分别为目标高度×`HEIGHT_PULSE`、目标伸出×`LENGTH_PULSE`，非负目标使用方向1。目标减小时由驱动器根据当前位置反向运行；重复相同目标也重新发令，0发送绝对零点目标，`-1`不发该轴命令。开机 `Emm_V5_Init()` 广播 `Emm_V5_Reset_CurPos_To_Zero(0)`，将当时位置作为零点，不自动寻找机械零点；需要在已知起始姿态开机。清零目前只等待UART发送及命令间隔，没有驱动器应答确认。`POSE GET`的升降/伸缩值仍是最近下发目标，不是实测位置。
 - 参数个数错误回复 `FORMAT`，越界回复 `RANGE`，模式不符回复 `MODE`，未知动作回复 `UNKNOWN_ACTION`；这些错误均不触发新运动。转台动作仍受开机多圈读数和线缆范围保护。
 - `ARM INIT_START` / `INIT_LOOK` / `INIT_LOOK2` 不带参数，上位机“机械臂 → 机械臂初始化”提供三个按钮。起始姿态目标为高度 150 mm、伸出 40 mm、转台 -55°、夹爪 0°；观察姿态最终为高度 120 mm、伸出 0 mm、转台 90°、夹爪 0°。观察姿态2调用 `InitArm_look2()`：先升到 170 mm、夹爪设为 0°，等待 2 秒，再收回伸出至 0 mm、转台转至 90°、夹爪打开至 80°，速度均为 150。沿用固件动作顺序与延时，任一步下发失败即结束并报告 `FAILED`；`ACK` 仅表示接令，`ISSUED` 仅表示动作指令已下发，不证明物理到位。执行期间串口命令任务会等待该流程返回。
 
 ## 3. 主动事件与路径交互
 
-两轮自动抓取及恢复观察姿态期间，COLOR 仍回复 `{RSP,VISION,COLOR,OK}`，但丢弃颜色且不触发抓取；OK 只表示接收。`look2` 完成后，处理恢复请求到达时已积压的数据至完整帧边界就重新允许颜色判断，不等待串口完全空闲。诊断日志 `[DISC] Color handling resumed: expected=..., cargo=...` 表示已恢复下一件处理，后续匹配颜色才触发 `COLOR,GRAB`。
+两轮自动抓取中，一旦某个位置被选中，主控就发送 `STOP_REQUEST,DISC_MATERIAL`，明确结束本次位置识别。抓取、载物台放置及恢复观察姿态期间，COLOR 不触发抓取；DISC_POSITIONS 回复 `ERR,NOT_READY`，不执行、不缓存。前两件完成 `look3` 后，主控重新发送 `START_REQUEST,DISC_MATERIAL`，并把启停边界附近已积压的数据处理到完整帧边界，随后才允许下一件抓取。诊断日志 `[DISC] Material handling resumed: expected=..., cargo=...` 表示新识别会话已开放；此后新收到的位置消息才会作为圆盘旋转后的有效位置。
 
-`{CMD,NAV,ROUTE,...}` 使用有限绝对脉冲位置动作，不使用独立试跑的速度积分执行。正式默认平移1200 mm/s、加速度1600 mm/s²、转向150°/s、转向加速度360°/s²；软件上限分别1600、4000、240、720，均可通过CFG调整并在路径启动时冻结，Profile日志输出实际值。允许倒退，同向共线节点连续通过，转角停转，不外绕。四轮到位、编码器位置稳定和近零转速为接续基础；H30完整新鲜数据用于差动轮速纠偏及提前确认停稳，保留有限终点。H30缺项/旧数据/参考不可信时退回编码器模式，只作日志提示，不因此中断正式任务；参考不可用时航向为规划/编码器估算，不声称±1°实测确认。起步再检转速波动时自动重新停车确认。末端小残差有限低速重试；真实电机故障、反馈缺失、越界等仍失败停车。Debug异步执行，不阻塞查询和STOP；Release由业务任务等待结果。功能区终点朝向：14为90°、10为270°、22为180°，其他不约束。完成发送 `ROUTE_DONE,ESTIMATED`，不能排除打滑或证明夹爪对准。最多25个节点，首节点须与实车位置一致。详见[辅助与反馈要求](continuous_trial.md)。
+`{CMD,NAV,ROUTE,...}` 使用有限绝对脉冲位置动作，每个动作四轮各发一次带最大轮速和加速度的位置命令，由驱动板执行加减速；运行中不更新目标或轮速，不使用独立试跑的速度积分执行。正式默认平移2000 mm/s、加速度2000 mm/s²、转向200°/s、转向加速度400°/s²；软件上限分别2000、4000、240、720，均可通过CFG调整并在路径启动时冻结，Profile日志输出实际值。允许倒退，同向共线节点连续通过，转角停转，不外绕。四轮各自进入位置容差且近零转速为接续基础，驱动到位标志不作为额外接续门槛，不再等待100ms编码器稳定窗口；H30完整新鲜数据用于偏航保护和停车后的独立校角，移动中不进行差动纠偏，保留有限终点。H30缺项/旧数据/参考不可信时退回编码器模式，只作日志提示，不因此中断正式任务；参考不可用时航向为规划/编码器估算，不声称±1°实测确认。起步四轮转速未近零时继续查询，清零前不重复再检。末端静止小残差500ms未收敛即失败，不补位重发；真实电机故障、反馈缺失、越界等仍失败停车。Debug异步执行，不阻塞查询和STOP；Release由业务任务等待结果。功能区终点朝向：14为90°、10为270°、22为180°，其他不约束。完成发送 `ROUTE_DONE,ESTIMATED`，不能排除打滑或证明夹爪对准。最多25个节点，首节点须与实车位置一致。详见[辅助与反馈要求](continuous_trial.md)。
 
-正式模式诊断事件 `{EVT,NAV,ROUTE_POSITION,s,x,y,reference,heading}`，距离/坐标单位mm、角度单位度。阶段为POSITION_STRAIGHT/POSITION_TURN/POSITION_RECOVER。恢复或超限时输出 `{EVT,NAV,ROUTE_MOTOR,id,reason,target,actual,rpm,flags}`，target/actual为65536单位/圈，actual保留驱动符号。小残差重试最多2次，仍不收敛报MOTOR_RESIDUAL_TIMEOUT；硬超限报MOTOR_POSITION_OVERRUN。其他失败包括MOTOR_FEEDBACK_TIMEOUT、MOTOR_DISABLED、MOTOR_STALL、MOTOR_ZERO_FAILED和MOTOR_ARRIVAL_TIMEOUT；不能以估时成功替代失败。ACK回复与反馈接线要求见上述说明。
+正式模式诊断事件 `{EVT,NAV,ROUTE_POSITION,s,x,y,reference,heading}`，距离/坐标单位mm、角度单位度。阶段为POSITION_STRAIGHT/POSITION_TURN。静止残差超时或超限时输出 `{EVT,NAV,ROUTE_MOTOR,id,reason,target,actual,rpm,flags}`，target/actual为65536单位/圈，actual保留驱动符号。静止小残差稳定500ms仍不收敛报MOTOR_RESIDUAL_TIMEOUT，不重发位置命令；硬超限报MOTOR_POSITION_OVERRUN。其他失败包括MOTOR_FEEDBACK_TIMEOUT、MOTOR_DISABLED、MOTOR_STALL、MOTOR_ZERO_FAILED和MOTOR_ARRIVAL_TIMEOUT；不能以估时成功替代失败。ACK回复与反馈接线要求见上述说明。
 
-正式导航快速接续：仅起步清零一次，后续从停稳反馈累计绝对目标；四轮到位、近零转速及编码器稳定100ms后接续，串口查询/发令耗时另计。独立校角采用CFG参数 `底盘/节点导航独立纠偏死区(°)`，默认3、范围1～8；运行中动态纠偏仍从0.4°开始。终点同样允许此死区内误差，不再声称±1°航向确认。
+诊断接续耗时：`{EVT,NAV,ROUTE_TIMING,stage,ms}` 中stage为STRAIGHT_SENT、STRAIGHT_ARRIVED、TURN_SENT、TURN_ARRIVED，ms为固件开机毫秒数；ARRIVED到下一SENT的差值为软件确认到位后的接续发令耗时，SENT不表示驱动已产生可见运动。四轮转速均近零但尚未通过到位条件时，每200ms最多输出一次 `{EVT,NAV,ROUTE_WAIT,ms,max_residual,flags1,rpm1,flags2,rpm2,flags3,rpm3,flags4,rpm4}`；残差为直行mm或转向度，flags为驱动原始状态字。此日志用于检查位置收敛、原始驱动状态和额外校角；驱动到位标志不再作为等待条件，不改变到位条件。
+
+正式导航快速接续：仅起步清零一次，后续从停稳反馈累计绝对目标；四轮各自进入位置容差且近零转速即接续，不等待驱动到位标志，取消100ms稳定窗口；起步删除重复查询，清零后仅验证位置，串口查询/发令耗时另计。独立校角采用CFG参数 `底盘/节点导航独立纠偏死区(°)`，默认3、范围1～8；移动中差动纠偏已禁用，每段合并直线四轮各自进入位置容差且近零转速后直接按下一动作目标和此死区校角，避免先修旧航向再转弯。终点同样允许此死区内误差，不再声称±1°航向确认。
 
 | 旧回复或事件 | v2 事件 / 回复 | 含义 |
 |---|---|---|
@@ -242,3 +245,68 @@ GPIO5 接 AO3400 栅极，按低边 N 沟道开关、高电平导通驱动。LED
 临时调试修改：`Task_VisualAlignment` 中 300 ms 断流触发停车和 `ALIGN_FAILED,TIMEOUT` 的分支已注释。队列单次等待仍为 300 ms，恢复反馈后帧间隔达到 300 ms 仍清零连续达标计数；这两处不会因断流报告失败。首次对齐 15 秒总超时、显式停止和无效反馈处理保留。手动 `ALIGN_START` 没有首次达标总超时，断流后须显式停止。
 
 总任务超时沿用 3000 秒配置；STATE_TIMEOUT_FAILED 结束全部视觉、停止六个步进电机、锁止后续 MoveArm 发令并暂停主任务，保留夹爪位置，等待人工恢复和重启。仍发送 `{EVT,NAV,ROUTE_FAILED,TIMEOUT}`，不从未知位置自动请求返家路径。自动流程状态提示使用既有 `{EVT,DISPLAY,DEBUG,正文}`，无需新增命令。
+
+## 按圆盘位置抓取：机载电脑使用说明
+
+新流程由视觉电脑判断抓取时机：物料即将到位或刚刚到位，只要电脑认为当前可以从该位置抓取，就上报该位置及颜色。ESP 不再等待这个物料转到原固定夹爪位置，也不自行预测圆盘转速或延时。三个位置分别执行各自的安全接近、夹取和抬升动作，随后复用公共载物台放置动作。
+
+### 指令与选择规则
+
+```text
+{CMD,VISION,DISC_POSITIONS,位置,颜色}
+{CMD,VISION,DISC_POSITIONS,位置,颜色,位置,颜色}
+{CMD,VISION,DISC_POSITIONS,位置,颜色,位置,颜色,位置,颜色}
+```
+
+- 复用 Serial0：115200、8N1、ASCII，一行一帧，以 LF 换行。无需新增物理串口。
+- 位置编号为 1～3，指圆盘上的三个抓取位置。机载视觉与机械动作需约定相同编号及坐标含义；本版未指定实际几何坐标。
+- 颜色编号：红 1、黄 2、蓝 3、绿 4、黑 5、浅蓝 6。位置编号与颜色不绑定；位置编号也不是车上载物台编号。
+- 每帧 1～3 组，出现的所有位置均视为当前可抓，位置不得重复；同颜色可以出现在不同位置。没有可抓位置时不发送该指令。
+- 一次同时看到三个候选时，推荐合并为一帧上报，保证 ESP 在同一个候选集合内选择。分成三帧时，每帧独立决策，不等后续帧凑齐。
+- ESP 按当前轮次任务码的下一件颜色选择：首轮 round1_colors[roundProgress]，次轮 round2_colors[roundProgress]；目标载物台固定为 roundProgress+1。不越过当前颜色抓后面的任务。同颜色有多个候选时选位置号较小者，与发送顺序无关。
+- 每帧最多调用一个位置函数；未选候选不缓存、不排队，也不会在以后自动执行。下一次抓取必须由电脑重新判断时机并上报新帧。
+- 选中位置后，ESP 立即发送 `STOP_REQUEST,DISC_MATERIAL` 结束旧识别会话，并令 `firstDiscGrabReady=false`。从夹取、放入载物台到主状态机恢复 `InitArm_look3()` 期间，收到的 `DISC_POSITIONS` 均回复 `ERR,NOT_READY`，不执行、不缓存、不在恢复后重放。
+- 前两件恢复 `InitArm_look3()` 后，ESP 重新发送 `START_REQUEST,DISC_MATERIAL`。串口任务再排完启停边界附近旧数据的完整帧边界，才令 `firstDiscGrabReady=true`；机载电脑必须根据旋转后的实时画面重新计算并上报位置。第三件完成后不再重启该识别。
+- DISC_MATERIAL 未开启、任务码无效、非抓取阶段、任务进度完成、连续对齐未停止、自动流程未准备好、目标载物台有料时，不调用位置抓取动作。
+
+### 回复与事件
+
+| 帧 | 含义 |
+|---|---|
+| `{RSP,VISION,DISC_POSITIONS,ACK,n}` | 接受本帧，n 为候选数量，不表示抓取成功 |
+| `{EVT,VISION,DISC_POSITIONS,SELECTED,pos,color,cargo}` | ESP 已选择位置、颜色和目标载物台，随后结束旧 DISC_MATERIAL 识别会话并开始抓放 |
+| `{EVT,VISION,DISC_POSITIONS,DONE,pos,color,cargo}` | 位置夹取、载物台放置和载物台颜色登记成功；任务进度随后推进 |
+| `{EVT,VISION,DISC_POSITIONS,FAILED,pos,color,cargo}` | 夹取或放置失败；不推进进度，自动流程停止物料视觉并进入搬运故障 |
+| `{EVT,VISION,DISC_POSITIONS,SKIP,expected,cargo,COLOR_MISMATCH}` | 本帧无当前所需颜色，等待新报告 |
+| `{RSP,VISION,DISC_POSITIONS,ERR,reason}` | 整帧拒绝，无 ACK、不调用位置函数 |
+
+reason：参数数量不符为 FORMAT；位置/颜色超范围或非整数为 RANGE；重复位置为 DUPLICATE_POSITION；状态拒绝为 NOT_ACTIVE、NO_TASK、NOT_WAITING、ROUND_COMPLETE、ALIGN_ACTIVE、NOT_READY、OCCUPIED。连续试跑期间沿用全局 BUSY 限制。整帧全部校验后才调用函数，后面的错误候选不会让前面的有效候选先执行。
+
+### 联调示例
+
+上电 Debug 模式可按以下顺序测试（各行均需追加换行）：
+
+```text
+电脑 -> {CMD,TASK,SET,156+123+516+231}
+ESP  -> {RSP,TASK,SET,OK,156+123+516+231}
+电脑 -> {CMD,VISION,START_REQUEST,DISC_MATERIAL}
+ESP  -> {RSP,VISION,START_REQUEST,ACK,DISC_MATERIAL}
+ESP  -> {EVT,VISION,START_REQUEST,DISC_MATERIAL}
+电脑 -> {CMD,VISION,DISC_POSITIONS,1,5,2,1,3,6}
+ESP  -> {RSP,VISION,DISC_POSITIONS,ACK,3}
+ESP  -> {EVT,VISION,DISC_POSITIONS,SELECTED,2,1,1}
+ESP  -> [DISC_POSITION] material 1 placed on cargo 1
+ESP  -> {EVT,VISION,DISC_POSITIONS,DONE,2,1,1}
+```
+
+首次连接仍须先完成 SYS HELLO 握手。上例任务首色为红 1，因此从三个可抓位置中选位置 2，目标载物台为 1；位置 1 的黑色和位置 3 的浅蓝不会抢先抓取。选中后旧 DISC_MATERIAL 会话结束；成功后进度变为 1，主状态机恢复观察姿态并启动新会话。恢复开放前重复发送会收到 NOT_READY且不会再次动作，开放后应按圆盘旋转后的画面发送全新的位置帧。仅发 `{CMD,VISION,DISC_POSITIONS,1,5,3,6}` 则 ACK 后返回 `{EVT,VISION,DISC_POSITIONS,SKIP,1,1,COLOR_MISMATCH}`。
+
+Release 自动流程继续使用 DISC 定位完成后开启 DISC_MATERIAL 的切换：电脑收到 START_REQUEST,DISC_MATERIAL 后开始判断时机并发送新指令；收到 STOP_REQUEST,DISC_MATERIAL 后停止报告。自动流程还要求 ESP 已准备好抓取，NOT_READY 时等待恢复后重新判断，不重放旧候选。
+
+调试上位机“视觉 → 圆盘物料回传与抓取”中，给圆盘位置 1～3 选择颜色（不参与本帧的位置选“不报送”），点击“上报可抓位置”。Python 发送端也可复用 `upper_computer.build_disc_positions_command([(1, 5), (2, 1), (3, 6)])` 生成同样的帧。
+
+### 动作接入与旧接口
+
+`src/disc_position_grab.cpp` 中的 `GrabDiscPosition1/2/3(color,cargo)` 分别完成三个位置的夹取和抬升，再调用 `PlaceHeldDiscMaterialToCargo` 放到目标载物台。只有整个动作成功才登记载物台颜色并推进 `roundProgress`；失败保持进度并进入搬运故障。成功后的下一件仍由主状态机恢复观察姿态和串口旧帧排空机制开放。
+
+原 COLOR、GRAB、FORCE_GRAB 保留兼容，仍会调用旧固定位置的真实动作。机载电脑迁移到本流程后，只发 DISC_POSITIONS；不要同时发旧 COLOR/GRAB，否则旧入口仍可能触发固定位置运动。FORCE_GRAB 仅用于原动作调试。

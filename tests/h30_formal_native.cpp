@@ -68,8 +68,8 @@ int main(){
     CHECK(route.config.accel==600&&route.config.maxRpm==node_position::rpmFor(120,Y_PULSE));
     NODE_PATH_ACCEL_MM_S2=0;CHECK(!H30StartNodePath(path,5,120,180));CHECK(launches==4);
     NODE_PATH_ACCEL_MM_S2=4000;NODE_PATH_TURN_DEG_S=240;NODE_PATH_TURN_ACCEL_DEG_S2=720;
-    CHECK(!H30StartNodePath(path,5,1601,180));
-    CHECK(H30StartNodePath(path,5,1600,180));CHECK(launches==5&&route.config.accel==4000);
+    CHECK(!H30StartNodePath(path,5,2001,180));
+    CHECK(H30StartNodePath(path,5,2000,180));CHECK(launches==5&&route.config.accel==4000);
     CHECK(formalSettings.turnDegS==240&&formalSettings.turnAccelDegS2==720);
     puts("actual formal adapter safety and shared controller OK");return 0;
 }

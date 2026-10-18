@@ -71,7 +71,11 @@ struct Run {
     constexpr AutoAlignmentState getAutoAlignmentState() { return alignment; }
     constexpr void setAlignmentEnabled(bool enabled) { pid=enabled; }
     constexpr bool InitArm_look2() { ++looks; return lookOK; }
+    constexpr bool InitArm_look3() { ++looks; return lookOK; }
+    constexpr bool InitArm_look4() { ++looks; return lookOK; }
     constexpr bool InitArm_start() { ++armStarts; return armStarts != armFailAt; }
+    StartZone currentStartZone=START_ZONE_UNKNOWN;
+    constexpr void GotoPose(float, float, float, bool) {}
     bool taskMotionAborted = false;
     int workLooks = 0;
     bool workLookOK = true;
@@ -117,10 +121,13 @@ struct Run {
     constexpr void tick() { switch(currentState) { BRANCHES default: break; } }
 };
 constexpr bool fullRound(StartZone zone) {
-    Run r; r.homeStartZone=zone;
+    Run r; r.homeStartZone=zone; r.currentStartZone=zone;
     r.tick(); r.tick();
     if (r.routes!=1 || r.grabs || r.firstDiscGrabReady) return false;
     r.alignment=AutoAlignmentState::DONE; r.tick();
+    // look3 到位后仍需由串口任务排空旧数据，不能由主状态机直接开放抓取。
+    if (r.firstDiscGrabReady || !r.discMessageResumeRequested || !r.material) return false;
+    r.discMessageResumeRequested=false; r.firstDiscGrabReady=true;
     for (int i=0; i<3; ++i) {
         if (!r.firstDiscGrabReady || !r.material) return false;
         r.serialExecuteTaskGrab(r.currentTask.round2_colors[i], i+1);

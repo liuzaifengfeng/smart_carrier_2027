@@ -3,14 +3,14 @@
 
 // ================= 基础配置 =================
 
-uint32_t ALIGN_PID_MAX_SPEED_RPM = 20;  // 移动速度单位为转/分
-float NODE_PATH_SPEED_MM_S = 1200.0f;
-float NODE_PATH_ACCEL_MM_S2 = 1600.0f;
-float NODE_PATH_TURN_DEG_S = 150.0f;
-float NODE_PATH_TURN_ACCEL_DEG_S2 = 360.0f;
-float NODE_PATH_HEADING_DEADBAND_DEG = 3.0f;
-uint32_t SCAN_APPROACH_SPEED_RPM = 60;
-uint32_t SCAN_SEARCH_SPEED_RPM = 30;
+uint32_t ALIGN_PID_MAX_SPEED_RPM = 20;       // 视觉PID对齐时允许的最大电机轮速，单位RPM。
+float NODE_PATH_SPEED_MM_S = 2000.0f;        // 正式节点路径的最大平移速度，单位mm/s。
+float NODE_PATH_ACCEL_MM_S2 = 2000.0f;       // 正式节点路径的平移加减速度，单位mm/s²，并换算为驱动器加速度档位。
+float NODE_PATH_TURN_DEG_S = 200.0f;         // 节点路径原地转向的最大角速度，单位°/s。
+float NODE_PATH_TURN_ACCEL_DEG_S2 = 400.0f;  // 节点路径原地转向的角加减速度，单位°/s²，并换算为驱动器加速度档位。
+float NODE_PATH_HEADING_DEADBAND_DEG = 3.0f; // 停稳后独立航向修正的允许误差，单位°；误差在此范围内不再转动。
+uint32_t SCAN_APPROACH_SPEED_RPM = 60;        // 启停区接近扫码区域时的位置模式最大轮速，单位RPM。
+uint32_t SCAN_SEARCH_SPEED_RPM = 30;          // 扫码区域往返搜索任务码时的位置模式最大轮速，单位RPM。
 
 CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 
@@ -44,7 +44,7 @@ volatile StartZone currentStartZone = START_ZONE_UNKNOWN; // 当前启停区,由
 volatile bool taskReceived = false;// 已拿到任务码
 volatile int  roundProgress = 0;   // 当前轮次已抓/放物料数 0-3
 volatile bool discMaterialActive = false;
-volatile bool firstDiscGrabReady = false; // 当前轮导航、定位和观察恢复完成后才允许业务抓取。
+volatile bool firstDiscGrabReady = false; // 当前轮导航、定位、放料和观察恢复完成后才允许下一次圆盘抓取。
 volatile bool discMessageResumeRequested = false;
 uint8_t discMaterialColor = 0; // 最近一次 COLOR；每次启停或抓取后失效。
 volatile bool enableRun = false;   // 一键启动触发
@@ -182,14 +182,23 @@ TimerHandle_t xHomeTimer = NULL;            // 总超时兜底(回启停区)
 SemaphoreHandle_t xLidarPoseMutex = NULL;   // 防止自动流程和串口重复执行雷达位姿
 
 // 执行雷达扫描位姿并统一发送串口应答。
-// ACK 表示命令已开始处理；OK 只会在全部动作执行完成后发送。
-bool runLidarPoseAction(bool fromCommand) {
+// Release 成功后缓存结果，防止机载电脑重试导致相对位移累加。
+// Debug 手动调试可显式允许重做，不读写 Release 的完成记录。
+bool runLidarPoseAction(bool fromCommand, bool allowRepeat) {
+    static bool releasePoseCompleted = false; // 当前 Release 流程每次开机只创建一次。
     if (xLidarPoseMutex == NULL || xSemaphoreTake(xLidarPoseMutex, 0) != pdTRUE) {
         Serial.println(fromCommand ? "{RSP,VISION,LIDAR_POSE,ERR,BUSY}" : "{EVT,VISION,LIDAR_POSE_FAILED,BUSY}");
         return false;
     }
+    if (!allowRepeat && releasePoseCompleted) {
+        if (fromCommand) Serial.println("{RSP,VISION,LIDAR_POSE,OK}");
+        Serial.println("{EVT,VISION,LIDAR_POSE_DONE}");
+        xSemaphoreGive(xLidarPoseMutex);
+        return true;
+    }
     Serial.println(fromCommand ? "{RSP,VISION,LIDAR_POSE,ACK}" : "{EVT,VISION,LIDAR_POSE_RUNNING}");
     const bool ok = PrepareLidarScanPose(static_cast<uint8_t>(currentStartZone));
+    if (ok && !allowRepeat) releasePoseCompleted = true;
     Serial.println(ok ? "{EVT,VISION,LIDAR_POSE_DONE}" : "{EVT,VISION,LIDAR_POSE_FAILED}");
     xSemaphoreGive(xLidarPoseMutex);
     return ok;

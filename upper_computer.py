@@ -175,7 +175,7 @@ def parse_disc_positions_response(line: str) -> tuple | None:
         return status, None, None, None, None
     if kind != "EVT" or len(fields) != 7:
         return None
-    if status in ("SELECTED", "STUB"):
+    if status in ("SELECTED", "DONE", "FAILED"):
         position, color, cargo = fields[4:]
         if position in ("1", "2", "3") and color in tuple("123456") and cargo in ("1", "2", "3"):
             return status, int(position), int(color), int(cargo), None
@@ -1545,11 +1545,11 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
     elif command == "MoveArm_1":
         require_range_or_skip(0, 0.0, ARM_HEIGHT_LIMIT_MM, "大臂高度")
         require_range_or_skip(1, 0.0, ARM_TRAVEL_LIMIT_MM, "伸缩距离")
-        require_range(2, 1.0, 1000.0, "速度")
+        require_range(2, 1.0, 300.0, "速度")
     elif command == "MoveArm_2":
         require_range_or_skip(0, TURRET_CABLE_MIN_DEG, TURRET_CABLE_MAX_DEG, "舵盘角度")
         require_range_or_skip(1, -360.0, 360.0, "夹爪角度")
-        require_range(2, 1.0, 1000.0, "速度")
+        require_range(2, 1.0, 300.0, "速度")
     elif command == "SERVO":
         require_range(0, 0.0, 253.0, "舵机 ID")
         require_range(1,
@@ -2716,14 +2716,14 @@ class UpperComputerApp:
         disc_group.pack(fill=tk.X, pady=(10, 0))
         self.disc_color_var = tk.StringVar(value="1 红色")
         self.disc_cargo_var = tk.StringVar(value="1")
-        self.disc_material_status = tk.StringVar(value="颜色按任务码判断；强制抓取无需任务码或开启视觉，结果查看物料日志。")
+        self.disc_material_status = tk.StringVar(value="可抓位置按任务码选择；抓取、载物台放置和观察恢复期间会忽略后续位置帧。")
         ttk.Combobox(disc_group, textvariable=self.disc_color_var,
                      values=tuple(DISC_MATERIAL_COLORS), state="readonly", width=12).grid(row=0, column=0)
         ttk.Label(disc_group, text="载物台：").grid(row=0, column=1, padx=(8, 0))
         ttk.Combobox(disc_group, textvariable=self.disc_cargo_var,
                      values=("1", "2", "3"), state="readonly", width=3).grid(row=0, column=2)
-        ttk.Button(disc_group, text="回传颜色", command=lambda: self.send_disc_material(False)).grid(row=1, column=0, pady=5)
-        ttk.Button(disc_group, text="按任务码抓取", command=lambda: self.send_disc_material(True)).grid(row=1, column=1, columnspan=2)
+        ttk.Button(disc_group, text="回传颜色（旧）", command=lambda: self.send_disc_material(False)).grid(row=1, column=0, pady=5)
+        ttk.Button(disc_group, text="固定位置抓取（旧）", command=lambda: self.send_disc_material(True)).grid(row=1, column=1, columnspan=2)
         ttk.Button(disc_group, text="强制抓取", command=self.send_force_disc_grab).grid(row=2, column=0, columnspan=3, sticky="ew", pady=(0, 5))
         ttk.Label(disc_group, textvariable=self.disc_material_status, wraplength=380).grid(row=3, column=0, columnspan=3, sticky="w")
         self.disc_position_vars = []
@@ -2734,7 +2734,7 @@ class UpperComputerApp:
             ttk.Combobox(disc_group, textvariable=variable,
                          values=("不报送", *DISC_MATERIAL_COLORS), state="readonly", width=12).grid(
                              row=3 + position, column=1, columnspan=2)
-        ttk.Button(disc_group, text="上报可抓位置（伪函数）", command=self.send_disc_positions).grid(
+        ttk.Button(disc_group, text="上报可抓位置", command=self.send_disc_positions).grid(
             row=7, column=0, columnspan=3, sticky="ew", pady=5)
 
         ttk.Label(pose_tab, text="姿态调试", font=("Microsoft YaHei UI", 16, "bold")).pack(
@@ -3482,7 +3482,7 @@ class UpperComputerApp:
             self.disc_material_status.set(f"可抓位置未发送：{exc}")
             return
         self.append_log("TX", line)
-        self.disc_material_status.set("可抓位置已发送，等待 ESP 按任务码选择；当前仅调用伪函数。")
+        self.disc_material_status.set("可抓位置已发送，等待 ESP 按任务码选择并执行抓放。")
 
     def _accept_disc_material_response(self, text: str) -> bool:
         positions = parse_disc_positions_response(text)
@@ -3495,9 +3495,11 @@ class UpperComputerApp:
             elif status == "SKIP":
                 message = f"本帧无任务所需颜色 {color}，载物台 {cargo} 等待新位置。"
             elif status == "SELECTED":
-                message = f"选中圆盘位置 {position}、颜色 {color} → 载物台 {cargo}，等待伪函数返回。"
+                message = f"选中圆盘位置 {position}、颜色 {color} → 载物台 {cargo}，正在抓放。"
+            elif status == "DONE":
+                message = f"圆盘位置 {position} 抓放完成：颜色 {color} → 载物台 {cargo}；等待恢复观察。"
             else:
-                message = f"圆盘位置 {position} 伪函数已返回：颜色 {color} → 载物台 {cargo}；未执行动作、未推进任务。"
+                message = f"圆盘位置 {position} 抓放失败：颜色 {color} → 载物台 {cargo}。"
             self.disc_material_status.set(message)
             return True
         result = parse_disc_material_response(text)

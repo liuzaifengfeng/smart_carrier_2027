@@ -525,28 +525,28 @@
           "integer": true
         },
         "底盘/节点导航速度(mm/s)": {
-          "value": 1200.0,
+          "value": 1500.0,
           "description": "正式节点路径平移速度上限，毫米每秒；底层按Y脉冲/mm和3200脉冲/圈换算RPM。下一条完整路径启动生效。旧400RPM不得直接继承。",
           "minimum": 10.0,
-          "maximum": 1600.0,
+          "maximum": 2000.0,
           "integer": false
         },
         "底盘/节点导航平移加速度(mm/s²)": {
-          "value": 1600.0,
+          "value": 1500.0,
           "description": "正式节点导航平移加速/减速规划上限，单位mm/s²，不是EMM位置模式加速度档位；下一条完整路径启动时生效。独立试跑使用自己的加速度。",
           "minimum": 1.0,
           "maximum": 4000.0,
           "integer": false
         },
         "底盘/节点导航转向速度(°/s)": {
-          "value": 150.0,
+          "value": 200.0,
           "description": "正式节点原地转向角速度上限；小角度修正仍使用减速曲线。下一条完整路径启动生效。",
           "minimum": 10.0,
           "maximum": 240.0,
           "integer": false
         },
         "底盘/节点导航转向加速度(°/s²)": {
-          "value": 360.0,
+          "value": 400.0,
           "description": "正式节点原地转向的软件角加速度上限；与平移加速度独立。下一条完整路径启动生效。",
           "minimum": 30.0,
           "maximum": 720.0,

@@ -12,3 +12,4 @@ struct NativeSerial {
     }
 };
 extern NativeSerial Serial;
+inline void delay(uint32_t) {}

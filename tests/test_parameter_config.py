@@ -39,12 +39,12 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(len(self.parameters), 134)
         self.assertEqual(config_edits(self.data, self.parameters), {})
         chassis = self.data['groups']['底盘']['parameters']
-        for name, value in (('节点导航速度(mm/s)', 1200), ('节点导航平移加速度(mm/s²)', 1600),
-                            ('节点导航转向速度(°/s)', 150), ('节点导航转向加速度(°/s²)', 360)):
+        for name, value in (('节点导航速度(mm/s)', 2000), ('节点导航平移加速度(mm/s²)', 2000),
+                            ('节点导航转向速度(°/s)', 200), ('节点导航转向加速度(°/s²)', 400)):
             self.assertEqual(chassis['底盘/' + name]['value'], value)
         chassis = self.data['groups']['底盘']['parameters']
-        for name, value in (('节点导航速度(mm/s)', 1200), ('节点导航平移加速度(mm/s²)', 1600),
-                            ('节点导航转向速度(°/s)', 150), ('节点导航转向加速度(°/s²)', 360)):
+        for name, value in (('节点导航速度(mm/s)', 2000), ('节点导航平移加速度(mm/s²)', 2000),
+                            ('节点导航转向速度(°/s)', 200), ('节点导航转向加速度(°/s²)', 400)):
             self.assertEqual(chassis['底盘/' + name]['value'], value)
         p = next(p for p in self.parameters.values() if p.name == 'PID/视觉X/Kp')
         p.index = 999
