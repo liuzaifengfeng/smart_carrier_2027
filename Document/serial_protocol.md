@@ -108,6 +108,8 @@ TASK SET 在 Debug 可修改任务码并重置抓取进度为 0；开启 DISC_MA
 
 正式模式诊断事件 `{EVT,NAV,ROUTE_POSITION,s,x,y,reference,heading}`，距离/坐标单位mm、角度单位度。阶段为POSITION_STRAIGHT/POSITION_TURN/POSITION_RECOVER。恢复或超限时输出 `{EVT,NAV,ROUTE_MOTOR,id,reason,target,actual,rpm,flags}`，target/actual为65536单位/圈，actual保留驱动符号。小残差重试最多2次，仍不收敛报MOTOR_RESIDUAL_TIMEOUT；硬超限报MOTOR_POSITION_OVERRUN。其他失败包括MOTOR_FEEDBACK_TIMEOUT、MOTOR_DISABLED、MOTOR_STALL、MOTOR_ZERO_FAILED和MOTOR_ARRIVAL_TIMEOUT；不能以估时成功替代失败。ACK回复与反馈接线要求见上述说明。
 
+正式导航快速接续：仅起步清零一次，后续从停稳反馈累计绝对目标；四轮到位、近零转速及编码器稳定100ms后接续，串口查询/发令耗时另计。独立校角采用CFG参数 `底盘/节点导航独立纠偏死区(°)`，默认3、范围1～8；运行中动态纠偏仍从0.4°开始。终点同样允许此死区内误差，不再声称±1°航向确认。
+
 | 旧回复或事件 | v2 事件 / 回复 | 含义 |
 |---|---|---|
 | `{way:WAITING}` | `{EVT,NAV,ROUTE_WAITING}` | Release 主状态机等待路径 |

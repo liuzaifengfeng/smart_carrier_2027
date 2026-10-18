@@ -19,7 +19,9 @@ struct Sim : IO {
     bool neverStops=false;
     uint32_t latencyMs=0;
     int recoveries=0,diagnostics=0;
-    int actions=0,updates=0,syncs=0,halts=0;float heading=0;Vec location={310,1200};
+    int actions=0,updates=0,syncs=0,halts=0,zeroGroups=0;float heading=0;Vec location={310,1200};
+    uint32_t arrivalAt=0,maxGap=0;bool wasMoving=false,newAction=false;
+    int encoderPolarity[4]={1,1,1,1};
     uint32_t now()override{return time;}
     bool cancelled()override{return cancel||(cancelAt&&time>=cancelAt);}
     void wait(uint32_t ms)override {
@@ -34,6 +36,8 @@ struct Sim : IO {
         Vec body={static_cast<float>((-pulses[0]-pulses[1]+pulses[2]+pulses[3])/(4*13.3)),
                   static_cast<float>((pulses[0]-pulses[1]+pulses[2]-pulses[3])/(4*13.6))};
         location=location+bodyToWorld(body,heading+angle/2);heading=wrap(heading+angle);time+=ms;
+        bool moving=false;for(int i=0;i<4;++i)if(fabs(goal[i]-actual[i])>.001)moving=true;
+        if(wasMoving&&!moving)arrivalAt=time;wasMoving=moving;
         if(disturb&&!injected&&location.x>500){heading=wrap(heading+disturbanceAngle);injected=true;}
         if(injected&&location.x>550&&location.x<1000&&fabsf(turn(heading,disturbanceReference))<1)correctedMoving=true;
     }
@@ -47,6 +51,7 @@ struct Sim : IO {
         m.position=llround(actual[i]*65536/PULSES_PER_REV);
         if(residualTest&&done&&pending[i]!=0&&!residualInjected){residualInjected=true;residualActive=true;}
         if(done&&pending[i]!=0&&residualActive)m.position+=(actual[i]>=0?1:-1)*(hardOverrun?5000:410);
+        m.position*=encoderPolarity[i];
         m.flags=1|((done||falseArrived)?2:0);m.rpm=(done||falseArrived)?0:rpm[i];
         if(neverStops){m.rpm=2;m.position+=time*10;}
         if(rippleAt&&time>=rippleAt&&!rippleInjected&&actions==0){m.rpm=6;rippleInjected=true;}
@@ -54,20 +59,22 @@ struct Sim : IO {
     }
     const char *zero(uint8_t id)override {
         int i=id-1;CHECK(fabs(goal[i]-actual[i])<.01);actual[i]=goal[i]=pending[i]=0;
-        if(id==1){if(!firstZeroAt)firstZeroAt=time;++actions;}return nullptr;
+        if(id==1){if(!firstZeroAt)firstZeroAt=time;++zeroGroups;}return nullptr;
     }
     const char *target(uint8_t id,bool positive,uint16_t speed,uint32_t count)override {
         if(reject)return "MOTOR_COMMAND_REJECTED";
-        if(latencyMs)wait(5+latencyMs);
+        if(latencyMs)wait(latencyMs); // ACK后硬件适配器不再固定等待5ms
         int i=id-1;double next=positive?count:-double(count);
         if(pending[i]!=0)CHECK(next==pending[i]); // 速度更新不能增加目标距离
         pending[i]=next;stagedRpm[i]=speed;peak=fmaxf(peak,speed);++updates;return nullptr;
     }
     const char *sync()override {
+        if(newAction){if(arrivalAt&&time-arrivalAt>maxGap)maxGap=time-arrivalAt;newAction=false;}
         if(residualActive&&!persistentResidual)residualActive=false;
         if(stagedRpm[0]!=stagedRpm[1])differential=true;
         for(int i=0;i<4;++i){goal[i]=pending[i];rpm[i]=stagedRpm[i];}++syncs;return nullptr;
     }
+    void beginAction()override{++actions;newAction=true;for(int i=0;i<4;++i)pending[i]=0;}
     void halt()override {for(int i=0;i<4;++i){goal[i]=actual[i];pending[i]=0;rpm[i]=0;}++halts;}
     void report(const char *stage,const Result&,float)override{if(!strcmp(stage,"POSITION_RECOVER"))++recoveries;}
     void motorDiagnostic(uint8_t,const char*,double,const Motor&)override{++diagnostics;}
@@ -103,6 +110,8 @@ int main() {
     settings.speedMmS=200;settings.accelMmS2=200;settings.turnDegS=20;settings.turnAccelDegS2=30;Result result;Sim sim;
     const char *error=run(route,settings,sim,result);if(error)fprintf(stderr,"run: %s\n",error);CHECK(!error);
     CHECK(sim.actions==3); // 两条直线（共线节点合并）+一次转向
+    CHECK(sim.zeroGroups==1&&sim.halts==2); // 仅起步清零一次，动作间不重复halt/清零
+    CHECK(sim.maxGap>=100&&sim.maxGap<=180); // 无串口延迟模型下接续接近100ms
     CHECK(sim.updates>sim.actions*4);CHECK(sim.peak<=51);
     CHECK(norm(sim.location-Vec(1200,1680))<2);CHECK(fabsf(turn(sim.heading,90))<=1);
     CHECK(norm(result.estimated-Vec(1200,1680))<1);
@@ -135,7 +144,7 @@ int main() {
     CHECK(norm(reverse.location-Vec(1200,1200))<2);
     Sim reverseDisturbed;reverseDisturbed.heading=180;reverseDisturbed.disturb=true;reverseDisturbed.disturbanceReference=180;
     error=run(route,fastSettings,reverseDisturbed,result);CHECK(!error);
-    CHECK(reverseDisturbed.correctedMoving&&fabsf(turn(reverseDisturbed.heading,180))<=1);
+    CHECK(reverseDisturbed.correctedMoving&&fabsf(turn(reverseDisturbed.heading,180))<=fastSettings.headingDeadbandDeg);
     cfg.startHeading=0;cfg.endHeading=90;cfg.count=4;
     CHECK(!route.build(nodes,cfg));
     Sim excessive;excessive.disturb=true;excessive.disturbanceAngle=35;
@@ -166,6 +175,20 @@ int main() {
     CHECK(upgraded.time<previous.time*.75f);
     CHECK(upgraded.peak<=node_position::rpmFor(1200,13.6f));
     CHECK(norm(upgraded.location-Vec(2090,1200))<3&&fabsf(turn(upgraded.heading,90))<=1);
+    Sim opposite;opposite.location={1200,240};opposite.heading=180;opposite.encoderPolarity[0]=opposite.encoderPolarity[2]=-1;
+    error=run(route,newProfile,opposite,result);CHECK(!error&&opposite.zeroGroups==1);
+    CHECK(norm(opposite.location-Vec(2090,1200))<3);
+    printf("serial model max transition gap=%ums\n",upgraded.maxGap);
+    CHECK(upgraded.zeroGroups==1&&upgraded.maxGap<=300); // 串口延时可增加实际间隔，不承诺恒定100ms
+    Node shortNodes[]={{{310,1200},0},{{410,1200},0}};cfg.count=2;cfg.startHeading=0;cfg.endHeading=0;
+    CHECK(!route.build(shortNodes,cfg));
+    Sim tolerant;tolerant.heading=2;error=run(route,settings,tolerant,result);CHECK(!error&&tolerant.actions==1);
+    Settings tight=settings;tight.headingDeadbandDeg=1;Sim precise;precise.heading=2;
+    error=run(route,tight,precise,result);CHECK(!error&&precise.actions>tolerant.actions);
+    Node reversal[]={{{310,1200},0},{{720,1200},0},{{310,1200},0},{{720,1200},0}};
+    cfg.count=4;CHECK(!route.build(reversal,cfg));Sim returning;
+    error=run(route,settings,returning,result);CHECK(!error&&returning.zeroGroups==1&&returning.actions==3);
+    CHECK(norm(returning.location-Vec(720,1200))<2);
     for(int field=0;field<4;++field) {
         Settings invalid;float *values[]={&invalid.speedMmS,&invalid.accelMmS2,&invalid.turnDegS,&invalid.turnAccelDegS2};
         const float maxima[]={1600,4000,240,720};*values[field]=maxima[field]+1;

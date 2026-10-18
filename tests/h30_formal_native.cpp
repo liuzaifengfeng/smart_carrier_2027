@@ -14,6 +14,7 @@ static uint32_t failedVersion=0,referenceVersion=0;
 static float initialHeading=0,THETA_PULSE=51.8f,X_PULSE=13.3f,Y_PULSE=13.6f;
 static float NODE_PATH_ACCEL_MM_S2=425.5f;
 static float NODE_PATH_TURN_DEG_S=150,NODE_PATH_TURN_ACCEL_DEG_S2=360;
+static float NODE_PATH_HEADING_DEADBAND_DEG=3;
 static int worker=1,trialMux=0,launches=0;static const char *sensorError=nullptr;
 struct ConfigurationGuard{bool held=!busy;};
 struct Logger{template<class... T>void printf(const char*,T...) {}} Serial;
@@ -49,6 +50,7 @@ int main(){
     CHECK(route.config.accel==425.5f&&route.config.maxRpm==node_position::rpmFor(300,Y_PULSE));
     CHECK(formalSettings.speedMmS==300&&formalSettings.accelMmS2==425.5f);
     CHECK(formalSettings.turnDegS==150&&formalSettings.turnAccelDegS2==360);
+    CHECK(formalSettings.headingDeadbandDeg==3);
     CHECK(referenceVersion==7&&initialHeading>180.8f&&!configured);
     for(size_t i=0;i<route.segmentCount;++i)CHECK(route.segments[i].kind!=CUBIC);
     NODE_PATH_ACCEL_MM_S2=600;

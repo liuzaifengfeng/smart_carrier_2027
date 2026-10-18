@@ -147,6 +147,43 @@ def parse_task_code_response(line: str) -> tuple[bool, str] | None:
         return None
 
 
+def build_disc_positions_command(candidates: list[tuple[int, int]]) -> str:
+    """本帧全部候选均由视觉判断可抓；位置号不是载物台编号。"""
+    if not 1 <= len(candidates) <= 3:
+        raise ValueError("必须上报 1～3 组位置和颜色")
+    seen = set()
+    values = []
+    for position, color in candidates:
+        if type(position) is not int or not 1 <= position <= 3:
+            raise ValueError("圆盘位置必须是 1～3 的整数")
+        if position in seen:
+            raise ValueError("圆盘位置不能重复")
+        build_disc_color_command(color)
+        seen.add(position)
+        values.extend((position, color))
+    return build_frame("CMD", "VISION", "DISC_POSITIONS", *values)
+
+
+def parse_disc_positions_response(line: str) -> tuple | None:
+    fields = parse_frame(line)
+    if fields is None or len(fields) < 5 or fields[1:3] != ("VISION", "DISC_POSITIONS"):
+        return None
+    kind, _, _, status = fields[:4]
+    if kind == "RSP" and status == "ERR" and len(fields) == 5:
+        return status, None, None, None, fields[4]
+    if kind == "RSP" and status == "ACK" and len(fields) == 5 and fields[4] in ("1", "2", "3"):
+        return status, None, None, None, None
+    if kind != "EVT" or len(fields) != 7:
+        return None
+    if status in ("SELECTED", "STUB"):
+        position, color, cargo = fields[4:]
+        if position in ("1", "2", "3") and color in tuple("123456") and cargo in ("1", "2", "3"):
+            return status, int(position), int(color), int(cargo), None
+    if status == "SKIP" and fields[4] in tuple("123456") and fields[5] in ("1", "2", "3") and fields[6] == "COLOR_MISMATCH":
+        return status, None, int(fields[4]), int(fields[5]), fields[6]
+    return None
+
+
 def build_disc_color_command(color: int) -> str:
     if type(color) is not int or not 1 <= color <= 6:
         raise ValueError("颜色编号必须是 1～6 的整数")
@@ -2689,6 +2726,16 @@ class UpperComputerApp:
         ttk.Button(disc_group, text="按任务码抓取", command=lambda: self.send_disc_material(True)).grid(row=1, column=1, columnspan=2)
         ttk.Button(disc_group, text="强制抓取", command=self.send_force_disc_grab).grid(row=2, column=0, columnspan=3, sticky="ew", pady=(0, 5))
         ttk.Label(disc_group, textvariable=self.disc_material_status, wraplength=380).grid(row=3, column=0, columnspan=3, sticky="w")
+        self.disc_position_vars = []
+        for position in range(1, 4):
+            ttk.Label(disc_group, text=f"圆盘位置 {position}：").grid(row=3 + position, column=0)
+            variable = tk.StringVar(value="不报送")
+            self.disc_position_vars.append(variable)
+            ttk.Combobox(disc_group, textvariable=variable,
+                         values=("不报送", *DISC_MATERIAL_COLORS), state="readonly", width=12).grid(
+                             row=3 + position, column=1, columnspan=2)
+        ttk.Button(disc_group, text="上报可抓位置（伪函数）", command=self.send_disc_positions).grid(
+            row=7, column=0, columnspan=3, sticky="ew", pady=5)
 
         ttk.Label(pose_tab, text="姿态调试", font=("Microsoft YaHei UI", 16, "bold")).pack(
             anchor="w", pady=(0, 6)
@@ -3424,7 +3471,35 @@ class UpperComputerApp:
         self.force_disc_grab_warning = ""
         self.disc_material_status.set("强制抓取已发送，等待小车接令及函数调用返回。")
 
+    def send_disc_positions(self) -> None:
+        try:
+            candidates = [(position, DISC_MATERIAL_COLORS[variable.get()])
+                          for position, variable in enumerate(self.disc_position_vars, 1)
+                          if variable.get() != "不报送"]
+            line = build_disc_positions_command(candidates)
+            self.serial_link.send_line(line)
+        except (KeyError, ValueError, RuntimeError) as exc:
+            self.disc_material_status.set(f"可抓位置未发送：{exc}")
+            return
+        self.append_log("TX", line)
+        self.disc_material_status.set("可抓位置已发送，等待 ESP 按任务码选择；当前仅调用伪函数。")
+
     def _accept_disc_material_response(self, text: str) -> bool:
+        positions = parse_disc_positions_response(text)
+        if positions is not None:
+            status, position, color, cargo, reason = positions
+            if status == "ERR":
+                message = f"可抓位置指令被拒绝：{reason}"
+            elif status == "ACK":
+                message = "可抓位置已接令，等待选择结果。"
+            elif status == "SKIP":
+                message = f"本帧无任务所需颜色 {color}，载物台 {cargo} 等待新位置。"
+            elif status == "SELECTED":
+                message = f"选中圆盘位置 {position}、颜色 {color} → 载物台 {cargo}，等待伪函数返回。"
+            else:
+                message = f"圆盘位置 {position} 伪函数已返回：颜色 {color} → 载物台 {cargo}；未执行动作、未推进任务。"
+            self.disc_material_status.set(message)
+            return True
         result = parse_disc_material_response(text)
         if result is None:
             return False

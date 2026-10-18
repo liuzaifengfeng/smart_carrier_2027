@@ -276,8 +276,10 @@ bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float fina
     formalSettings.speedMmS=speedMmS;formalSettings.accelMmS2=cfg.accel;
     formalSettings.turnDegS=NODE_PATH_TURN_DEG_S;
     formalSettings.turnAccelDegS2=NODE_PATH_TURN_ACCEL_DEG_S2;
+    formalSettings.headingDeadbandDeg=NODE_PATH_HEADING_DEADBAND_DEG;
     if(!isfinite(formalSettings.turnDegS)||formalSettings.turnDegS<10||formalSettings.turnDegS>240
-        ||!isfinite(formalSettings.turnAccelDegS2)||formalSettings.turnAccelDegS2<30||formalSettings.turnAccelDegS2>720)error="RANGE";
+        ||!isfinite(formalSettings.turnAccelDegS2)||formalSettings.turnAccelDegS2<30||formalSettings.turnAccelDegS2>720
+        ||!isfinite(formalSettings.headingDeadbandDeg)||formalSettings.headingDeadbandDeg<1||formalSettings.headingDeadbandDeg>8)error="RANGE";
     float end=heading;
     for(size_t i=0;i<count&&!error;++i) {
         float x=0,y=0;
@@ -299,6 +301,7 @@ bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float fina
         return false;
     }
     configured=false;referenceVersion=version;initialHeading=heading;
+    Serial.printf("[Route] Transition window: 100ms; separate heading correction deadband: %.2f deg\n",formalSettings.headingDeadbandDeg);
     Serial.printf("[Route] Profile: %.1f mm/s, %.1f mm/s2, %.1f deg/s, %.1f deg/s2\n",
         formalSettings.speedMmS,formalSettings.accelMmS2,formalSettings.turnDegS,formalSettings.turnAccelDegS2);
     Serial.printf("[Route] Profile: %.1f mm/s, %.1f mm/s2, %.1f deg/s, %.1f deg/s2\n",

@@ -12,6 +12,7 @@ extern float NODE_PATH_SPEED_MM_S;
 extern float NODE_PATH_ACCEL_MM_S2;
 extern float NODE_PATH_TURN_DEG_S;
 extern float NODE_PATH_TURN_ACCEL_DEG_S2;
+extern float NODE_PATH_HEADING_DEADBAND_DEG;
 extern uint32_t SCAN_APPROACH_SPEED_RPM;
 extern uint32_t SCAN_SEARCH_SPEED_RPM;
 
@@ -136,6 +137,7 @@ void initialize() {
     RegisterRuntimeFloat("底盘/节点导航平移加速度(mm/s²)", NODE_PATH_ACCEL_MM_S2, 1, 4000);
     RegisterRuntimeFloat("底盘/节点导航转向速度(°/s)", NODE_PATH_TURN_DEG_S, 10, 240);
     RegisterRuntimeFloat("底盘/节点导航转向加速度(°/s²)", NODE_PATH_TURN_ACCEL_DEG_S2, 30, 720);
+    RegisterRuntimeFloat("底盘/节点导航独立纠偏死区(°)", NODE_PATH_HEADING_DEADBAND_DEG, 1, 8);
 }
 
 bool parseUnsigned(const char *text, uint32_t &value) {
