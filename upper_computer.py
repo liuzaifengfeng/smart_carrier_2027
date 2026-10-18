@@ -296,6 +296,8 @@ PARAMETER_STAGE_HELP = {
 def parameter_matches_stage(name: str, stage: str) -> bool:
     if stage == "全部参数":
         return True
+    if stage in ("圆盘抓取（两轮）", "粗加工（两轮）", "暂存第一层", "暂存第二层", "返航归位") and name.startswith("底盘/节点导航"):
+        return True
     common = name.startswith(("搬运/安全高度", "搬运/速度", "搬运/夹爪",
                               "搬运/等待时间", "标定/升降", "标定/伸缩"))
     pid = name.startswith("PID/")
@@ -308,17 +310,17 @@ def parameter_matches_stage(name: str, stage: str) -> bool:
     if stage == "圆盘抓取（两轮）":
         return (common or pid or name.startswith(("搬运/圆盘/", "搬运/圆盘预抓/", "搬运/圆盘提起/", "搬运/载物台", "对齐/DISC/",
                        "对齐/DISC_MATERIAL/", "地图/节点14/"))
-                or name in ("对齐/最大轮速(RPM)", "底盘/节点导航轮速(RPM)"))
+                or name in ("对齐/最大轮速(RPM)", "底盘/节点导航速度(mm/s)"))
     if stage in ("粗加工（两轮）", "暂存第一层", "暂存第二层"):
         mode = "WORK_AREA_LOADED" if stage == "暂存第二层" else "WORK_AREA"
         node = "10" if stage == "粗加工（两轮）" else "22"
         return (common or pid or name.startswith(("搬运/载物台", "搬运/工作区",
                        f"对齐/{mode}/", f"地图/节点{node}/"))
-                or name in ("对齐/最大轮速(RPM)", "底盘/节点导航轮速(RPM)")
+                or name in ("对齐/最大轮速(RPM)", "底盘/节点导航速度(mm/s)")
                 or (stage == "暂存第二层" and name == "搬运/二层高度增量(mm)"))
     if stage == "返航归位":
         return (pid or name.startswith(("对齐/CORNER/", "地图/节点0/", "地图/节点4/", "地图/节点22/"))
-                or name in ("对齐/最大轮速(RPM)", "底盘/节点导航轮速(RPM)"))
+                or name in ("对齐/最大轮速(RPM)", "底盘/节点导航速度(mm/s)"))
     return False
 
 

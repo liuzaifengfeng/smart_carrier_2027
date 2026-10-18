@@ -47,3 +47,20 @@ constexpr bool verify() {
     return feed(parser, sample, good) == 1;
 }
 static_assert(verify(), "YIS checksum, signed axes, boundaries, resync and reconnect");
+constexpr bool verifyMotion() {
+    Frame full;full.bytes[4]=42;full.length=49;
+    const uint8_t ids[]={0x10,0x20,0x40};
+    const int32_t values[][3]={{100000,-200000,9780000},{300000,-400000,500000},{1000000,-2000000,3000000}};
+    for(int item=0;item<3;++item) {
+        int p=5+14*item;full.bytes[p]=ids[item];full.bytes[p+1]=12;
+        for(int axis=0;axis<3;++axis)for(int b=0;b<4;++b)full.bytes[p+2+axis*4+b]=uint32_t(values[item][axis])>>(8*b);
+    }
+    full.checksum();H30Parser parser;H30Attitude sample;
+    if(feed(parser,sample,full)!=1||sample.fields!=7||sample.accel[2]<9.77f||sample.accel[2]>9.79f||sample.gyro[2]!=.5f)return false;
+    Frame bad=full;bad.bytes[20]=11;bad.checksum();
+    if(feed(parser,sample,bad))return false;
+    Frame attitudeOnly;
+    if(feed(parser,sample,attitudeOnly)!=1||sample.fields!=4||sample.gyro[2]!=0)return false;
+    return true;
+}
+static_assert(verifyMotion(), "full inertial data, bad lengths, and missing fields never reuse stale gyro");

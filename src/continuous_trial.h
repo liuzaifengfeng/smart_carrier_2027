@@ -14,3 +14,6 @@ const char *ContinuousTrialStatus(uint32_t id); // 输出状态，同时续约 1
 // OTA 等外部取消源；不在调用方操作电机。
 void ContinuousTrialCancel();
 void ContinuousTrialSetOta(bool active);
+// 正式节点导航共用控制任务。异步入口供串口使用，避免阻塞STOP/查询接收。
+bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async=true);
+bool H30RunNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading);

@@ -35,7 +35,14 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(parameter_matches_stage("搬运/速度/圆盘夹紧", "圆盘抓取（两轮）"))
         self.assertTrue(parameter_matches_stage("搬运/速度/放料下降", "粗加工（两轮）"))
         self.assertTrue(parameter_matches_stage("底盘/扫码往返轮速(RPM)", "开局与扫码"))
-        self.assertTrue(parameter_matches_stage("底盘/节点导航轮速(RPM)", "圆盘抓取（两轮）"))
+        self.assertTrue(parameter_matches_stage("底盘/节点导航速度(mm/s)", "圆盘抓取（两轮）"))
+        for stage in ("底盘导航与标定", "圆盘抓取（两轮）", "粗加工（两轮）", "暂存第一层", "暂存第二层", "返航归位"):
+            self.assertTrue(parameter_matches_stage("底盘/节点导航平移加速度(mm/s²)", stage))
+            self.assertTrue(parameter_matches_stage("底盘/节点导航速度(mm/s)", stage))
+            self.assertTrue(parameter_matches_stage("底盘/节点导航转向速度(°/s)", stage))
+            self.assertTrue(parameter_matches_stage("底盘/节点导航转向加速度(°/s²)", stage))
+            self.assertTrue(parameter_matches_stage("底盘/节点导航转向速度(°/s)", stage))
+            self.assertTrue(parameter_matches_stage("底盘/节点导航转向加速度(°/s²)", stage))
 
     def test_float_limits_and_nonfinite(self):
         p = Parameter(0, "高度", "100", 0, 175, False)
@@ -90,6 +97,33 @@ class PanelTests(unittest.TestCase):
         self.panel.receive(f"{{RSP,CFG,GET,END,{seq},2}}")
         self.assertFalse(self.panel.ready)
         self.assertIn("不完整", self.panel.status.get())
+
+    def test_node_motion_parameters_write_and_readback(self):
+        def feed(speed, accel):
+            seq = self.panel.sequence
+            self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq},0,底盘/节点导航速度(mm/s),{speed},10,1600,0}}")
+            self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq},1,底盘/节点导航平移加速度(mm/s²),{accel},1,4000,0}}")
+            self.panel.receive(f"{{RSP,CFG,GET,END,{seq},2}}")
+        self.panel.read();feed(1200, 1600)
+        self.assertTrue(self.panel.ready)
+        self.assertEqual(self.panel.parameters[1].validate('450.5'), '450.5')
+        self.assertEqual(self.panel.parameters[0].validate('1200'), '1200')
+        self.assertEqual(self.panel.parameters[1].validate('4000'), '4000')
+        for value in ('0', '4001', 'nan', 'inf'):
+            with self.assertRaises(ValueError):
+                self.panel.parameters[1].validate(value)
+        self.panel.edits = {0: '300', 1: '450.5'}
+        self.panel.send();seq = self.panel.sequence
+        self.panel.receive(f'{{RSP,CFG,BEGIN,OK,{seq}}}')
+        self.assertEqual(self.sent[-1], f'{{CMD,CFG,SET,{seq},0,300}}')
+        self.panel.receive(f'{{RSP,CFG,SET,OK,{seq},0}}')
+        self.assertEqual(self.sent[-1], f'{{CMD,CFG,SET,{seq},1,450.5}}')
+        self.panel.receive(f'{{RSP,CFG,SET,OK,{seq},1}}')
+        self.panel.receive(f'{{RSP,CFG,COMMIT,OK,{seq}}}')
+        feed(300, 450.5)
+        self.assertTrue(self.panel.ready)
+        self.assertEqual(self.panel.edits, {})
+        self.assertIn('回读确认', self.panel.status.get())
 
     def test_full_map_readback_can_preview_trial(self):
         self.panel.read()

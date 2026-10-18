@@ -4,6 +4,7 @@
 #include "runtime_parameters.h"
 #include "node_route_heading.h"
 #include "robot_runtime.h"
+#include "continuous_trial.h"
 volatile bool taskMotionAborted = false;
 #include <float.h>
 
@@ -924,14 +925,14 @@ bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg,
  * @brief 按节点序号路径移动，只原地转向和沿车身 Y 轴前后直行。
  */
 bool MoveNodePath(const uint8_t *path, size_t pathLength,
-                  uint16_t speedRpm, uint8_t acceleration, float finalHeading) {
+                  float speedMmS, uint8_t acceleration, float finalHeading) {
     // 第 1 步：检查调用参数。
     if (path == nullptr || pathLength < 2) {
         Serial.println("[Route] Error: path requires at least two nodes");
         return false;
     }
-    if (speedRpm == 0 || speedRpm > 5000) {
-        Serial.println("[Route] Error: speed must be in 1~5000 RPM range");
+    if (!isfinite(speedMmS) || speedMmS < 10 || speedMmS > 1600) {
+        Serial.println("[Route] Error: speed must be in 10~1600 mm/s range");
         return false;
     }
     if (!isfinite(currentPose.theta) || (!isnan(finalHeading) && !isfinite(finalHeading))) {
@@ -959,56 +960,11 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
         }
     }
 
-    // 第 3 步：把路径首项当作车辆当前节点。
-    // 这里只设置理想 X/Y 坐标，不会让车辆从当前位置移动到首节点。
-    // 航向也只是开环估计；执行前必须确认车身实际朝向与记录一致。
-    NodePosition firstPosition;
-    getNodePosition(path[0], firstPosition);
-    Serial.printf("[Route] Assuming car is at node %u, initial heading %.0f deg (open-loop)\n",
-                  path[0], normalizeHeading(currentPose.theta));
-    currentPose.x = firstPosition.x;
-    currentPose.y = firstPosition.y;
-    currentPose.theta = normalizeHeading(currentPose.theta);
-
-    uint8_t segmentStart = path[0];
-    uint8_t segmentEnd = path[1];
-
-    // 第 4 步：逐个查看后续节点。
-    // 如果三个节点同向共线，就不断延长当前直线段，不在中间节点停车。
-    for (size_t index = 2; index < pathLength; ++index) {
-        NodePosition start;
-        NodePosition middle;
-        NodePosition end;
-        getNodePosition(segmentStart, start);
-        getNodePosition(segmentEnd, middle);
-        getNodePosition(path[index], end);
-
-        if (continuesStraight(start, middle, end)) {
-            Serial.printf(
-                "[Route] Node %u collinear, merged to node %u -> %u\n",
-                segmentEnd, segmentStart, path[index]
-            );
-            segmentEnd = path[index];
-            continue;
-        }
-
-        // 方向发生变化：先执行已经确定的直线段，停稳后再处理下一段。
-        if (!executeNodeSegment(
-                segmentStart, segmentEnd, speedRpm, acceleration)) {
-            return false;
-        }
-        segmentStart = segmentEnd;
-        segmentEnd = path[index];
-    }
-
-    // 第 5 步：最后一段优先满足终点朝向，必要时到达后再原地调整。
-    if (!executeNodeSegment(
-            segmentStart, segmentEnd, speedRpm, acceleration, finalHeading)) {
-        return false;
-    }
-
-    Serial.println("[Route] All commands sent and estimated waits elapsed; position not verified");
-    return true;
+    // 正式节点导航使用固定位置目标和驱动器反馈，绝不走试跑的速度积分推进。
+    // 不生成外绕/移动转向；同向共线节点合并，路口编码器到位并停稳后原地转。
+    // acceleration是旧位置模式档位，新控制器使用独立mm/s²加速度限幅。
+    (void)acceleration;
+    return H30RunNodePath(path,pathLength,speedMmS,finalHeading);
 }
 
 /**

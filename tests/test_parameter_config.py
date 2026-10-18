@@ -36,12 +36,31 @@ class ConfigTests(unittest.TestCase):
                     entry['minimum'], entry['maximum'], entry['integer'])
 
     def test_defaults_and_name_mapping(self):
-        self.assertEqual(len(self.parameters), 130)
+        self.assertEqual(len(self.parameters), 133)
         self.assertEqual(config_edits(self.data, self.parameters), {})
+        chassis = self.data['groups']['底盘']['parameters']
+        for name, value in (('节点导航速度(mm/s)', 1200), ('节点导航平移加速度(mm/s²)', 1600),
+                            ('节点导航转向速度(°/s)', 150), ('节点导航转向加速度(°/s²)', 360)):
+            self.assertEqual(chassis['底盘/' + name]['value'], value)
+        chassis = self.data['groups']['底盘']['parameters']
+        for name, value in (('节点导航速度(mm/s)', 1200), ('节点导航平移加速度(mm/s²)', 1600),
+                            ('节点导航转向速度(°/s)', 150), ('节点导航转向加速度(°/s²)', 360)):
+            self.assertEqual(chassis['底盘/' + name]['value'], value)
         p = next(p for p in self.parameters.values() if p.name == 'PID/视觉X/Kp')
         p.index = 999
         self.data['groups']['PID']['parameters'][p.name]['value'] = 0.02
         self.assertEqual(config_edits(self.data, self.parameters), {999: '0.02'})
+
+    def test_node_acceleration_exports_and_compiles_as_default(self):
+        name = '底盘/节点导航平移加速度(mm/s²)'
+        p = next(p for p in self.parameters.values() if p.name == name)
+        with temporary_folder() as folder:
+            source, header = folder/'settings.json', folder/'defaults.h'
+            export_config(source, self.parameters, {p.index: '450.5'})
+            saved = load_config(source)
+            self.assertEqual(saved['groups']['底盘']['parameters'][name]['value'], 450.5)
+            self.assertEqual(generate(source, header), 133)
+            self.assertIn(f'"{name}", 450.5', header.read_text(encoding='utf-8'))
 
     def test_device_range_wins_and_unknown_name_rejected(self):
         p = self.parameters[0]
@@ -78,7 +97,7 @@ class ConfigTests(unittest.TestCase):
             source, header = folder / 'robot.json', folder / 'generated.h'
             entry['value'] = 1500
             source.write_text(json.dumps(self.data, ensure_ascii=False), encoding='utf-8')
-            self.assertEqual(generate(source, header), 130)
+            self.assertEqual(generate(source, header), 133)
             self.assertIn('"搬运/等待时间(ms)", 1500', header.read_text(encoding='utf-8'))
             entry['value'] = 60001
             source.write_text(json.dumps(self.data, ensure_ascii=False), encoding='utf-8')

@@ -302,3 +302,12 @@ const char *H30UsbGetHeadingSnapshot(float &heading,uint32_t &sampleMs,uint32_t 
     portEXIT_CRITICAL(&mux);
     return error;
 }
+
+const char *H30UsbGetMotionSnapshot(H30Attitude &sample,float &heading,uint32_t &version) {
+    portENTER_CRITICAL(&mux);
+    uint32_t age=0;const char *error=headingSampleError(age);
+    sample=latest;version=headingReferenceVersion;
+    if(!error&&(sample.fields&7)!=7)error="MOTION_FIELDS_REQUIRED";
+    if(!error&&!headingReference.get(sample.yaw,heading))error="NOT_CALIBRATED";
+    portEXIT_CRITICAL(&mux);return error;
+}

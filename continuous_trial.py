@@ -205,13 +205,15 @@ class ContinuousTrialPanel(ttk.Frame):
         self.plan = None
         self.last_rx = time.monotonic()
         self.telemetry = []
+        self.formal_running = False
+        self.motion_stage = ""
         ttk.Label(self, text="安全混合路径 · Debug 独立试跑", font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
         form = ttk.Frame(self)
         form.pack(fill=tk.X)
         fields = (("path", "节点路径", "11-12-17"), ("rpm", "最大轮速(RPM)", "80"),
-                  ("policy", "转弯策略", "自动混合"),
+                  ("policy", "转弯策略", "全程停转"),
                   ("start", "起始地图航向(°)", "当前已标定朝向"), ("end", "终点地图航向(°)", "沿末段自动"))
-        choices = {"policy": ("自动混合", "全程停转"),
+        choices = {"policy": ("全程停转", "自动混合"),
                    "start": ("当前已标定朝向", "0", "90", "180", "270"),
                    "end": ("沿末段自动", "0", "90", "180", "270")}
         for row, (name, label, default) in enumerate(fields):
@@ -251,7 +253,7 @@ class ContinuousTrialPanel(ttk.Frame):
         self.canvas.pack(fill=tk.BOTH, expand=True, pady=5)
         ttk.Label(self, text="预览按地图X向右、Y向上；蓝线为轨迹，绿色框为车体。\n"
                   "黄色为已知禁入区；自动混合：中心窄路停转，外围角点尝试向外绕，空间不足则停转或拒绝。\n"
-                  "红点为停转确认点。直线保持沿道路的车身朝向，可后退；旋转由H30确认，直线距离仍为估算。\n"
+                  "红点为停稳确认点。零指令后按H30角速/加速度安静窗口接续；直线PI纠偏及转速阻尼，距离仍为估算。\n"
                   "状态心跳每500ms发送，失联1500ms停车；运行中其他运动指令被固件拒绝。",
                   wraplength=580).pack(fill=tk.X)
 
@@ -397,6 +399,13 @@ class ContinuousTrialPanel(ttk.Frame):
         self.heartbeat_timer = self.after(500, self._heartbeat)
 
     def stop(self):
+        if getattr(self, "formal_running", False):
+            try:
+                self._send(self.build_frame("CMD", "NAV", "STOP"))
+                self.status.set("已请求正式节点导航停车，等待结果")
+            except (RuntimeError, OSError) as exc:
+                self.status.set(str(exc))
+            return
         self.queue.clear()
         self._cancel("ack_timer")
         if self.phase in ("starting", "running", "stopping"):
@@ -415,6 +424,28 @@ class ContinuousTrialPanel(ttk.Frame):
     def receive(self, text):
         f = self.parse_frame(text)
         if not f or len(f) < 5 or f[1] != "NAV":
+            if f and f[:3] == ("EVT", "NAV", "ROUTE_RUNNING"):
+                self.formal_running = True
+                self.status.set("正式节点导航运行中：H30实时纠偏、路口停稳后接续")
+            elif f and f[:3] in (("EVT", "NAV", "ROUTE_FAILED"), ("EVT", "NAV", "ROUTE_DONE")):
+                self.formal_running = False
+                self.status.set("正式节点导航："+" / ".join(f[2:]))
+            return
+        if f[0] == "EVT" and f[2] in ("TRIAL_PHASE", "ROUTE_PHASE") and len(f) == 5:
+            if f[2] == "TRIAL_PHASE" and f[3] != str(self.job_id):
+                return
+            names = {"HEADING_HOLD": "运动中航向纠偏", "SETTLE_BEFORE_TURN": "等待车体安静",
+                     "TURN": "转向闭环", "FINAL_HEADING": "终点航向闭环", "SETTLE_AFTER_TURN": "转向后停稳确认"}
+            names.update(POSITION_STRAIGHT="位置直行：H30辅助纠偏", POSITION_TURN="位置转向：辅助修正并确认停稳", POSITION_RECOVER="末端残差：低速自动修正", POSITION_SETTLE="交接停稳：自动重新确认")
+            self.motion_stage = names.get(f[4], f[4])
+            self.status.set(self.motion_stage)
+            return
+        if f[0] == "EVT" and f[2] == "ROUTE_RESULT" and len(f) == 9:
+            self.formal_running = False
+            self.status.set(f"正式节点导航 {f[4]} / {f[5]}；位置估算X={f[6]} Y={f[7]}，航向={f[8]}°")
+            callback = getattr(self, "result_callback", None)
+            if callback:
+                callback(*(float(v) for v in f[6:9]))
             return
         if f[0] == "EVT" and f[2] in ("TRIAL_SAMPLE", "TRIAL_RESULT"):
             if f[3] != str(self.job_id):

@@ -11,6 +11,8 @@
 
 struct H30Attitude {
     float pitch = 0, roll = 0, yaw = 0; // 设备原始坐标，单位 deg
+    float accel[3]={},gyro[3]={}; // 原始坐标，m/s²（含重力）、deg/s
+    uint8_t fields=0; // bit0加速度、bit1角速度、bit2姿态；缺项不能当成零
     uint16_t sequence = 0;
     uint32_t receivedAtMs = 0;
 };
@@ -47,6 +49,14 @@ public:
                     result.roll = component(buffer_ + pos + 4);
                     result.yaw = component(buffer_ + pos + 8);
                     attitude = true;
+                    result.fields|=4;
+                } else if(id==0x10||id==0x20) {
+                    if(len!=12){valid=false;break;}
+                    for(size_t axis=0;axis<3;++axis) {
+                        if(id==0x10)result.accel[axis]=component(buffer_+pos+axis*4);
+                        else result.gyro[axis]=component(buffer_+pos+axis*4);
+                    }
+                    result.fields|=id==0x10?1:2;
                 }
                 pos += len;
             }

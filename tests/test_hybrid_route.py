@@ -96,7 +96,9 @@ class HybridTests(unittest.TestCase):
             panel.pack();root.update_idletasks()
             self.assertNotIn('radii', panel.variables)
             self.assertFalse(panel.show_advanced.get())
+            self.assertEqual(panel.variables['policy'].get(), '全程停转')
             self.assertIsNotNone(panel.preview())
+            panel.variables['policy'].set('自动混合')
             panel.variables['path'].set('10-19-20-21-22')
             panel.heading_provider = lambda: 180.855
             plan = panel.preview()

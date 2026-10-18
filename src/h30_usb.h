@@ -15,3 +15,5 @@ const char *H30UsbGetHeading(float &heading, uint32_t &ageMs);
 void CalibrateH30MapHeading(float heading);
 // 一致快照：采样时间与参考代次可用于闭环新鲜度及重标定检查。
 const char *H30UsbGetHeadingSnapshot(float &heading,uint32_t &sampleMs,uint32_t &referenceVersion);
+// 同一帧的完整惯性数据与地图航向；停稳确认必须具备加速度和角速度。
+const char *H30UsbGetMotionSnapshot(H30Attitude &sample,float &heading,uint32_t &referenceVersion);

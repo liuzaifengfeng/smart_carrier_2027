@@ -515,21 +515,42 @@
       }
     },
     "底盘": {
-      "description": "运动结束后的等待参数。",
+      "description": "节点导航轮速与平移加速度、扫码轮速及旧接口等待参数。",
       "parameters": {
         "底盘/停车稳定时间(ms)": {
           "value": 100,
-          "description": "节点路径每次运动结束后的停车稳定等待时间。",
+          "description": "旧位置运动接口使用的固定等待时间；H30节点导航按惯性安静判定接续，不使用此项。",
           "minimum": 0.0,
           "maximum": 10000.0,
           "integer": true
         },
-        "底盘/节点导航轮速(RPM)": {
-          "value": 400,
-          "description": "比赛主流程沿节点行驶及转向的最大轮速；下一段路径开始时生效。",
+        "底盘/节点导航速度(mm/s)": {
+          "value": 1200,
+          "description": "正式节点路径平移速度上限，毫米每秒；底层按Y脉冲/mm和3200脉冲/圈换算RPM。下一条完整路径启动生效。旧400RPM不得直接继承。",
+          "minimum": 10.0,
+          "maximum": 1600.0,
+          "integer": false
+        },
+        "底盘/节点导航平移加速度(mm/s²)": {
+          "value": 1600,
+          "description": "正式节点导航平移加速/减速规划上限，单位mm/s²，不是EMM位置模式加速度档位；下一条完整路径启动时生效。独立试跑使用自己的加速度。",
           "minimum": 1.0,
-          "maximum": 5000.0,
-          "integer": true
+          "maximum": 4000.0,
+          "integer": false
+        },
+        "底盘/节点导航转向速度(°/s)": {
+          "value": 150,
+          "description": "正式节点原地转向角速度上限；小角度修正仍使用减速曲线。下一条完整路径启动生效。",
+          "minimum": 10,
+          "maximum": 240,
+          "integer": false
+        },
+        "底盘/节点导航转向加速度(°/s²)": {
+          "value": 360,
+          "description": "正式节点原地转向的软件角加速度上限；与平移加速度独立。下一条完整路径启动生效。",
+          "minimum": 30,
+          "maximum": 720,
+          "integer": false
         },
         "底盘/扫码接近轮速(RPM)": {
           "value": 60,

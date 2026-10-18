@@ -31,8 +31,11 @@ def supported_names():
                  for field in ("X死区", "Y死区", "角度死区(deg)"))
     names.add("对齐/最大轮速(RPM)")
     names.add("底盘/停车稳定时间(ms)")
+    names.add("底盘/节点导航平移加速度(mm/s²)")
+    names.add("底盘/节点导航转向速度(°/s)")
+    names.add("底盘/节点导航转向加速度(°/s²)")
     names.update("底盘/" + field for field in
-                 ("节点导航轮速(RPM)", "扫码接近轮速(RPM)", "扫码往返轮速(RPM)"))
+                 ("节点导航速度(mm/s)", "扫码接近轮速(RPM)", "扫码往返轮速(RPM)"))
     names.update("标定/" + field for field in
                  ("X脉冲每毫米", "Y脉冲每毫米", "旋转脉冲每度",
                   "升降脉冲每毫米", "伸缩脉冲每毫米"))

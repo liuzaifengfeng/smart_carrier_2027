@@ -4,7 +4,10 @@
 // ================= 基础配置 =================
 
 uint32_t ALIGN_PID_MAX_SPEED_RPM = 20;  // 移动速度单位为转/分
-uint32_t NODE_PATH_SPEED_RPM = 120;
+float NODE_PATH_SPEED_MM_S = 1200.0f;
+float NODE_PATH_ACCEL_MM_S2 = 1600.0f;
+float NODE_PATH_TURN_DEG_S = 150.0f;
+float NODE_PATH_TURN_ACCEL_DEG_S2 = 360.0f;
 uint32_t SCAN_APPROACH_SPEED_RPM = 60;
 uint32_t SCAN_SEARCH_SPEED_RPM = 30;
 
@@ -61,8 +64,8 @@ static bool executeNodePathWithStatus(const uint8_t *path, size_t count, float f
             default: break;
         }
     }
-    const bool success = MoveNodePath( path, count, NODE_PATH_SPEED_RPM, 0, finalHeading);
-    // DONE 表示指令和预计等待已结束，不是电机/视觉实测到位。
+    const bool success = MoveNodePath( path, count, NODE_PATH_SPEED_MM_S, 0, finalHeading);
+    // 四轮位置/转速/到位反馈与H30确认通过；世界XY仍未由视觉实测。
     Serial.println(success ? "{EVT,NAV,ROUTE_DONE,ESTIMATED}" : "{EVT,NAV,ROUTE_FAILED,EXECUTION}");
     return success;
 }

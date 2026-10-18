@@ -157,6 +157,7 @@ Output Tracker::updateHybrid(const Route &route,float actual,float dt,uint32_t s
         &&s>=route.segments[phaseIndex].offset+route.segments[phaseIndex].length-0.5f) {
         if(phaseIndex+1<route.segmentCount&&route.segments[phaseIndex+1].kind==ROTATE){s=route.segments[phaseIndex+1].offset;speed=0;}
         ++phaseIndex;stableSeconds=turnSeconds=badSeconds=0;rateReady=false;
+        phaseStopped=false;quiet.reset();hold.reset();
     }
     if(phaseIndex>=route.segmentCount){out.reference=c.endHeading;out.error=turn(actual,out.reference);out.finished=true;return out;}
     const Segment &phase=route.segments[phaseIndex];bool rotating=phase.kind==ROTATE;
@@ -165,18 +166,47 @@ Output Tracker::updateHybrid(const Route &route,float actual,float dt,uint32_t s
     float targetOmega=0;
     if(rotating) {
         speed=0;turnSeconds+=dt;finishing=phaseIndex+1==route.segmentCount;
+        if(requireInertial) {
+            bool zero=zeroCommanded&&static_cast<int32_t>(motionSample.receivedAtMs-zeroSince)>=0;
+            if(!phaseStopped) {
+                stage="SETTLE_BEFORE_TURN";omega=0;
+                out.reference=phase.h0;out.error=turn(actual,phase.h0);
+                if(quiet.update(motionSample,zero)) {
+                    if(fabsf(turn(actual,phase.h1))<=1) {
+                        ++phaseIndex;quiet.reset();hold.reset();turnSeconds=0;
+                        if(phaseIndex==route.segmentCount)out.finished=true;
+                    } else {phaseStopped=true;quiet.reset();turnSeconds=0;}
+                }
+                else if(turnSeconds>3)out.failure="SETTLE_TIMEOUT";
+                return out;
+            }
+            stage=finishing?"FINAL_HEADING":"TURN";
+            if(fabsf(out.error)<=1) {
+                omega=0;stage="SETTLE_AFTER_TURN";
+                if(quiet.update(motionSample,zero)) {
+                    ++phaseIndex;turnSeconds=stableSeconds=0;rateReady=false;phaseStopped=false;
+                    quiet.reset();hold.reset();
+                    if(phaseIndex==route.segmentCount)out.finished=true;
+                    return out;
+                }
+                if(turnSeconds>fabsf(turn(phase.h0,phase.h1))/fminf(45,c.maxOmega)*2+3)out.failure="TURN_TIMEOUT";
+                return out;
+            }
+            quiet.reset();
+        }
         if(sampleMs!=previousSample) {
             float sampleDt=(sampleMs-previousSample)/1000.0f;
             float rate=sampleDt>0&&sampleDt<=0.2f?fabsf(turn(previousActual,actual))/sampleDt:1000;
             if(rateReady&&fabsf(out.error)<=1&&rate<=3)stableSeconds+=fminf(sampleDt,0.12f);else stableSeconds=0;
             rateReady=true;previousSample=sampleMs;previousActual=actual;
         }
-        if(stableSeconds>=0.12f){++phaseIndex;omega=0;stableSeconds=turnSeconds=0;rateReady=false;
+        if(!requireInertial&&stableSeconds>=0.12f){++phaseIndex;omega=0;stableSeconds=turnSeconds=0;rateReady=false;hold.reset();
             if(phaseIndex==route.segmentCount)out.finished=true;return out;}
         float deadline=fabsf(turn(phase.h0,phase.h1))/fminf(45,c.maxOmega)*2+3;
         if(turnSeconds>deadline){out.failure="TURN_TIMEOUT";return out;}
         targetOmega=clamp(c.kp*out.error,-fminf(45,c.maxOmega),fminf(45,c.maxOmega));
     } else {
+        stage="HEADING_HOLD";
         finishing=false;
         badSeconds=fabsf(out.error)>5?badSeconds+dt:0;
         if(badSeconds>=0.2f){out.failure="HEADING_ERROR";return out;}
@@ -189,7 +219,8 @@ Output Tracker::updateHybrid(const Route &route,float actual,float dt,uint32_t s
             if(slope>0.000001f)acceleration=fminf(acceleration,30/slope);
         }
         speed=clamp(target,fmaxf(0,speed-acceleration*dt),speed+acceleration*dt);
-        targetOmega=clamp(route.phaseSlope(phaseIndex,s-phase.offset)*speed+clamp(c.kp*out.error,-c.correction,c.correction),-c.maxOmega,c.maxOmega);
+        float correction=hold.update(actual,out.error,sampleMs,c.kp,c.correction);
+        targetOmega=clamp(route.phaseSlope(phaseIndex,s-phase.offset)*speed+correction,-c.maxOmega,c.maxOmega);
     }
     omega=clamp(targetOmega,omega-90*dt,omega+90*dt);
     Vec body=rotating?Vec{}:worldToBody(route.phaseAt(phaseIndex,s-phase.offset).tangent*speed,actual);

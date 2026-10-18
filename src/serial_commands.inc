@@ -39,7 +39,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"SYS", "START"}, {"SYS", "HELP"},
         {"TASK", "SET"},
         {"LED", "SET"}, {"LED", "GET"}, {"LED", "FREQ"},
-        {"NAV", "START_ZONE"}, {"NAV", "ROUTE"},
+        {"NAV", "START_ZONE"}, {"NAV", "ROUTE"}, {"NAV", "STOP"},
         {"NAV", "TRIAL_BEGIN"}, {"NAV", "TRIAL_POLICY"}, {"NAV", "TRIAL_NODE"}, {"NAV", "TRIAL_START"},
         {"NAV", "TRIAL_STATUS"}, {"NAV", "TRIAL_STOP"},
         {"VISION", "ALIGN_START"}, {"VISION", "ALIGN_STOP"},
@@ -92,7 +92,15 @@ static void serialRoute(const SerialFrame &frame) {
     }
     if (serialDebugMode) {
         Serial.printf("{RSP,NAV,ROUTE,ACK,%u}\n", static_cast<unsigned>(count));
-        executeNodePathWithStatus(path, count);
+        float finalHeading=NAN;
+        switch(path[count-1]) {
+            case DISC_AREA_NODE: finalHeading=DISC_AREA_HEADING;break;
+            case COARSE_AREA_NODE: finalHeading=COARSE_AREA_HEADING;break;
+            case TEMP_AREA_NODE: finalHeading=TEMP_AREA_HEADING;break;
+        }
+        Serial.println("{EVT,NAV,ROUTE_RUNNING}");
+        if(!H30StartNodePath(path,count,NODE_PATH_SPEED_MM_S,finalHeading))
+            Serial.println("{EVT,NAV,ROUTE_FAILED,START}");
         return;
     }
     portENTER_CRITICAL(&nodePathMux);
@@ -271,8 +279,19 @@ static void serialTransfer(const SerialFrame &frame) {
 }
 
 static void serialDispatch(const SerialFrame &frame) {
+    // 旧底盘停止按钮也取消任务，避免停车后被下一周期重新启动。
+    const bool motionStop=frame.is("CHASSIS","MOVE",3)&&strcmp(frame.fields[5],"1")==0;
+    if(motionStop&&ContinuousTrialActive()) {
+        uint32_t direction=0,stop=0;float speed=0;
+        if(!serialUInt(frame.fields[3],direction,5)||!serialFloat(frame.fields[4],speed,0,1000)
+            ||!serialUInt(frame.fields[5],stop,1)){serialError(frame,"RANGE");return;}
+        ContinuousTrialCancel();
+        Serial.printf("{RSP,CHASSIS,MOVE,ACK,%u,%.3f,1}\n",static_cast<unsigned>(direction),speed);
+        return;
+    }
     if(ContinuousTrialActive() && !frame.is("IMU","GET",0) && !frame.is("IMU","HEADING",0)
         && !frame.is("NAV","TRIAL_STATUS",1) && !frame.is("NAV","TRIAL_STOP",1)
+        && !frame.is("NAV","STOP",0)
         && !frame.is("SYS","HELLO",0) && !frame.is("SYS","HELP",0)) {
         serialError(frame,"BUSY");return;
     }
@@ -281,6 +300,9 @@ static void serialDispatch(const SerialFrame &frame) {
     // 1. 通用命令与共享业务状态。
     if (frame.is("SYS", "HELLO", 0)) {
         Serial.println("{RSP,SYS,HELLO,OK,2}");
+    } else if(frame.is("NAV","STOP",0)) {
+        ContinuousTrialCancel();
+        Serial.println("{RSP,NAV,STOP,ACK}");
     } else if (frame.is("TASK", "SET", 1)) {
         const TaskCode task = parseTaskCode(frame.fields[3]);
         if (!task.valid) { serialError(frame, "RANGE"); return; }

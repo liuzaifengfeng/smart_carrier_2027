@@ -29,13 +29,15 @@ class PlanTests(unittest.TestCase):
         helper = helper[:helper.index("void Task_Serial_CMD")]
         gate = serial[serial.index("    if(ContinuousTrialActive() &&"):]
         gate = gate[:gate.index("    if(serialTrial(frame))return;")]
+        early = serial[serial.index('    const bool motionStop='):serial.index('    if(ContinuousTrialActive() &&')]
         cfg = serial[serial.index('    } else if (frame.starts("CFG", "GET")'):]
         cfg = cfg[:cfg.index('    } else if (frame.is("POSE", "SET", 3)')]
         cfg = cfg.replace("    } else if", "    if", 1)
         cache = ROOT/".pio/native_trial_dispatch"
         cache.mkdir(exist_ok=True)
         (cache/"trial_dispatch_actual.inc").write_text(
-            helper+"\nstatic void trialGate(const SerialFrame &frame) {\n"+gate+"\n++allowed;\n}\n"
+            helper+"\nstatic void trialEarlyStop(const SerialFrame &frame) {\n"+early+"\n}\n"
+            +"\nstatic void trialGate(const SerialFrame &frame) {\n"+gate+"\n++allowed;\n}\n"
             +"\nstatic void trialCfgDispatch(const SerialFrame &frame) {\n"+cfg+"\n}\n}\n", encoding="utf-8")
         command = ([compiler] if compiler else [str(zig), "c++"])
         executable = cache/"dispatch_test.exe"

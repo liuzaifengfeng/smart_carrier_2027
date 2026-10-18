@@ -8,7 +8,10 @@
 #include <string.h>
 
 extern uint32_t ALIGN_PID_MAX_SPEED_RPM;
-extern uint32_t NODE_PATH_SPEED_RPM;
+extern float NODE_PATH_SPEED_MM_S;
+extern float NODE_PATH_ACCEL_MM_S2;
+extern float NODE_PATH_TURN_DEG_S;
+extern float NODE_PATH_TURN_ACCEL_DEG_S2;
 extern uint32_t SCAN_APPROACH_SPEED_RPM;
 extern uint32_t SCAN_SEARCH_SPEED_RPM;
 
@@ -123,12 +126,16 @@ void initialize() {
     RegisterRuntimeFloat("搬运/速度/放料松爪", materialMotionSteps.placeReleaseSpeed, 1, 300);
     RegisterRuntimeFloat("搬运/速度/放料提起", materialMotionSteps.placeLiftSpeed, 1, 300);
     RegisterChassisParameters();
-    RegisterRuntimeUInt("底盘/节点导航轮速(RPM)", NODE_PATH_SPEED_RPM, 1, 5000);
+    RegisterRuntimeFloat("底盘/节点导航速度(mm/s)", NODE_PATH_SPEED_MM_S, 10, 1600);
     RegisterRuntimeUInt("底盘/扫码接近轮速(RPM)", SCAN_APPROACH_SPEED_RPM, 1, 5000);
     RegisterRuntimeUInt("底盘/扫码往返轮速(RPM)", SCAN_SEARCH_SPEED_RPM, 1, 5000);
     RegisterRuntimeUInt("对齐/最大轮速(RPM)", ALIGN_PID_MAX_SPEED_RPM, 1, 5000);
     // 追加注册，保留原有参数索引；默认值来自 material_transfer.cpp。
     registerMaterialDelays();
+    // 只追加，不改变既有参数索引。
+    RegisterRuntimeFloat("底盘/节点导航平移加速度(mm/s²)", NODE_PATH_ACCEL_MM_S2, 1, 4000);
+    RegisterRuntimeFloat("底盘/节点导航转向速度(°/s)", NODE_PATH_TURN_DEG_S, 10, 240);
+    RegisterRuntimeFloat("底盘/节点导航转向加速度(°/s²)", NODE_PATH_TURN_ACCEL_DEG_S2, 30, 720);
 }
 
 bool parseUnsigned(const char *text, uint32_t &value) {

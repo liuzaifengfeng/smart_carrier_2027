@@ -13,7 +13,7 @@ const char *Route::build(const Node *nodes,const Config &cfg) {
         cfg.lateralPpm,cfg.forwardPpm,cfg.rotationPpd,cfg.kp,cfg.maxOmega,cfg.correction};
     for(float v:values)if(!isfinite(v))return "RANGE";
     if(cfg.startHeading<0||cfg.startHeading>=360||cfg.endHeading<0||cfg.endHeading>=360
-        ||cfg.maxRpm<1||cfg.maxRpm>5000||cfg.maxRpm!=floorf(cfg.maxRpm)||cfg.accel<1||cfg.accel>2000
+        ||cfg.maxRpm<1||cfg.maxRpm>5000||cfg.maxRpm!=floorf(cfg.maxRpm)||cfg.accel<1||cfg.accel>(cfg.policy==2?4000:2000)
         ||cfg.lateralAccel<1||cfg.lateralAccel>3000||cfg.lateralPpm<0.01f||cfg.lateralPpm>1000
         ||cfg.forwardPpm<0.01f||cfg.forwardPpm>1000||cfg.rotationPpd<=0||cfg.rotationPpd>10000
         ||cfg.kp<0.1f||cfg.kp>10||cfg.maxOmega<5||cfg.maxOmega>90

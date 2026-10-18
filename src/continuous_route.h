@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <initializer_list>
+#include "h30_motion.h"
 
 namespace continuous {
 constexpr float PI_F = 3.14159265358979323846f;
@@ -89,16 +90,28 @@ public:
     Vec estimated;
     bool finishing=false;
     size_t phaseIndex=0;
+    bool requireInertial=false;
+    const char *stage="MOVE";
+    H30Attitude motionSample;
+    void observeMotion(const H30Attitude &sample){motionSample=sample;}
     void begin(const Route &route,float actualHeading);
     Output update(const Route &route,float actualHeading,float dt,uint32_t sampleMs);
     void integrate(const Route &route,float actualHeading,float dt);
-    void commit(const WheelCommand &command) { applied=command; }
+    void commit(const WheelCommand &command,uint32_t atMs=0) {
+        bool zero=true;for(int i=0;i<4;++i)if(command.rpm[i])zero=false;
+        if(zero&&!zeroCommanded)zeroSince=atMs;
+        zeroCommanded=zero;applied=command;
+    }
 private:
     WheelCommand applied;
     float badSeconds=0,finishSeconds=0,stableSeconds=0;
     uint32_t previousSample=0;
     float previousActual=0,turnSeconds=0;
     bool rateReady=false;
+    bool phaseStopped=false;
+    H30MotionQuiet quiet;
+    H30HeadingHold hold;
+    bool zeroCommanded=false;uint32_t zeroSince=0;
     Output updateHybrid(const Route &route,float actual,float dt,uint32_t sampleMs);
 };
 } // namespace continuous

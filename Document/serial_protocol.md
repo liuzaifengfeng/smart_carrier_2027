@@ -8,7 +8,7 @@
 - 发送给 ESP32：`{CMD,类别,动作,参数...}`。ESP32 的命令回复：`{RSP,类别,动作,状态,参数...}`。ESP32 主动发出的状态：`{EVT,类别,事件,参数...}`。
 - 固定字和输入参数只用可打印 ASCII，区分大小写；不得包含空字段、空格、逗号、花括号或换行。参数目录的**返回名称**与显示事件的**正文**可以是 UTF-8 中文。显示正文可以有空格，但不能含逗号、花括号或控制字符。
 - 输入帧最多 **159 字节**（不含换行），最多 32 个逗号字段。超长行会被整行丢弃并回复 `{RSP,SYS,FRAME,ERR,TOO_LONG}`；结构错误回复 `{RSP,SYS,FRAME,ERR,FORMAT}`。固件不会执行截断或格式错误的指令。
-- 数字用十进制，必须完整且有限；`NaN`、`inf`、缺字段、多字段均无效。`ACK` 表示已接令，**不代表物理到位**；`ROUTE_DONE,ESTIMATED` 也只是开环估计结束。
+- 数字用十进制，必须完整且有限；`NaN`、`inf`、缺字段、多字段均无效。`ACK` 表示已接令，**不代表物理到位**；`ROUTE_DONE,ESTIMATED` 表示有限位置动作的四轮位置/转速/到位反馈及稳定确认通过，H30可辅助但非必需，仍不代表世界X/Y实测到位或无打滑。
 - 上位机连接后先发 `{CMD,SYS,HELLO}`，仅收到 `{RSP,SYS,HELLO,OK,2}` 才允许控制。超时或版本不符时断开连接。启动日志如 `version:`、`Debug mode` 只供人阅读，不参与机器帧解析。
 
 ## 2. 命令总表与旧版迁移对照
@@ -29,6 +29,7 @@ Debug空闲时按BOOT0（GPIO0，低电平）等效执行 `{CMD,SYS,RELEASE}`，
 | `{help}` | `{CMD,SYS,HELP}` | 两者 | `{RSP,SYS,HELP,OK}`；帮助文字参见本文件 |
 | `{StartZone:1}` / `:2` | `{CMD,NAV,START_ZONE,1}` / `2` | 两者 | `{RSP,NAV,START_ZONE,OK,1}` / `2` |
 | `{way:0-1-8}` | `{CMD,NAV,ROUTE,0,1,8}` | 两者 | `{RSP,NAV,ROUTE,ACK,3}`，随后路径事件 |
+| 无 | `{CMD,NAV,STOP}` | 两者 | `{RSP,NAV,STOP,ACK}`，请求取消当前节点导航/试跑，等待RESULT或终态确认停车 |
 | 无 | `{CMD,VISION,START_REQUEST,mode}` | 两者 | `{RSP,VISION,START_REQUEST,ACK,mode}`，随后 `{EVT,VISION,START_REQUEST,mode}` |
 | 无 | `{CMD,VISION,STOP_REQUEST,mode}` | 两者 | `{RSP,VISION,STOP_REQUEST,ACK,mode}`，随后 `{EVT,VISION,STOP_REQUEST,mode}` |
 | `{ALIGN:START}` | `{CMD,VISION,ALIGN_START}` | 两者 | `{RSP,VISION,ALIGN_START,OK}` |
@@ -103,14 +104,16 @@ TASK SET 在 Debug 可修改任务码并重置抓取进度为 0；开启 DISC_MA
 
 两轮自动抓取及恢复观察姿态期间，COLOR 仍回复 `{RSP,VISION,COLOR,OK}`，但丢弃颜色且不触发抓取；OK 只表示接收。`look2` 完成后，处理恢复请求到达时已积压的数据至完整帧边界就重新允许颜色判断，不等待串口完全空闲。诊断日志 `[DISC] Color handling resumed: expected=..., cargo=...` 表示已恢复下一件处理，后续匹配颜色才触发 `COLOR,GRAB`。
 
-`{CMD,NAV,ROUTE,...}` 执行时，每段只沿车身 Y 轴前进或后退，需要时先原地转向，不做车身左右平移。普通路段选择进入本段转角较小者，等角时优先前进。同向共线节点合并，前后折返保留中间节点并先停车再换方向。Debug/Release 共用功能区终点朝向：14（圆盘区）90°、10（粗加工区）270°、22（当前地图暂存区）180°，其他终点不约束。最后一段平行时前进/后退直接以指定朝向到达，垂直时到达后补转 90°；进入最后一段前可能仍需转 180°。帧格式不增加角度字段，固件按终点应用；`ROUTE_DONE,ESTIMATED` 在末次转向及估算等待结束后发送，不证明实测到位或夹爪已物理对准。
+`{CMD,NAV,ROUTE,...}` 使用有限绝对脉冲位置动作，不使用独立试跑的速度积分执行。正式默认平移1200 mm/s、加速度1600 mm/s²、转向150°/s、转向加速度360°/s²；软件上限分别1600、4000、240、720，均可通过CFG调整并在路径启动时冻结，Profile日志输出实际值。允许倒退，同向共线节点连续通过，转角停转，不外绕。四轮到位、编码器位置稳定和近零转速为接续基础；H30完整新鲜数据用于差动轮速纠偏及提前确认停稳，保留有限终点。H30缺项/旧数据/参考不可信时退回编码器模式，只作日志提示，不因此中断正式任务；参考不可用时航向为规划/编码器估算，不声称±1°实测确认。起步再检转速波动时自动重新停车确认。末端小残差有限低速重试；真实电机故障、反馈缺失、越界等仍失败停车。Debug异步执行，不阻塞查询和STOP；Release由业务任务等待结果。功能区终点朝向：14为90°、10为270°、22为180°，其他不约束。完成发送 `ROUTE_DONE,ESTIMATED`，不能排除打滑或证明夹爪对准。最多25个节点，首节点须与实车位置一致。详见[辅助与反馈要求](continuous_trial.md)。
+
+正式模式诊断事件 `{EVT,NAV,ROUTE_POSITION,s,x,y,reference,heading}`，距离/坐标单位mm、角度单位度。阶段为POSITION_STRAIGHT/POSITION_TURN/POSITION_RECOVER。恢复或超限时输出 `{EVT,NAV,ROUTE_MOTOR,id,reason,target,actual,rpm,flags}`，target/actual为65536单位/圈，actual保留驱动符号。小残差重试最多2次，仍不收敛报MOTOR_RESIDUAL_TIMEOUT；硬超限报MOTOR_POSITION_OVERRUN。其他失败包括MOTOR_FEEDBACK_TIMEOUT、MOTOR_DISABLED、MOTOR_STALL、MOTOR_ZERO_FAILED和MOTOR_ARRIVAL_TIMEOUT；不能以估时成功替代失败。ACK回复与反馈接线要求见上述说明。
 
 | 旧回复或事件 | v2 事件 / 回复 | 含义 |
 |---|---|---|
 | `{way:WAITING}` | `{EVT,NAV,ROUTE_WAITING}` | Release 主状态机等待路径 |
 | `{way:start-end?}` | `{EVT,NAV,ROUTE_REQUEST,start,end}` | 上位机应返回完整路径 |
 | `{way:RUNNING}` | `{EVT,NAV,ROUTE_RUNNING}` | 开始执行 |
-| `{way:DONE,ESTIMATED}` | `{EVT,NAV,ROUTE_DONE,ESTIMATED}` | 开环估计完成 |
+| `{way:DONE,ESTIMATED}` | `{EVT,NAV,ROUTE_DONE,ESTIMATED}` | 四轮到位及稳定确认通过，H30为可降级辅助，世界XY仍为估算 |
 | `{way:ERR,ENDPOINT/EXECUTION/TIMEOUT}` | `{EVT,NAV,ROUTE_FAILED,原因}` | 路径业务失败；主状态机不进入后续抓取 |
 | `{way:ERR,NOT_WAITING}` | `{RSP,NAV,ROUTE,ERR,NOT_WAITING}` | Release 尚未请求路径 |
 | `{ALIGN:OK}` | `{EVT,VISION,ALIGN_DONE}` | 对齐已完成 |

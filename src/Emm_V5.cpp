@@ -400,7 +400,7 @@ void Emm_V5_Receive_Data(uint8_t *rxCmd, uint8_t *rxCount)
     {
       if(i <= 128)                        // 防止数组溢出，该值需要小于数组的长度
       {
-        rxCmd[i++] = Serial.read();       // 接收数据
+        rxCmd[i++] = Serial1.read();      // 电机总线，不能误读上位机Serial0
 
         lTime = millis();                 // 更新上一时刻的时间
       }

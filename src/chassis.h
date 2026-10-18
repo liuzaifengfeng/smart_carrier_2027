@@ -136,14 +136,16 @@ bool InitArm_look4();
  * 连续同向且共线的多段路径会自动合并，例如 1-2-3 合并为 1-3。
  * 每段选择前进/后退中转角较小的朝向，等角时优先前进；不做车身横向平移。
  * 反向路段先停车再换方向；后退时理想航向保持车头朝向，不改成行进方向。
- * 指定 finalHeading 时，最后一段优先最小化终点转角，平行时前进/后退直接到达。
- * 横竖路径配合 0/90/180/270 度终点朝向：平行时不补转，垂直时到达后补转 90 度。
- * 本函数会按脉冲数、目标转速和加速度档位估算完成时间，并物理阻塞调用任务。
+ * 使用固定目标脉冲位置模式，mm/s转换为RPM，软件按mm/s²限制速度指令斜率。
+ * 四轮到位标志、编码器位置及实时转速是基础；H30可辅助提前确认停稳。
+ * 运动中以H30差动调节四轮位置模式轮速，保留有限目标；小残差低速恢复，到位后修正角度。
+ * 首节点XY仍为调用方明确给出的假设，编码器不能消除轮胎打滑造成的地图位置误差。
+ * H30缺项/失联/参考变化时退回编码器控制，不中断任务；真实运动异常仍返回失败。
  *
  * @param path         节点序号数组，例如 {0, 1, 8, 7}
- * @param pathLength   数组中的节点数量，可变长度且至少为 2
- * @param speedRpm     电机目标转速，范围 1~5000 RPM
- * @param acceleration EMM V5 加速度档位，0 表示直接启动
+ * @param pathLength   数组中的节点数量，2~25
+ * @param speedMmS     平移速度上限，范围10~1600mm/s；转向速度/加速度可在参数页独立调整
+ * @param acceleration 保留旧接口参数；新节点控制器不使用此位置模式档位
  * @param finalHeading 终点车头的场地角度，默认 NaN 不约束；有限角度归一化到 0~360 度
  * @return true 路径有效且全部运动指令已执行；false 参数或路径无效
  */
@@ -152,14 +154,14 @@ constexpr uint8_t FIELD_NODE_COUNT = 25;
 constexpr size_t MAX_NODE_PATH_LENGTH = 25;
 
 bool MoveNodePath(const uint8_t *path, size_t pathLength,
-                  uint16_t speedRpm = 80, uint8_t acceleration = 0,
+                  float speedMmS = 1200, uint8_t acceleration = 0,
                   float finalHeading = NAN);
 
 // 可直接写 MoveNodePath({0, 1, 8, 7})，节点数量由初始化列表自动传入。
 inline bool MoveNodePath(std::initializer_list<uint8_t> path,
-                         uint16_t speedRpm = 80,
+                         float speedMmS = 1200,
                          uint8_t acceleration = 0, float finalHeading = NAN) {
-    return MoveNodePath(path.begin(), path.size(), speedRpm, acceleration, finalHeading);
+    return MoveNodePath(path.begin(), path.size(), speedMmS, acceleration, finalHeading);
 }
 
 
