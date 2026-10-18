@@ -34,6 +34,7 @@ def supported_names():
     names.add("底盘/节点导航平移加速度(mm/s²)")
     names.add("底盘/节点导航转向速度(°/s)")
     names.add("底盘/节点导航转向加速度(°/s²)")
+    names.add("底盘/节点导航独立纠偏死区(°)")
     names.update("底盘/" + field for field in
                  ("节点导航速度(mm/s)", "扫码接近轮速(RPM)", "扫码往返轮速(RPM)"))
     names.update("标定/" + field for field in

@@ -552,6 +552,13 @@
           "maximum": 720,
           "integer": false
         },
+        "底盘/节点导航独立纠偏死区(°)": {
+          "value": 3,
+          "description": "停稳后独立角度修正的死区；范围内不单独转动，运行中仍从0.4度偏差开始辅助纠偏。下一条完整路径启动时生效。",
+          "minimum": 1,
+          "maximum": 8,
+          "integer": false
+        },
         "底盘/扫码接近轮速(RPM)": {
           "value": 60,
           "description": "开局从启停区接近扫码区域时的最大轮速。",

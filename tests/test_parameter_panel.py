@@ -41,6 +41,7 @@ class ValidationTests(unittest.TestCase):
             self.assertTrue(parameter_matches_stage("底盘/节点导航速度(mm/s)", stage))
             self.assertTrue(parameter_matches_stage("底盘/节点导航转向速度(°/s)", stage))
             self.assertTrue(parameter_matches_stage("底盘/节点导航转向加速度(°/s²)", stage))
+            self.assertTrue(parameter_matches_stage("底盘/节点导航独立纠偏死区(°)", stage))
             self.assertTrue(parameter_matches_stage("底盘/节点导航转向速度(°/s)", stage))
             self.assertTrue(parameter_matches_stage("底盘/节点导航转向加速度(°/s²)", stage))
 

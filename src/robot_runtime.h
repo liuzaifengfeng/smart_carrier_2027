@@ -38,6 +38,7 @@ extern float NODE_PATH_SPEED_MM_S; // 正式节点路径平移速度，mm/s；�
 extern float NODE_PATH_ACCEL_MM_S2; // 正式节点导航平移加速度，mm/s²；启动整条路径时冻结。
 extern float NODE_PATH_TURN_DEG_S;
 extern float NODE_PATH_TURN_ACCEL_DEG_S2;
+extern float NODE_PATH_HEADING_DEADBAND_DEG;
 extern uint32_t SCAN_APPROACH_SPEED_RPM;
 extern uint32_t SCAN_SEARCH_SPEED_RPM;
 constexpr uint8_t SCAN_AREA_NODE = 2;

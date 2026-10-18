@@ -62,8 +62,8 @@ public:
         if(cancelled())return "STOPPED";
         drain();
         Emm_V5_Pos_Control(id,positive?1:0,rpm,0,pulses,true,true);Serial1.flush();
-        EmmReply out;const char *error=reply(id,0xFD,out);
-        vTaskDelay(pdMS_TO_TICKS(5));return error;
+        // ACK已确认装载完成，不再每轮额外固定等待5ms。
+        EmmReply out;return reply(id,0xFD,out);
     }
     const char *sync()override {
         if(cancelled())return "STOPPED";
