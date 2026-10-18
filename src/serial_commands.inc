@@ -3,6 +3,7 @@
 #include "debug_release_button.h"
 #include "h30_usb.h"
 #include "continuous_trial.h"
+#include "disc_position_grab.h"
 static bool serialDebugMode = true;
 static bool serialTrial(const SerialFrame &frame);
 static DebugReleaseButton bootReleaseButton;
@@ -47,6 +48,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"VISION", "STOP_REQUEST"},
         {"VISION", "ALIGN_DATA"}, {"VISION", "COLOR"},
         {"VISION", "GRAB"},
+        {"VISION", "DISC_POSITIONS"},
         {"VISION", "FORCE_GRAB"},
         {"VISION", "CONFIRM"}, {"VISION", "LIDAR_POSE"},
         {"POSE", "GET"}, {"POSE", "SET"}, {"POSE", "GOTO_REL"},
@@ -260,6 +262,61 @@ static void serialDiscGrab(const SerialFrame &frame) {
     serialExecuteTaskGrab(static_cast<uint8_t>(color), static_cast<uint8_t>(cargo));
 }
 
+// 视觉保证本帧内全部位置此刻可抓；只选一件，不缓存未选中的候选。
+static void serialDiscPositions(const SerialFrame &frame) {
+    if (frame.count < 5 || frame.count > 9 || (frame.count - 3) % 2 != 0) {
+        serialError(frame, "FORMAT"); return;
+    }
+    DiscPositionCandidate candidates[3] = {};
+    const size_t count = (frame.count - 3) / 2;
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t position = 0, color = 0;
+        if (!serialUInt(frame.fields[3 + 2 * i], position, 3) || position == 0
+                || !serialUInt(frame.fields[4 + 2 * i], color, 6) || color == 0) {
+            serialError(frame, "RANGE"); return;
+        }
+        for (size_t j = 0; j < i; ++j) {
+            if (candidates[j].position == position) {
+                serialError(frame, "DUPLICATE_POSITION"); return;
+            }
+        }
+        candidates[i] = {static_cast<uint8_t>(position), static_cast<uint8_t>(color)};
+    }
+    if (!discMaterialActive) { serialError(frame, "NOT_ACTIVE"); return; }
+    const RobotState state = currentState;
+    const int progress = roundProgress;
+    const int *colors = state == STATE_GRAB_ROUND2 ? currentTask.round2_colors
+        : state == STATE_GRAB_ROUND1 || serialDebugMode ? currentTask.round1_colors : nullptr;
+    if (!currentTask.valid) { serialError(frame, "NO_TASK"); return; }
+    if (!colors) { serialError(frame, "NOT_WAITING"); return; }
+    if (progress < 0 || progress >= 3) { serialError(frame, "ROUND_COMPLETE"); return; }
+    if (alignmentEnabled) { serialError(frame, "ALIGN_ACTIVE"); return; }
+    if (!serialDebugMode && !firstDiscGrabReady) { serialError(frame, "NOT_READY"); return; }
+    const uint8_t cargo = static_cast<uint8_t>(progress + 1);
+    if (cargoPlatforms[cargo - 1].material != MATERIAL_NONE) {
+        serialError(frame, "OCCUPIED"); return;
+    }
+    const int selected = SelectDiscPosition(candidates, count, colors, progress, currentTask.valid);
+    Serial.printf("{RSP,VISION,DISC_POSITIONS,ACK,%u}\n", static_cast<unsigned>(count));
+    if (selected < 0) {
+        Serial.printf("{EVT,VISION,DISC_POSITIONS,SKIP,%d,%u,COLOR_MISMATCH}\n",
+                      colors[progress], cargo);
+        return;
+    }
+    const auto candidate = candidates[selected];
+    Serial.printf("{EVT,VISION,DISC_POSITIONS,SELECTED,%u,%u,%u}\n",
+                  candidate.position, candidate.color, cargo);
+    switch (candidate.position) {
+        case 1: GrabDiscPosition1(candidate.color, cargo); break;
+        case 2: GrabDiscPosition2(candidate.color, cargo); break;
+        case 3: GrabDiscPosition3(candidate.color, cargo); break;
+    }
+    // 占位函数没有真实完成结果，禁止推进任务或复用本帧的其他位置。
+    discMaterialColor = 0;
+    Serial.printf("{EVT,VISION,DISC_POSITIONS,STUB,%u,%u,%u}\n",
+                  candidate.position, candidate.color, cargo);
+}
+
 static void serialTransfer(const SerialFrame &frame) {
     if (!serialDebugMode) { serialError(frame, "MODE"); return; }
     uint32_t cargoCode = 0, workAreaCode = 0;
@@ -450,6 +507,8 @@ static void serialDispatch(const SerialFrame &frame) {
             }
         }
         xSemaphoreGive(xAlignmentMotionMutex);
+    } else if (frame.starts("VISION", "DISC_POSITIONS")) {
+        serialDiscPositions(frame);
     } else if (frame.is("VISION", "COLOR", 1)) {
         uint32_t color = 0;
         if (!serialUInt(frame.fields[3], color, 6) || color == 0) {

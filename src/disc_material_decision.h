@@ -1,6 +1,31 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
+
+struct DiscPositionCandidate {
+    uint8_t position;
+    uint8_t color;
+};
+
+// 一帧是一次可抓快照；按下一件任务颜色选择，重复颜色时优先位置号较小者。
+// 返回候选下标，-1 表示无匹配。位置号与载物台编号互相独立。
+constexpr int SelectDiscPosition(const DiscPositionCandidate *candidates, size_t count,
+                                 const int *colors, int progress, bool taskValid) {
+    if (!candidates || count == 0 || count > 3 || !colors || !taskValid
+            || progress < 0 || progress >= 3) return -1;
+    int selected = -1;
+    for (size_t i = 0; i < count; ++i) {
+        if (candidates[i].position < 1 || candidates[i].position > 3
+                || candidates[i].color < 1 || candidates[i].color > 6) return -1;
+        for (size_t j = 0; j < i; ++j)
+            if (candidates[j].position == candidates[i].position) return -1;
+        if (candidates[i].color == colors[progress]
+                && (selected < 0 || candidates[i].position < candidates[selected].position))
+            selected = static_cast<int>(i);
+    }
+    return selected;
+}
 
 // 任务码规定抓取顺序，只匹配当前轮次下一件待抓颜色。
 constexpr bool ShouldGrabTaskColor(const int *colors, int progress,
