@@ -12,13 +12,13 @@ static_assert(!VisionModeUsesAlignment(VisionStartMode::NONE), "no mode stays se
 constexpr uint8_t feed(unsigned frames, uint8_t count = 0) {
     return frames == 0 ? count : feed(frames - 1, NextAlignmentFrameCount(count, true, true));
 }
-static_assert(feed(4) == 4, "four frames must not finish");
-static_assert(feed(5) == AlignmentFrameWaiter::REQUIRED_FRAMES, "fifth frame finishes");
-static_assert(feed(20) == 5, "counter saturates");
-static_assert(NextAlignmentFrameCount(4, false, true) == 0, "outlier resets");
-static_assert(NextAlignmentFrameCount(5, false, true) == 0, "outlier after completion resets");
-static_assert(NextAlignmentFrameCount(4, true, false) == 1, "new mode starts at one");
-static_assert(feed(4, NextAlignmentFrameCount(4, false, true)) == 4, "four new frames still wait");
+static_assert(feed(1) < AlignmentFrameWaiter::REQUIRED_FRAMES, "one frame must not finish");
+static_assert(feed(2) == AlignmentFrameWaiter::REQUIRED_FRAMES, "second frame finishes");
+static_assert(feed(20) == 2, "counter saturates");
+static_assert(NextAlignmentFrameCount(1, false, true) == 0, "outlier resets");
+static_assert(NextAlignmentFrameCount(2, false, true) == 0, "outlier after completion resets");
+static_assert(NextAlignmentFrameCount(2, true, false) == 1, "new mode starts at one");
+static_assert(feed(1, NextAlignmentFrameCount(1, false, true)) == 1, "one new frame still waits");
 constexpr VisionAlignmentDeadzone small{1, 2, 0.1f};
 constexpr VisionAlignmentDeadzone large{3, 4, 0.2f};
 static_assert(IsWithinAlignmentDeadzone(small, -0.1f, -1, 2), "inclusive signed boundaries");

@@ -105,7 +105,7 @@ bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg,
                              float visualXError, float visualYError,
                              float dtSeconds, uint16_t speedRpm = 80);
 
-// 非阻塞等待：仅在新帧到达时调用，同时更新 PID；连续 5 帧进入死区返回 true。
+// 非阻塞等待：仅在新帧到达时调用，同时更新 PID；连续 2 帧进入死区返回 true。
 // 调用方应在启停、断流、反馈丢帧或无效反馈时调用 ResetAlignmentWait。
 bool WaitForAlignment(VisionStartMode mode, float angleErrorDeg,
                       float visualXError, float visualYError,
@@ -114,7 +114,7 @@ void ResetAlignmentWait();
 
 // @brief 机械臂移动到位.
 // 升降/伸缩使用 EMM V5 绝对位置模式，以开机当前位置清零为原点；-1 跳过该轴。
-// speed 是1~300的公共速度指令；夹爪基于200≈90°/s的原标定计算后，将耗时缩短为1/3。
+// speed 是1~300的公共速度指令；夹爪基于200≈90°/s的原标定计算后，将耗时缩短为1/5。
 // 返回值表示所请求的控制命令是否全部成功下发，不代表机构已物理到位。
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
 

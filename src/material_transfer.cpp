@@ -481,26 +481,21 @@ bool PrepareLidarScanPose(uint8_t startZoneCode) {
             Serial.println("[LidarPose] start zone 1");
 
             if (!MovePosition(125,100,0,200)) return false;
-            //GotoPose(125, 0, 0, true);
+
             if (!MoveArm(170, 100, -1, -1, 200)) return false;
-            //waitForArm(materialAuxiliaryDelays.lidarZone1LiftMs);
-            //GotoPose(0, 100, 0, true);
             if (!MoveArm(-1, -1, 45, -1, 200)) return false;
             waitForArm(materialAuxiliaryDelays.lidarZone1TurnMs);
             if (!MoveArm(0, 100, -1, -1, 200)) return false;
             waitForArm(materialAuxiliaryDelays.lidarZone1LiftMs);
-
             break;
 
         case 2:
             Serial.println("[LidarPose] start zone 2");
+
             if (!MovePosition(125,-100,0,200)) return false;
-            //GotoPose(125, 0, 0, true);
+            
             if (!MoveArm(170, 100, 135, -1, 200)) return false;
             waitForArm(materialAuxiliaryDelays.lidarZone2LiftMs);
-            //GotoPose(0, -100, 0, true);
-            //if (!MoveArm(-1, 100, -1, -1, 200)) return false;
-            //waitForArm(materialAuxiliaryDelays.lidarZone2TurnMs);
             if (!MoveArm(0, 100, 135, -1, 200)) return false;
             waitForArm(materialAuxiliaryDelays.lidarZone2LiftMs);
             break;

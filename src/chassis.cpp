@@ -60,7 +60,7 @@ VisionAlignmentDeadzone ALIGN_DEADZONES[] = {
 AlignmentFrameWaiter s_alignmentWaiter;
 constexpr float ALIGN_DT_MIN_SECONDS = 0.02f;// 时间步长单位为秒
 constexpr float ALIGN_DT_MAX_SECONDS = 0.30f;// 时间步长单位为秒
-constexpr uint16_t OMNI_MIN_MOVING_RPM = 1;// 最小移动速度单位为转/分
+constexpr uint16_t OMNI_MIN_MOVING_RPM = 2;// 小误差最低启动轮速，单位RPM；原为1
 constexpr uint8_t OMNI_ACCELERATION = 0;// 加速度单位为转/分^2
 
 struct PidController {
@@ -403,25 +403,25 @@ static bool MoveArmInternal(float high, float length, float turret_angle,
                             float pawl_angle, float speed, bool absoluteTurret) {
     if (taskMotionAborted) return false;
     constexpr float ARM_COMMAND_SPEED_MIN = 1.0f;
-    constexpr float ARM_COMMAND_SPEED_MAX = 300.0f;
+    constexpr float ARM_COMMAND_SPEED_MAX = 500.0f;
     if (!isfinite(speed) || speed < ARM_COMMAND_SPEED_MIN
             || speed > ARM_COMMAND_SPEED_MAX) {
-        Serial.println("[Arm] ERR: speed must be in 1~300 range");
+        Serial.println("[Arm] ERR: speed must be in 1~500 range");
         return false;
     }
     int acc = 220;
-    // 舵机动作时间统一缩短为原标定值的 1/3。
-    // 2号转台按实际转角计时：180度用350ms，最短133ms；加减速时间同比缩短。
-    constexpr float TURRET_REFERENCE_ANGLE_DEG = 180.0f;
-    constexpr uint32_t TURRET_REFERENCE_TIME_MS = 350;
-    constexpr uint32_t TURRET_MIN_TIME_MS = 133;
-    constexpr uint16_t TURRET_ACCEL_TIME_MS = 33;
-    constexpr uint16_t TURRET_DECEL_TIME_MS = 100;
-    // 夹爪原标定为 speed=200 对应约90°/s；时间缩短至1/3后等效为270°/s。
+    // 舵机动作时间统一缩短为原标定值的 1/5。
+    // 2号转台按实际转角计时：180度用210ms，最短80ms；加减速时间同比缩短。
+    constexpr float TURRET_REFERENCE_ANGLE_DEG = 180.0f;   // 计算转台动作时间所采用的基准转角
+    constexpr uint32_t TURRET_REFERENCE_TIME_MS = 210;     // 转过基准角度所需的标定时间（毫秒）
+    constexpr uint32_t TURRET_MIN_TIME_MS = 80;            // 转台单次动作允许的最短时间（毫秒）
+    constexpr uint16_t TURRET_ACCEL_TIME_MS = 20;          // 转台加速阶段的持续时间（毫秒）
+    constexpr uint16_t TURRET_DECEL_TIME_MS = 60;          // 转台减速阶段的持续时间（毫秒）
+    // 夹爪原标定为 speed=200 对应约90°/s；时间缩短至1/5后等效为450°/s。
     // 实际指令耗时按回读角度到最近等效目标的行程计算，不再使用与角度无关的线性映射。
-    constexpr float GRIPPER_REFERENCE_COMMAND_SPEED = 200.0f;
-    constexpr float GRIPPER_REFERENCE_ANGULAR_SPEED_DEG_S = 270.0f;
-    constexpr uint32_t GRIPPER_MIN_TIME_MS = 67;
+    constexpr float GRIPPER_REFERENCE_COMMAND_SPEED = 200.0f; // 夹爪角速度标定时采用的指令速度
+    constexpr float GRIPPER_REFERENCE_ANGULAR_SPEED_DEG_S = 450.0f; // 缩短动作时间后的等效角速度
+    constexpr uint32_t GRIPPER_MIN_TIME_MS = 40;
     float safeTurretTarget = 0.0f;
     uint32_t turretIntervalMs = TURRET_MIN_TIME_MS;
     const bool moveTurret = absoluteTurret || turret_angle != -1.0f;
@@ -1015,11 +1015,11 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
  * @brief 机械臂初始化归零位
  */
 bool InitArm_start() {
-    if (!MoveArm(160,-1,-1,0,200)) return false;
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    if (!MoveArm(-1, -1, -55, -1, 200)) return false;
+    if (!MoveArm(160,-1,-1,0,300)) return false;
+    vTaskDelay(pdMS_TO_TICKS(800));
+    if (!MoveArm(-1, -1, -55, -1, 300)) return false;
     vTaskDelay(pdMS_TO_TICKS(100));
-    if (!MoveArm(150,40,-1,0,200)) return false;
+    if (!MoveArm(154,40,-1,0,300)) return false;
     vTaskDelay(pdMS_TO_TICKS(500));
     return true;
 }
@@ -1051,17 +1051,17 @@ bool InitArm_look2() {
  * @brief 机械臂初始化归视觉位（圆盘物料定位视觉）
  */
 bool InitArm_look3() {
-    if (!MoveArm(170,40,-1,-1,200)) return false;
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    if (!MoveArm(-1, -1, 90, 80, 200)) return false;
+    if (!MoveArm(170,40,-1,-1,300)) return false;
+    vTaskDelay(pdMS_TO_TICKS(700));
+    if (!MoveArm(-1, -1, 90, 80, 300)) return false;
 
     // MoveArm 只表示命令已成功下发。圆盘下一次识别必须等转台真实到达观察位，
     // 否则动作期间积压的视觉结果可能被误当成下一件物料的新数据。
-    constexpr float LOOK3_TURRET_TARGET_DEG = 90.0f;
-    constexpr float LOOK3_TURRET_TOLERANCE_DEG = 5.0f;
-    constexpr uint32_t LOOK3_TURRET_TIMEOUT_MS = 2500;
-    constexpr uint32_t LOOK3_TURRET_POLL_MS = 50;
-    const uint32_t startedAt = millis();
+    constexpr float LOOK3_TURRET_TARGET_DEG = 90.0f;       // 转台进入视觉观察位时的目标角度
+    constexpr float LOOK3_TURRET_TOLERANCE_DEG = 5.0f;     // 判断转台到位所允许的角度误差
+    constexpr uint32_t LOOK3_TURRET_TIMEOUT_MS = 1500;     // 等待转台到位的最大时长（毫秒）
+    constexpr uint32_t LOOK3_TURRET_POLL_MS = 50;          // 查询转台实际角度的时间间隔（毫秒）
+    const uint32_t startedAt = millis();                    // 记录等待开始时间，用于判断是否超时
     float measuredAngle = NAN;
     do {
         if (taskMotionAborted) return false;

@@ -230,10 +230,10 @@
           "integer": false
         },
         "搬运/速度/圆盘预抓": {
-          "value": 300.0,
+          "value": 400.0,
           "description": "圆盘抓取第1步：升降、伸缩、转台和张爪共用的 MoveArm 速度。",
           "minimum": 1.0,
-          "maximum": 300.0,
+          "maximum": 500.0,
           "integer": false
         },
         "搬运/速度/圆盘夹紧": {
@@ -244,10 +244,10 @@
           "integer": false
         },
         "搬运/速度/圆盘提起": {
-          "value": 250.0,
+          "value": 400.0,
           "description": "圆盘抓取第3步：升至圆盘提起高度的 MoveArm 速度。",
           "minimum": 1.0,
-          "maximum": 300.0,
+          "maximum": 500.0,
           "integer": false
         },
         "搬运/速度/移至工位平移": {
@@ -506,7 +506,7 @@
           "integer": false
         },
         "对齐/最大轮速(RPM)": {
-          "value": 20,
+          "value": 50,
           "description": "视觉PID满输出时的轮速上限，不是自动节点导航速度。",
           "minimum": 1.0,
           "maximum": 5000.0,

@@ -84,9 +84,9 @@ void Task_MainStateMachine(void *pvParameters) {
         case STATE_READ_TASK: { // 读取任务码
             updateDisplay("DISPLAY", "DEBUG", "READ TASK");
             InitArm_start();
-            constexpr float SCAN_APPROACH_MM = 900.0f;
-            constexpr float SCAN_RANGE_MM = 400.0f;
-            constexpr uint8_t SCAN_MAX_RETRIES = 3;
+            constexpr float SCAN_APPROACH_MM = 600.0f;   // 扫码前沿指定方向接近二维码区域的距离（毫米）
+            constexpr float SCAN_RANGE_MM = 400.0f;      // 每次往返搜索二维码时移动的距离（毫米）
+            constexpr uint8_t SCAN_MAX_RETRIES = 3;      // 首次扫描失败后允许的最大重试次数
             // 按实车方向：启停区1向左扫码（+Y），启停区2向右扫码（-Y）。
             // 本次扫码固定使用同一个区号，接近和往返扫描统一应用方向。
             const StartZone scanStartZone = currentStartZone;
@@ -118,9 +118,7 @@ void Task_MainStateMachine(void *pvParameters) {
                     for (uint8_t attempt = 0; attempt <= SCAN_MAX_RETRIES; ++attempt) {
                         if (pollTaskCode()) break;
                         const float distance = scanDirection * ((attempt % 2 == 0) ? SCAN_RANGE_MM : -SCAN_RANGE_MM);
-                        Serial.printf("[SCANNER] scan %u/%u, distance=%.0f mm\n",
-                                      static_cast<unsigned>(attempt),
-                                      static_cast<unsigned>(SCAN_MAX_RETRIES), distance);
+                        Serial.printf("[SCANNER] scan %u/%u, distance=%.0f mm\n", static_cast<unsigned>(attempt), static_cast<unsigned>(SCAN_MAX_RETRIES), distance);
                         const bool completed = MovePosition(0, distance, 0, SCAN_SEARCH_SPEED_RPM, pollTaskCode);
                         if (pollTaskCode()) break;
                         if (!completed) {
@@ -167,7 +165,7 @@ void Task_MainStateMachine(void *pvParameters) {
             // 原料区为旋转电动转盘(6-10s/圈, 转向随机, 物料120°分布)
             // COLOR 匹配下一件任务颜色时抓取，动作成功并登记载物台后推进 roundProgress。
             // 规则: 每次抓1个; 物料必须放到机器人上才能抓下一个
-            //       不允许手爪夹持运送
+            // 不允许手爪夹持运送
             updateDisplay("DISPLAY", "DEBUG", discMaterialRequested ? "WAIT DISC MATERIAL" : "GRAB R1");
             //调取接口获取路径, 并移动到目标位置
             if (!discRouteCompleted) {
@@ -477,8 +475,6 @@ void Task_MainStateMachine(void *pvParameters) {
                 // 定位成功：清空视觉任务队列，丢弃定位阶段残留的颜色结果。
                 xQueueReset(xVisualTaskQueue);
                 // 圆盘定位成功后、物料识别前的位置调整，仅在首次切换时执行。
-                vTaskDelay(pdMS_TO_TICKS(100));
-                //GotoPose(-45, 0, 0, true);
                 vTaskDelay(pdMS_TO_TICKS(100));
                 // look3 实测转台进入 90°±5° 后才启动新识别；开放前继续丢弃旧帧。
                 if (!InitArm_look3()) {

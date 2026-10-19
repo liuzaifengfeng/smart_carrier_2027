@@ -18,6 +18,7 @@ struct Sim : IO {
     uint32_t cancelAt=0,missingAt=0;
     uint32_t rippleAt=0,firstZeroAt=0;bool rippleInjected=false;
     bool neverStops=false,badZero=false,stall=false;
+    uint8_t stallMotor=4,stallFlags=133;
     int startupQueries=0;bool targetSent=false;
     uint32_t latencyMs=0;
     uint32_t flagDelayMs=0,rpmTailMs=0,doneAt[4]={};
@@ -61,7 +62,7 @@ struct Sim : IO {
         bool flagReady=done&&(!flagDelayMs||time-doneAt[i]>=flagDelayMs);
         m.flags=1|((flagReady||falseArrived)?2:0);m.rpm=(done||falseArrived)?0:rpm[i];
         if(done&&pending[i]!=0&&time-doneAt[i]<rpmTailMs)m.rpm=6;
-        if(stall&&actions>0&&id==4)m.flags=133;
+        if(stall&&actions>0&&id==stallMotor)m.flags=stallFlags;
         if(neverStops){m.rpm=6;m.position+=time*10;}
         if(rippleAt&&time>=rippleAt&&!rippleInjected&&actions==0){m.rpm=6;rippleInjected=true;}
         return nullptr;
@@ -222,9 +223,12 @@ int main() {
     CHECK(!error&&missing.actions==3); // H30离线仍按有限脉冲/编码器完成，不伪造IMU到位
     Sim rejected;rejected.reject=true;error=run(route,settings,rejected,result);
     CHECK(error&&strcmp(error,"MOTOR_COMMAND_REJECTED")==0&&rejected.syncs==0);
-    Sim stalled;stalled.stall=true;error=run(route,settings,stalled,result);
-    CHECK(error&&!strcmp(error,"MOTOR_STALL")&&stalled.diagnostics==1);
-    CHECK(stalled.updates==4&&stalled.syncs==1); // 驱动报警后立即终止，不重发
+    // 四轮的两类堵转位均不再触发固件中止，其他到位条件仍须满足。
+    for(uint8_t id=1;id<=4;++id)for(uint8_t flags:{uint8_t(133),uint8_t(137),uint8_t(141)}) {
+        Sim stalled;stalled.stall=true;stalled.stallMotor=id;stalled.stallFlags=flags;
+        error=run(route,settings,stalled,result);
+        CHECK(!error&&stalled.diagnostics==0&&stalled.actions==3);
+    }
     Sim cancelled;cancelled.cancel=true;error=run(route,settings,cancelled,result);
     CHECK(error&&strcmp(error,"STOPPED")==0&&cancelled.actions==0);
     // 与实车日志相同的1850mm+90度路线，加上串口查询/发令耗时作配置对比。

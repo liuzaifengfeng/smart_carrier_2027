@@ -27,14 +27,17 @@ constexpr bool IsWithinAlignmentDeadzone(const VisionAlignmentDeadzone &zone,
         && fabsf(angle) <= zone.angleDeg;
 }
 
+constexpr uint8_t ALIGNMENT_REQUIRED_FRAMES = 2;
+
 constexpr uint8_t NextAlignmentFrameCount(uint8_t count, bool withinDeadzone,
                                          bool sameMode) {
-    return !withinDeadzone ? 0 : !sameMode ? 1 : count < 5 ? count + 1 : 5;
+    return !withinDeadzone ? 0 : !sameMode ? 1
+        : count < ALIGNMENT_REQUIRED_FRAMES ? count + 1 : ALIGNMENT_REQUIRED_FRAMES;
 }
 
 // 每个新反馈帧调用一次；重复轮询不得调用 update。
 struct AlignmentFrameWaiter {
-    static constexpr uint8_t REQUIRED_FRAMES = 5;
+    static constexpr uint8_t REQUIRED_FRAMES = ALIGNMENT_REQUIRED_FRAMES;
     uint8_t consecutiveFrames = 0;
     VisionStartMode mode = VisionStartMode::NONE;
 
