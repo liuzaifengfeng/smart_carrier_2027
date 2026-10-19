@@ -6,7 +6,7 @@
 //圆盘上三个位置从左到右是1、2、3
 
 //机械臂速度
-int armSpeed = 300;
+int armSpeed = 500;
 
 bool GrabDiscPosition1(uint8_t color, uint8_t cargo) {
     
@@ -14,7 +14,7 @@ bool GrabDiscPosition1(uint8_t color, uint8_t cargo) {
     if (!MoveArm(120, 150, 71, 80, armSpeed)) return false;
     delay(300);
     if (!MoveArm(80, 150, 71, 80, armSpeed)) return false;
-    delay(400);
+    delay(300);
     if (!MoveArm(80, 150, 71, -8, armSpeed)) return false;
     delay(300);
     if (!MoveArm(170, 150, 71, -8, armSpeed)) return false;
@@ -28,7 +28,7 @@ bool GrabDiscPosition2(uint8_t color, uint8_t cargo) {
     if (!MoveArm(120, 0, 90, 80, armSpeed)) return false;
     delay(300);
     if (!MoveArm(80, 0, 90, 80, armSpeed)) return false;
-    delay(400);
+    delay(300);
     // 实车确认的抓到物料瞬间，保持该动作不变。
     if (!MoveArm(80, 0, 90, -8, armSpeed)) return false;
     delay(300);
@@ -41,9 +41,9 @@ bool GrabDiscPosition2(uint8_t color, uint8_t cargo) {
 bool GrabDiscPosition3(uint8_t color, uint8_t cargo) {
     if (!ValidateDiscPositionTransfer(color, cargo)) return false;
     if (!MoveArm(120, 150, 102, 80, armSpeed)) return false;
-    delay(300);
+    delay(200);
     if (!MoveArm(80, 150, 102, 80, armSpeed)) return false;
-    delay(400);
+    delay(300);
     if (!MoveArm(80, 150, 102, -8, armSpeed)) return false;
     delay(300);
     if (!MoveArm(170, 150, 102, -8, armSpeed)) return false;

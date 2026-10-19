@@ -7,7 +7,7 @@ using namespace continuous;
 namespace {
 const char *health(const Motor &m) {
     if(!(m.flags&1))return "MOTOR_DISABLED";
-    if(m.flags&12)return "MOTOR_STALL";
+    if(MOTOR_STALL_CHECK_ENABLED&&(m.flags&12))return "MOTOR_STALL";
     return nullptr;
 }
 const char *health(IO &io,uint8_t id,const Motor &m,double target=0) {
@@ -140,7 +140,7 @@ const char *move(IO &io,const Settings &settings,const Config &cfg,Result &resul
             measuredRpm=static_cast<uint16_t>(fmaxf(measuredRpm,abs(state.rpm)));
             if(abs(state.rpm)>3)allIdle=false;
             // 接续以每轮实际位置和转速为准，不等待驱动器更严格的到位标志。
-            // flags仍用于使能/堵转保护和诊断，不能仅凭标志或平均进度推进。
+            // flags仍用于使能检查和诊断；堵转检查由独立开关控制，不能仅凭标志或平均进度推进。
             // 直行按整数编码器单位比较，消除脉冲目标换算产生的不足1单位舍入差。
             const double arrivalResidual=rotating?residual:static_cast<double>(llround(residual));
             if(arrivalResidual>tolerance||abs(state.rpm)>3)arrived=false;

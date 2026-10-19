@@ -107,7 +107,7 @@ void initialize() {
     }
     RegisterRuntimeFloat("搬运/安全高度(mm)", materialTransferLayout.approachHeight, 0, ARM_HEIGHT_LIMIT_MM);
     RegisterRuntimeFloat("搬运/二层高度增量(mm)", materialTransferLayout.secondLayerOffset, 0, ARM_HEIGHT_LIMIT_MM);
-    // MoveArm 公共速度指令范围为1~300；夹爪按实际角差与标定角速度换算时间。
+    // 公共搬运速度仍限制1~300；圆盘预抓/提起单独允许到500，与MoveArm范围一致。
     RegisterRuntimeFloat("搬运/速度", materialTransferLayout.moveSpeed, 1, 300);
     RegisterRuntimeFloat("搬运/夹爪张开(deg)", materialTransferLayout.clawOpenAngle, -360, 360);
     RegisterRuntimeFloat("搬运/夹爪夹紧(deg)", materialTransferLayout.clawClosedAngle, -360, 360);
@@ -115,9 +115,9 @@ void initialize() {
     registerPose("搬运/圆盘预抓", materialMotionSteps.discApproach);
     RegisterRuntimeFloat("搬运/圆盘预抓/张爪(deg)", materialMotionSteps.discOpenAngle, -360, 360);
     RegisterRuntimeFloat("搬运/圆盘提起/高度(mm)", materialMotionSteps.discLiftHeight, 0, ARM_HEIGHT_LIMIT_MM);
-    RegisterRuntimeFloat("搬运/速度/圆盘预抓", materialMotionSteps.discApproachSpeed, 1, 300);
+    RegisterRuntimeFloat("搬运/速度/圆盘预抓", materialMotionSteps.discApproachSpeed, 1, 500);
     RegisterRuntimeFloat("搬运/速度/圆盘夹紧", materialMotionSteps.discGripSpeed, 1, 300);
-    RegisterRuntimeFloat("搬运/速度/圆盘提起", materialMotionSteps.discLiftSpeed, 1, 300);
+    RegisterRuntimeFloat("搬运/速度/圆盘提起", materialMotionSteps.discLiftSpeed, 1, 500);
     RegisterRuntimeFloat("搬运/速度/移至工位平移", materialMotionSteps.approachTranslateSpeed, 1, 300);
     RegisterRuntimeFloat("搬运/速度/移至工位转向", materialMotionSteps.approachRotateSpeed, 1, 300);
     RegisterRuntimeFloat("搬运/速度/取料下降", materialMotionSteps.pickDescendSpeed, 1, 300);

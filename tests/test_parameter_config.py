@@ -1,5 +1,6 @@
 """参数文件的名称映射、边界校验及导入/导出，不连接硬件。"""
 import json
+import re
 import tkinter as tk
 import unittest
 import uuid
@@ -26,6 +27,17 @@ def temporary_folder():
 
 
 class ConfigTests(unittest.TestCase):
+    def test_compiled_material_speed_defaults_match_firmware_ranges(self):
+        source = (DEFAULT_CONFIG_PATH.parent/'src/runtime_parameters.cpp').read_text(encoding='utf-8')
+        parameters = load_config(DEFAULT_CONFIG_PATH)['groups']['搬运']['parameters']
+        for name, minimum, maximum in re.findall(
+                r'RegisterRuntimeFloat\("(搬运/速度[^\"]*)",\s*[^,]+,\s*([\d.]+),\s*([\d.]+)\)', source):
+            with self.subTest(name=name):
+                entry = parameters[name]
+                self.assertGreaterEqual(entry['value'], float(minimum))
+                self.assertLessEqual(entry['value'], float(maximum))
+                self.assertLessEqual(entry['maximum'], float(maximum))
+
     def setUp(self):
         self.data = load_config(DEFAULT_CONFIG_PATH)
         self.parameters = {}
