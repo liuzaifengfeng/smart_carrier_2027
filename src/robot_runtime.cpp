@@ -4,13 +4,13 @@
 // ================= 基础配置 =================
 
 uint32_t ALIGN_PID_MAX_SPEED_RPM = 50;       // 视觉PID对齐轮速上限，单位RPM；原20，提高到2.5倍。
-float NODE_PATH_SPEED_MM_S = 2000.0f;        // 正式节点路径的最大平移速度，单位mm/s。
+float NODE_PATH_SPEED_MM_S = 2500.0f;        // 正式节点路径的最大平移速度，单位mm/s。
 float NODE_PATH_ACCEL_MM_S2 = 2000.0f;       // 正式节点路径的平移加减速度，单位mm/s²，并换算为驱动器加速度档位。
-float NODE_PATH_TURN_DEG_S = 200.0f;         // 节点路径原地转向的最大角速度，单位°/s。
+float NODE_PATH_TURN_DEG_S = 300.0f;         // 节点路径原地转向的最大角速度，单位°/s。
 float NODE_PATH_TURN_ACCEL_DEG_S2 = 400.0f;  // 节点路径原地转向的角加减速度，单位°/s²，并换算为驱动器加速度档位。
 float NODE_PATH_HEADING_DEADBAND_DEG = 3.0f; // 停稳后独立航向修正的允许误差，单位°；误差在此范围内不再转动。
-uint32_t SCAN_APPROACH_SPEED_RPM = 200;        // 启停区接近扫码区域时的位置模式最大轮速，单位RPM。
-uint32_t SCAN_SEARCH_SPEED_RPM = 30;          // 扫码区域往返搜索任务码时的位置模式最大轮速，单位RPM。
+uint32_t SCAN_APPROACH_SPEED_RPM = 1500;        // 启停区接近扫码区域时的位置模式最大轮速，单位RPM。
+uint32_t SCAN_SEARCH_SPEED_RPM = 1000;          // 扫码区域往返搜索任务码时的位置模式最大轮速，单位RPM。
 
 CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 

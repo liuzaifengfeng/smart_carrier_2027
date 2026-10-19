@@ -409,10 +409,10 @@ static bool MoveArmInternal(float high, float length, float turret_angle,
     // 舵机动作时间统一缩短为原标定值的 1/5。
     // 2号转台按实际转角计时：180度用210ms，最短80ms；加减速时间同比缩短。
     constexpr float TURRET_REFERENCE_ANGLE_DEG = 180.0f;   // 计算转台动作时间所采用的基准转角
-    constexpr uint32_t TURRET_REFERENCE_TIME_MS = 210;     // 转过基准角度所需的标定时间（毫秒）
-    constexpr uint32_t TURRET_MIN_TIME_MS = 80;            // 转台单次动作允许的最短时间（毫秒）
+    constexpr uint32_t TURRET_REFERENCE_TIME_MS = 100;     // 转过基准角度所需的标定时间（毫秒）
+    constexpr uint32_t TURRET_MIN_TIME_MS = 40;            // 转台单次动作允许的最短时间（毫秒）
     constexpr uint16_t TURRET_ACCEL_TIME_MS = 20;          // 转台加速阶段的持续时间（毫秒）
-    constexpr uint16_t TURRET_DECEL_TIME_MS = 60;          // 转台减速阶段的持续时间（毫秒）
+    constexpr uint16_t TURRET_DECEL_TIME_MS = 20;          // 转台减速阶段的持续时间（毫秒）
     // 夹爪原标定为 speed=200 对应约90°/s；时间缩短至1/5后等效为450°/s。
     // 实际指令耗时按回读角度到最近等效目标的行程计算，不再使用与角度无关的线性映射。
     constexpr float GRIPPER_REFERENCE_COMMAND_SPEED = 200.0f; // 夹爪角速度标定时采用的指令速度
@@ -468,8 +468,8 @@ static bool MoveArmInternal(float high, float length, float turret_angle,
             } else {
                 uint32_t pulses = (uint32_t)(high * HEIGHT_PULSE);
                 // 仅在转换为协议的16位RPM字段时饱和，避免大速度溢出回绕。
-                const uint16_t rpm = speed >= UINT16_MAX / 8.0f ? UINT16_MAX : speed * 8.0f;
-                Emm_V5_Pos_Control(5, 1, rpm, 240, pulses, true, false);
+                const uint16_t rpm = speed >= UINT16_MAX / 8.0f ? UINT16_MAX : speed * 15.0f;
+                Emm_V5_Pos_Control(5, 1, rpm, 250, pulses, true, false);
                 vTaskDelay(pdMS_TO_TICKS(10));
                 currentArm.high = high;
             }
@@ -972,8 +972,8 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength,
         Serial.println("[Route] Error: path requires at least two nodes");
         return false;
     }
-    if (!isfinite(speedMmS) || speedMmS < 10 || speedMmS > 2000) {
-        Serial.println("[Route] Error: speed must be in 10~2000 mm/s range");
+    if (!isfinite(speedMmS) || speedMmS < 10 || speedMmS > 5000) {
+        Serial.println("[Route] Error: speed must be in 10~5000 mm/s range");
         return false;
     }
     if (!isfinite(currentPose.theta) || (!isnan(finalHeading) && !isfinite(finalHeading))) {

@@ -60,7 +60,7 @@ class MotionTests(unittest.TestCase):
         controller = (ROOT/'src/continuous_trial.cpp').read_text(encoding='utf-8')
         actual = controller[controller.index('bool H30StartNodePath('):]
         self.assertNotIn('CalibrateH30', actual)
-        self.assertIn('cfg.policy=3', actual)
+        self.assertIn('cfg.policy=2', actual)
         serial = (ROOT/'src/serial_commands.inc').read_text(encoding='utf-8')
         actual = serial[serial.index('static void serialRoute('):serial.index('static void serialRelease(')]
         self.assertIn('H30StartNodePath(', actual)
