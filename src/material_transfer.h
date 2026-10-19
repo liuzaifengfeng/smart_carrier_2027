@@ -90,9 +90,11 @@ struct MaterialAuxiliaryDelays {
     uint32_t lidarZone2LiftMs, lidarZone2TurnMs;
 };
 
-// 9 组分别按 [载物台编号-1][工作区编号-1] 索引；圆盘及反向搬运用公共配置。
+// 正反向各9组独立延时，分别按 [载物台-1][工作区-1]、[工作区-1][载物台-1] 索引。
+// 圆盘流程继续使用公共配置。
 extern MaterialTransferDelays commonMaterialDelays;
 extern MaterialTransferDelays cargoToWorkAreaDelays[MATERIAL_STATION_COUNT][MATERIAL_STATION_COUNT];
+extern MaterialTransferDelays workAreaToCargoDelays[MATERIAL_STATION_COUNT][MATERIAL_STATION_COUNT];
 extern MaterialAuxiliaryDelays materialAuxiliaryDelays;
 
 // materialTransferLayout：所有固定位置和动作参数，标定值在 cpp 文件顶部填写。

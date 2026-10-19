@@ -1,6 +1,7 @@
 """编译期执行实际 MoveArm，验证绝对目标不依赖主控缓存；无需硬件。"""
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -12,9 +13,14 @@ ROOT = Path(__file__).resolve().parents[1]
 class ArmAbsolutePositionTests(unittest.TestCase):
     def test_actual_move_arm_commands(self):
         source = (ROOT / "src/chassis.cpp").read_text(encoding="utf-8")
-        start = source.index("bool MoveArm(")
+        start = source.index("bool ReadArmTurretAngle(")
         end = source.index("\n\n\n/**", start)
-        move = source[start:end].replace("bool MoveArm(", "constexpr bool MoveArm(", 1)
+        move = re.sub(r"(?:static )?bool (ReadArmTurretAngle|MoveArmInternal|MoveArm|MoveArmPlanned)\(",
+                      r"constexpr bool \1(", source[start:end])
+        header = (ROOT / "src/chassis.h").read_text(encoding="utf-8")
+        names = ("ARM_HEIGHT_LIMIT_MM", "TURRET_CABLE_MIN_DEG", "TURRET_CABLE_MAX_DEG")
+        limits = "\n".join(re.search(r"constexpr float " + name + r"\s*=[^;]+;",
+                                      header).group() for name in names)
         harness = r'''
 #include <stdint.h>
 #include <float.h>
@@ -24,7 +30,7 @@ constexpr float fabsf(float v) { return v < 0 ? -v : v; }
 constexpr float roundf(float v) { return v < 0 ? int(v - 0.5f) : int(v + 0.5f); }
 constexpr int pdMS_TO_TICKS(int v) { return v; }
 constexpr void vTaskDelay(int) {}
-constexpr float ARM_HEIGHT_LIMIT_MM=175, TURRET_CABLE_MIN_DEG=-180, TURRET_CABLE_MAX_DEG=360;
+LIMITS
 struct Log {
     constexpr void println(const char*) {}
     template<class... A> constexpr void printf(const char*, A...) {}
@@ -88,7 +94,7 @@ constexpr bool rejectInvalid() {
 static_assert(cacheIndependent(), "descending/repeated/stale-cache absolute targets");
 static_assert(zeroAndSkip(), "absolute zero, sentinel and travel limits");
 static_assert(rejectInvalid(), "range, nonfinite and task abort protections");
-'''.replace("MOVE_ARM", move)
+'''.replace("LIMITS", limits).replace("MOVE_ARM", move)
         compiler = Path(os.environ.get("PLATFORMIO_CORE_DIR", Path.home() / ".platformio")) / (
             "packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-g++.exe")
         self.assertTrue(compiler.is_file(), "需要已安装的 ESP32-S3 编译器")

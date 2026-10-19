@@ -19,6 +19,7 @@ from datetime import datetime
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from parameter_config import DEFAULT_CONFIG_PATH, load_config, config_edits, export_config
 from action_group_config import (DELAY_NAMES, DELAY_PREFIX, TRANSFER_GROUPS,
+                                FORWARD_TRANSFER_GROUPS, REVERSE_TRANSFER_GROUPS,
                                 load_action_group_delays, save_action_group_delays)
 from continuous_trial import ContinuousTrialPanel
 from field_geometry import OBSTACLES
@@ -697,7 +698,7 @@ class ParameterPanel(ttk.Frame):
             return
         action, request = self.test_running
         category, command = request[1:3]
-        if command == "TRANSFER" and fields[0] == "EVT" and fields[4:] != request[3:]:
+        if command in ("TRANSFER", "RETRIEVE") and fields[0] == "EVT" and fields[4:] != request[3:]:
             return  # 忽略其他载物台/工作区组合的迟到结果。
         complete = False
         result = ""
@@ -1053,8 +1054,9 @@ class ActionGroupPanel(ttk.Frame):
         by_name = {p.name: p for p in c.parameters.values()}
         names = self.names()
         transfer = self.group.get() in TRANSFER_GROUPS[1:]
+        reverse = self.group.get() in REVERSE_TRANSFER_GROUPS
         # 只调整显示名称；行标识、串口参数名和 C++ 保存键继续使用原名称。
-        labels = {"取料抬升": "抬升后等待（缩回前）", "放料平移": "缩回后等待",
+        labels = {"取料抬升": "抬升并缩回后等待" if reverse else "抬升后等待（缩回前）", "放料平移": "缩回后等待",
                   "放料稳定": "转向前稳定", "放料下降": "伸出并下降"} if transfer else {}
         selection = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
@@ -1079,10 +1081,14 @@ class ActionGroupPanel(ttk.Frame):
             widget.configure(state=tk.NORMAL if idle and available else tk.DISABLED)
         self.trial_button.configure(state=tk.NORMAL if idle and available and self.group.get() in TRANSFER_GROUPS[1:] else tk.DISABLED)
         self.save_all_button.configure(state=tk.NORMAL if idle and c.ready and all(name in by_name for name in DELAY_NAMES) else tk.DISABLED)
-        note = ("夹紧后：抬升 → 等待 → 缩回到 0 → 等待 → 转向目标 → 伸出并下降。"
+        note = ("夹紧后：同时抬升并缩回到 0 → 等待 → 转向载物台 → 等待 → 同时伸出并下降。"
+                "“缩回后等待”和“转向前稳定”为旋转前额外等待，可设为 0。"
+                "试跑前确保目标载物台空载；手动试跑按红色物料登记。" if reverse else
+                "夹紧后：抬升 → 等待 → 缩回到 0 → 等待 → 转向目标 → 伸出并下降。"
                 "“抬升后等待（缩回前）”控制抬升与缩回两条指令的间隔。"
                 "“缩回后等待”和“转向前稳定”是额外等待，可设为 0。" if transfer else
-                "公共延时用于圆盘放料和工作区取回；9 种载物台到工作区组合各用自己的延时。")
+                "公共延时用于圆盘取放；正反向各9组搬运使用各自延时。"
+                "圆盘和扫码准备保持原有动作顺序。")
         self.note.set(note
                       if available or not c.ready else "当前固件缺少本组延时参数，请先烧录新版固件。")
 
@@ -1126,7 +1132,8 @@ class ActionGroupPanel(ttk.Frame):
 
     def change_group(self, _event=None):
         previous = self.current_group
-        if self.controller.ready and not self.edit():
+        editable = any(p.name == self.selected for p in self.controller.parameters.values())
+        if self.controller.ready and editable and not self.edit():
             self.group.set(previous)
             self.snapshot = None
             self.refresh()
@@ -1145,8 +1152,12 @@ class ActionGroupPanel(ttk.Frame):
             return
         if not all(any(p.name == name for p in c.parameters.values()) for name in self.names()):
             return
-        cargo, work = divmod(TRANSFER_GROUPS.index(group) - 1, 3)
-        line = build_frame("CMD", "ARM", "TRANSFER", cargo + 1, work + 1)
+        if group in REVERSE_TRANSFER_GROUPS:
+            work, cargo = divmod(REVERSE_TRANSFER_GROUPS.index(group), 3)
+            line = build_frame("CMD", "ARM", "RETRIEVE", work + 1, cargo + 1)
+        else:
+            cargo, work = divmod(FORWARD_TRANSFER_GROUPS.index(group), 3)
+            line = build_frame("CMD", "ARM", "TRANSFER", cargo + 1, work + 1)
         if c.edits:
             c.run_after_verify = False
             c.test_after_verify = (group, line)

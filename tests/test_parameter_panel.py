@@ -7,7 +7,8 @@ from upper_computer import (Parameter, ParameterPanel, parse_parameter,
                             ActionGroupPanel, parameter_matches_stage, build_parameter_test_command,
                             UpperComputerApp)
 from continuous_trial import TrialPlan, TrialConfig
-from action_group_config import DELAY_NAMES, DELAY_PREFIX, TRANSFER_GROUPS, load_action_group_delays
+from action_group_config import (DELAY_NAMES, DELAY_PREFIX, TRANSFER_GROUPS, FORWARD_TRANSFER_GROUPS,
+                                REVERSE_TRANSFER_GROUPS, load_action_group_delays)
 
 
 class ValidationTests(unittest.TestCase):
@@ -302,10 +303,12 @@ class ActionGroupPanelTests(unittest.TestCase):
         self.controller.cancel_timer()
         self.root.destroy()
 
-    def feed(self, edits=None, old_firmware=False):
+    def feed(self, edits=None, old_firmware=False, forward_only=False):
         seq = self.controller.sequence
         self.controller.receive(f"{{RSP,CFG,GET,VALUE,{seq},0,搬运/速度,300,1,300,0}}")
         values = {} if old_firmware else self.defaults | (edits or {})
+        if forward_only:
+            values = {name: value for name, value in values.items() if not name.startswith(f"{DELAY_PREFIX}工作区")}
         for index, (name, value) in enumerate(values.items(), 1):
             self.controller.receive(f"{{RSP,CFG,GET,VALUE,{seq},{index},{name},{value},0,60000,1}}")
         self.controller.receive(f"{{RSP,CFG,GET,END,{seq},{len(values)+1}}}")
@@ -337,7 +340,8 @@ class ActionGroupPanelTests(unittest.TestCase):
     def test_new_motion_labels_preserve_parameter_keys_and_other_groups(self):
         labels = {"取料抬升": "抬升后等待（缩回前）", "放料平移": "缩回后等待",
                   "放料稳定": "转向前稳定", "放料下降": "伸出并下降"}
-        for group in TRANSFER_GROUPS[1:]:
+        self.assertTrue(set(REVERSE_TRANSFER_GROUPS).issubset(self.panel.group_box["values"]))
+        for group in FORWARD_TRANSFER_GROUPS:
             self.choose(group)
             self.assertEqual(len(self.panel.tree.get_children()), 12)
             for old, new in labels.items():
@@ -346,6 +350,15 @@ class ActionGroupPanelTests(unittest.TestCase):
                 self.assertEqual(self.panel.tree.set(name, "source"), str(self.defaults[name]))
             self.assertIn("缩回到 0", self.panel.note.get())
             self.assertIn("抬升 → 等待 → 缩回到 0", self.panel.note.get())
+        for group in REVERSE_TRANSFER_GROUPS:
+            self.choose(group)
+            self.assertEqual(len(self.panel.tree.get_children()), 12)
+            for old, new in labels.items():
+                name = f"{DELAY_PREFIX}{group}/{old}(ms)"
+                self.assertEqual(self.panel.tree.set(name, "step"), "抬升并缩回后等待" if old == "取料抬升" else new)
+                self.assertEqual(self.panel.tree.set(name, "source"), str(self.defaults[name]))
+            self.assertIn("同时抬升并缩回到 0", self.panel.note.get())
+            self.assertIn("目标载物台空载", self.panel.note.get())
         for group in ("公共", "圆盘", "扫码准备1", "扫码准备2"):
             self.choose(group)
             for name in self.panel.tree.get_children():
@@ -362,6 +375,13 @@ class ActionGroupPanelTests(unittest.TestCase):
         self.assertEqual(self.controller.edits, {first.index: "100", second.index: "200"})
         self.choose("载物台1到工作区1")
         self.assertEqual(self.panel.tree.set(first.name, "edit"), "100")
+        self.choose("工作区1到载物台1")
+        third = self.enter("放料下降", 300)
+        self.choose("工作区1到载物台2")
+        fourth = self.enter("放料下降", 400)
+        self.assertTrue(self.panel.edit())
+        self.assertEqual(self.controller.edits, {first.index: "100", second.index: "200",
+                                               third.index: "300", fourth.index: "400"})
 
     def test_trial_waits_for_readback_and_matching_result(self):
         self.read()
@@ -394,22 +414,57 @@ class ActionGroupPanelTests(unittest.TestCase):
             self.panel.save_to_cpp()
             save.assert_not_called()
 
-    def test_save_requires_confirmed_values_and_saves_selected_or_all(self):
+    def test_reverse_trial_waits_for_readback_and_matching_result(self):
         self.read()
+        self.choose("工作区2到载物台3")
         p = self.enter("放料下降", 100)
-        with patch("upper_computer.save_action_group_delays", return_value=12) as save:
-            self.panel.save_to_cpp()
-            save.assert_not_called()
-            self.panel.send()
-            self.confirm_write()
-            self.feed({p.name: 100})
-            self.panel.save_to_cpp()
-            selected = save.call_args.args[0]
-            self.assertEqual(len(selected), 12)
-            self.assertEqual(selected[p.name], "100")
-            self.assertTrue(all("载物台1到工作区1/" in name for name in selected))
-            self.panel.save_to_cpp(True)
-            self.assertEqual(set(save.call_args.args[0]), set(DELAY_NAMES))
+        self.panel.trial()
+        self.assertEqual(self.controller.mode, "write")
+        self.assertFalse(any("ARM,RETRIEVE" in line for line in self.sent))
+        self.confirm_write()
+        self.assertEqual(self.controller.mode, "read")
+        self.assertFalse(any("ARM,RETRIEVE" in line for line in self.sent))
+        self.feed({p.name: 100})
+        self.assertEqual(self.sent[-1], "{CMD,ARM,RETRIEVE,2,3}")
+        for event in ("{EVT,ARM,RETRIEVE,DONE,3,2}", "{EVT,ARM,TRANSFER,DONE,2,3}"):
+            self.controller.receive_test_result(event)
+            self.assertIsNotNone(self.controller.test_running)
+        self.controller.receive_test_result("{EVT,ARM,RETRIEVE,FAILED,2,3}")
+        self.assertIsNone(self.controller.test_running)
+        self.assertIn("失败", self.controller.status.get())
+        self.panel.trial()
+        self.controller.receive_test_result("{RSP,ARM,RETRIEVE,ERR,OCCUPIED}")
+        self.assertIsNone(self.controller.test_running)
+        self.assertIn("被固件拒绝", self.controller.status.get())
+
+    def test_all_reverse_groups_dispatch_their_own_route(self):
+        self.read()
+        for w in range(1, 4):
+            for c in range(1, 4):
+                self.choose(f"工作区{w}到载物台{c}")
+                self.panel.trial()
+                self.assertEqual(self.sent[-1], f"{{CMD,ARM,RETRIEVE,{w},{c}}}")
+                self.controller.receive_test_result(f"{{EVT,ARM,RETRIEVE,DONE,{w},{c}}}")
+                self.assertIsNone(self.controller.test_running)
+
+    def test_save_requires_confirmed_values_and_saves_selected_or_all(self):
+        for group in ("载物台1到工作区1", "工作区2到载物台3"):
+            self.read()
+            self.choose(group)
+            p = self.enter("放料下降", 100)
+            with patch("upper_computer.save_action_group_delays", return_value=12) as save:
+                self.panel.save_to_cpp()
+                save.assert_not_called()
+                self.panel.send()
+                self.confirm_write()
+                self.feed({p.name: 100})
+                self.panel.save_to_cpp()
+                selected = save.call_args.args[0]
+                self.assertEqual(len(selected), 12)
+                self.assertEqual(selected[p.name], "100")
+                self.assertTrue(all(f"{group}/" in name for name in selected))
+                self.panel.save_to_cpp(True)
+                self.assertEqual(set(save.call_args.args[0]), set(DELAY_NAMES))
 
     def test_hidden_parameter_editor_cannot_restore_old_delay(self):
         self.read()
@@ -445,6 +500,19 @@ class ActionGroupPanelTests(unittest.TestCase):
         with patch("upper_computer.save_action_group_delays") as save:
             self.panel.save_to_cpp(True)
             save.assert_not_called()
+
+    def test_forward_only_firmware_disables_reverse_writes(self):
+        self.controller.read()
+        self.feed(forward_only=True)
+        self.choose("工作区1到载物台1")
+        for button in (self.panel.trial_button, self.panel.send_button, self.panel.save_button):
+            self.assertEqual(str(button["state"]), "disabled")
+        self.assertIn("新版固件", self.panel.note.get())
+        previous = list(self.sent)
+        self.panel.trial()
+        self.assertEqual(self.sent, previous)
+        self.choose("载物台1到工作区1")
+        self.assertEqual(str(self.panel.trial_button["state"]), "normal")
 
 
 if __name__ == "__main__":

@@ -9,12 +9,17 @@ DEFAULT_SOURCE_PATH = Path(__file__).resolve().parent / "src" / "material_transf
 DELAY_PREFIX = "动作组延时/"
 TRANSFER_STEPS = ("取料平移", "取料稳定", "取料转向", "取料下降", "取料夹紧", "取料抬升",
                   "放料平移", "放料稳定", "放料转向", "放料下降", "放料松爪", "放料抬升")
-TRANSFER_GROUPS = ("公共", *(f"载物台{c}到工作区{w}" for c in range(1, 4) for w in range(1, 4)))
+FORWARD_TRANSFER_GROUPS = tuple(f"载物台{c}到工作区{w}" for c in range(1, 4) for w in range(1, 4))
+REVERSE_TRANSFER_GROUPS = tuple(f"工作区{w}到载物台{c}" for w in range(1, 4) for c in range(1, 4))
+TRANSFER_GROUPS = ("公共", *FORWARD_TRANSFER_GROUPS, *REVERSE_TRANSFER_GROUPS)
 AUXILIARY_STEPS = ("圆盘/预抓", "圆盘/夹紧", "圆盘/抬升", "扫码准备1/抬升",
                    "扫码准备1/转向", "扫码准备2/抬升", "扫码准备2/转向")
-DELAY_NAMES = tuple(f"{DELAY_PREFIX}{group}/{step}(ms)"
-                    for group in TRANSFER_GROUPS for step in TRANSFER_STEPS) + tuple(
-                        f"{DELAY_PREFIX}{step}(ms)" for step in AUXILIARY_STEPS)
+_LEGACY_DELAY_NAMES = tuple(f"{DELAY_PREFIX}{group}/{step}(ms)"
+                          for group in ("公共", *FORWARD_TRANSFER_GROUPS) for step in TRANSFER_STEPS) + tuple(
+                              f"{DELAY_PREFIX}{step}(ms)" for step in AUXILIARY_STEPS)
+_REVERSE_DELAY_NAMES = tuple(f"{DELAY_PREFIX}{group}/{step}(ms)"
+                           for group in REVERSE_TRANSFER_GROUPS for step in TRANSFER_STEPS)
+DELAY_NAMES = _LEGACY_DELAY_NAMES + _REVERSE_DELAY_NAMES
 
 
 def _numbers(count):
@@ -32,26 +37,33 @@ _LAYOUT = re.compile(
     + r"\s*,\s*".join([_STATION] * 3) + r"\s*,?\s*\}\s*;\s*"
     + r"MaterialAuxiliaryDelays\s+materialAuxiliaryDelays\s*=\s*\{\s*"
     + _numbers(7) + r"\s*\}\s*;\s*")
+_REVERSE_LAYOUT = re.compile(
+    r"\s*MaterialTransferDelays\s+workAreaToCargoDelays\s*"
+    + r"\[\s*MATERIAL_STATION_COUNT\s*\]\s*\[\s*MATERIAL_STATION_COUNT\s*\]\s*=\s*\{\s*"
+    + r"\s*,\s*".join([_STATION] * 3) + r"\s*,?\s*\}\s*;\s*")
 
 
 def _parse_source(original):
     text = original.decode("utf-8")
-    markers = [list(re.finditer(r"(?m)^// ACTION_GROUP_DELAYS_" + kind + r"\s*$", text))
-               for kind in ("BEGIN", "END")]
-    if any(len(matches) != 1 for matches in markers) or markers[0][0].end() >= markers[1][0].start():
-        raise ValueError("C++ 延时区域标记缺失、重复或顺序错误，未修改文件")
-    start, end = markers[0][0].end(), markers[1][0].start()
-    # 用等长空格屏蔽注释，保证数字位置仍对应原文；不接受任意 C++ 表达式。
-    body = re.sub(r"//[^\r\n]*|/\*.*?\*/", lambda match: " " * len(match[0]), text[start:end], flags=re.S)
-    match = _LAYOUT.fullmatch(body)
-    if match is None:
-        raise ValueError("C++ 延时配置结构已改变，需要保留公共、9 组搬运和辅助延时表，未修改文件")
     entries = {}
-    for index, name in enumerate(DELAY_NAMES, 1):
-        value = int(match[index])
-        if not 0 <= value <= 60000:
-            raise ValueError(f"C++ 延时超出 0～60000 ms：{name}")
-        entries[name] = (start + match.start(index), start + match.end(index), value)
+    for marker, layout, names in (
+            ("ACTION_GROUP_DELAYS", _LAYOUT, _LEGACY_DELAY_NAMES),
+            ("REVERSE_ACTION_GROUP_DELAYS", _REVERSE_LAYOUT, _REVERSE_DELAY_NAMES)):
+        markers = [list(re.finditer(r"(?m)^// " + marker + "_" + kind + r"\s*$", text))
+                   for kind in ("BEGIN", "END")]
+        if any(len(matches) != 1 for matches in markers) or markers[0][0].end() >= markers[1][0].start():
+            raise ValueError("C++ 延时区域标记缺失、重复或顺序错误，未修改文件")
+        start, end = markers[0][0].end(), markers[1][0].start()
+        # 用等长空格屏蔽注释，保证数字位置仍对应原文；不接受任意 C++ 表达式。
+        body = re.sub(r"//[^\r\n]*|/\*.*?\*/", lambda match: " " * len(match[0]), text[start:end], flags=re.S)
+        match = layout.fullmatch(body)
+        if match is None:
+            raise ValueError("C++ 延时配置结构已改变，请保留公共、正反向各9组及辅助延时表，未修改文件")
+        for index, name in enumerate(names, 1):
+            value = int(match[index])
+            if not 0 <= value <= 60000:
+                raise ValueError(f"C++ 延时超出 0～60000 ms：{name}")
+            entries[name] = (start + match.start(index), start + match.end(index), value)
     return text, entries
 
 

@@ -17,7 +17,7 @@ extern uint32_t SCAN_APPROACH_SPEED_RPM;
 extern uint32_t SCAN_SEARCH_SPEED_RPM;
 
 namespace {
-constexpr size_t MAX_PARAMETERS = 320; // 原有 130 项 + 动作组延时 127 项。
+constexpr size_t MAX_PARAMETERS = 384; // 原有134项 + 正反向动作组延时235项，并预留空间。
 struct Parameter {
     char name[80];
     void *address;
@@ -94,6 +94,16 @@ void registerMaterialDelays() {
     RegisterRuntimeUInt("动作组延时/扫码准备2/转向(ms)", materialAuxiliaryDelays.lidarZone2TurnMs, 0, 60000);
 }
 
+void registerReverseMaterialDelays() {
+    for (uint8_t w = 0; w < MATERIAL_STATION_COUNT; ++w) {
+        for (uint8_t c = 0; c < MATERIAL_STATION_COUNT; ++c) {
+            char prefix[80];
+            snprintf(prefix, sizeof(prefix), "动作组延时/工作区%u到载物台%u", w + 1, c + 1);
+            registerTransferDelays(prefix, workAreaToCargoDelays[w][c]);
+        }
+    }
+}
+
 void initialize() {
     if (initialized) return;
     initialized = true;
@@ -138,6 +148,8 @@ void initialize() {
     RegisterRuntimeFloat("底盘/节点导航转向速度(°/s)", NODE_PATH_TURN_DEG_S, 10, 240);
     RegisterRuntimeFloat("底盘/节点导航转向加速度(°/s²)", NODE_PATH_TURN_ACCEL_DEG_S2, 30, 720);
     RegisterRuntimeFloat("底盘/节点导航独立纠偏死区(°)", NODE_PATH_HEADING_DEADBAND_DEG, 1, 8);
+    // 反向九组最后追加，保留公共、正向、辅助及底盘参数的既有编号。
+    registerReverseMaterialDelays();
 }
 
 bool parseUnsigned(const char *text, uint32_t &value) {

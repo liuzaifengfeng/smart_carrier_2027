@@ -118,6 +118,13 @@ void ResetAlignmentWait();
 // 返回值表示所请求的控制命令是否全部成功下发，不代表机构已物理到位。
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
 
+// 读取2号转台实际多圈角度并检查线缆范围；失败时不改写 angle，也不更新目标缓存。
+bool ReadArmTurretAngle(float &angle);
+
+// 执行已规划的精确多圈转台角度，不重新选择等效角度；转台 -1 表示实际 -1 度。
+// 其他三轴仍以 -1 跳过；速度、计时、保护和返回值含义与 MoveArm 相同。
+bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed);
+
 // 开机圈数校验失败后锁住转台动作，直到修正姿态并重新上电。
 void DisableTurretMotionUntilRestart(const char* reason);
 

@@ -367,6 +367,29 @@ void RegisterChassisParameters() {
 }
 
 
+bool ReadArmTurretAngle(float &angle) {
+    if (taskMotionAborted) return false;
+    if (s_turretStartupReferenceFault) {
+        Serial.printf("[Arm] ERR: turret startup turn count unverified (%s); motion skipped\n",
+                      s_turretStartupReferenceFaultReason);
+        return false;
+    }
+    float measuredAngle = 0.0f;
+    if (!Servo_QueryAngleMTurn(2, measuredAngle, 100) || !isfinite(measuredAngle)) {
+        Serial.println("[Arm] ERR: turret multi-turn angle read failed; motion skipped");
+        return false;
+    }
+    // 多圈反馈代表线缆累计转角；读取失败时保留调用方原值。
+    if (measuredAngle < TURRET_CABLE_MIN_DEG || measuredAngle > TURRET_CABLE_MAX_DEG) {
+        Serial.printf("[Arm] ERR: turret actual %.1f outside cable range [-150,360]; motion skipped\n",
+                      measuredAngle);
+        return false;
+    }
+    if (taskMotionAborted) return false;
+    angle = measuredAngle;
+    return true;
+}
+
 /**
  * @brief 机械臂移动到指定位姿
  * @param high 大臂高度 (mm)
@@ -374,9 +397,10 @@ void RegisterChassisParameters() {
  * @param turret_angle 转台角度 (°)
  * @param pawl_angle 夹爪角度 (°)
  * @param speed 速度 (mm/s)
- * @note -1 表示不操作该轴
+ * @note 规划模式下转台使用精确多圈角度；其他情况下 -1 表示不操作该轴
  */
-bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
+static bool MoveArmInternal(float high, float length, float turret_angle,
+                            float pawl_angle, float speed, bool absoluteTurret) {
     if (taskMotionAborted) return false;
     constexpr float ARM_COMMAND_SPEED_MIN = 1.0f;
     constexpr float ARM_COMMAND_SPEED_MAX = 300.0f;
@@ -400,37 +424,30 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
     constexpr uint32_t GRIPPER_MIN_TIME_MS = 67;
     float safeTurretTarget = 0.0f;
     uint32_t turretIntervalMs = TURRET_MIN_TIME_MS;
-    if (turret_angle != -1.0f) {
-        if (s_turretStartupReferenceFault) {
-            Serial.printf("[Arm] ERR: turret startup turn count unverified (%s); motion skipped\n",
-                          s_turretStartupReferenceFaultReason);
-            return false;
-        }
+    const bool moveTurret = absoluteTurret || turret_angle != -1.0f;
+    if (moveTurret) {
         if (!isfinite(turret_angle) || turret_angle < TURRET_CABLE_MIN_DEG
                 || turret_angle > TURRET_CABLE_MAX_DEG) {
             Serial.println("[Arm] ERR: turret request outside cable range [-150,360]");
             return false;
         }
         float measuredAngle = 0.0f;
-        if (!Servo_QueryAngleMTurn(2, measuredAngle, 100) || !isfinite(measuredAngle)) {
-            Serial.println("[Arm] ERR: turret multi-turn angle read failed; motion skipped");
-            return false;
-        }
-        // 舵机的多圈读数就是线缆累计旋转角；已经越界时禁止自动动作。
-        if (measuredAngle < TURRET_CABLE_MIN_DEG || measuredAngle > TURRET_CABLE_MAX_DEG) {
-            Serial.printf("[Arm] ERR: turret actual %.1f outside cable range [-150,360]; motion skipped\n",
-                          measuredAngle);
-            return false;
-        }
-        // 同一物理方向有相差 360 度的目标，但只允许选择线缆边界内的目标。
+        if (!ReadArmTurretAngle(measuredAngle)) return false;
         float bestDistance = INFINITY;
-        for (int8_t turn = -1; turn <= 1; ++turn) {
-            const float candidate = turret_angle + 360.0f * turn;
-            if (candidate < TURRET_CABLE_MIN_DEG || candidate > TURRET_CABLE_MAX_DEG) continue;
-            const float distance = fabsf(candidate - measuredAngle);
-            if (distance < bestDistance) {
-                bestDistance = distance;
-                safeTurretTarget = candidate;
+        if (absoluteTurret) {
+            // 保留整段路径规划选择的圈数，包括有效的 -1 度目标。
+            safeTurretTarget = turret_angle;
+            bestDistance = fabsf(safeTurretTarget - measuredAngle);
+        } else {
+            // 普通调用继续选择线缆边界内最近的等效角度。
+            for (int8_t turn = -1; turn <= 1; ++turn) {
+                const float candidate = turret_angle + 360.0f * turn;
+                if (candidate < TURRET_CABLE_MIN_DEG || candidate > TURRET_CABLE_MAX_DEG) continue;
+                const float distance = fabsf(candidate - measuredAngle);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    safeTurretTarget = candidate;
+                }
             }
         }
         if (!isfinite(bestDistance)) {
@@ -467,14 +484,14 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
                 return false;
             } else {
                 uint32_t pulses = (uint32_t)(length * LENGTH_PULSE);
-                Emm_V5_Pos_Control(6, 1, speed*6, 230, pulses, true, false);
+                Emm_V5_Pos_Control(6, 1, speed*6, 240, pulses, true, false);
                 vTaskDelay(pdMS_TO_TICKS(10));
                 currentArm.length = length;
             }
         }
         
         if (taskMotionAborted) return false;
-        if(turret_angle != -1) {
+        if(moveTurret) {
             Servo_SetAngleMTurnByInterval(2, safeTurretTarget, turretIntervalMs,
                                          TURRET_ACCEL_TIME_MS, TURRET_DECEL_TIME_MS, 0);
             currentArm.turret_angle = safeTurretTarget;
@@ -516,6 +533,14 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
         }
 
     return true;
+}
+
+bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
+    return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, false);
+}
+
+bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed) {
+    return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, true);
 }
 
 

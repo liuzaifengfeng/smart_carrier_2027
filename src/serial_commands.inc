@@ -57,7 +57,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"CHASSIS", "MOVE"}, {"CHASSIS", "MOVE_POSITION"},
         {"ARM", "MOVE1"}, {"ARM", "MOVE2"}, {"ARM", "SERVO"},
         {"ARM", "ENABLE"}, {"ARM", "DEMO1"}, {"ARM", "DEMO2"}, {"ARM", "DEMO3"},
-        {"ARM", "DEMO4"}, {"ARM", "TRANSFER"},
+        {"ARM", "DEMO4"}, {"ARM", "TRANSFER"}, {"ARM", "RETRIEVE"},
         {"ARM", "INIT_START"}, {"ARM", "INIT_LOOK"}, {"ARM", "INIT_LOOK2"},
         {"CFG", "GET"}, {"CFG", "BEGIN"}, {"CFG", "SET"}, {"CFG", "COMMIT"},
     };
@@ -365,6 +365,23 @@ static void serialTransfer(const SerialFrame &frame) {
     if (!ok) cargo.material = previousMaterial;
     Serial.printf("{EVT,ARM,TRANSFER,%s,%lu,%lu}\n", ok ? "DONE" : "FAILED",
                   static_cast<unsigned long>(cargoCode), static_cast<unsigned long>(workAreaCode));
+}
+
+static void serialRetrieve(const SerialFrame &frame) {
+    if (!serialDebugMode) { serialError(frame, "MODE"); return; }
+    uint32_t workAreaCode = 0, cargoCode = 0;
+    if (!serialUInt(frame.fields[3], workAreaCode, MATERIAL_STATION_COUNT) || workAreaCode == 0
+            || !serialUInt(frame.fields[4], cargoCode, MATERIAL_STATION_COUNT) || cargoCode == 0) {
+        serialError(frame, "RANGE"); return;
+    }
+    if (cargoPlatforms[cargoCode - 1].material != MATERIAL_NONE) {
+        serialError(frame, "OCCUPIED"); return;
+    }
+    serialReply(frame, "ACK");
+    // 手动试跑与 DEMO4 一致，取回物料按红色登记；成功放置后由业务函数更新记录。
+    const bool ok = MoveWorkAreaToCargo(MATERIAL_RED, workAreaCode, cargoCode);
+    Serial.printf("{EVT,ARM,RETRIEVE,%s,%lu,%lu}\n", ok ? "DONE" : "FAILED",
+                  static_cast<unsigned long>(workAreaCode), static_cast<unsigned long>(cargoCode));
 }
 
 static void serialDispatch(const SerialFrame &frame) {
@@ -697,6 +714,8 @@ static void serialDispatch(const SerialFrame &frame) {
         Emm_V5_En_Control_all(enabled);
     } else if (frame.is("ARM", "TRANSFER", 2)) {
         serialTransfer(frame);
+    } else if (frame.is("ARM", "RETRIEVE", 2)) {
+        serialRetrieve(frame);
     } else if (frame.is("ARM", "DEMO1", 0) || frame.is("ARM", "DEMO2", 0)
                || frame.is("ARM", "DEMO3", 0) || frame.is("ARM", "DEMO4", 0)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
