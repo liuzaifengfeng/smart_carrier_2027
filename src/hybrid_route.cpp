@@ -157,7 +157,7 @@ Output Tracker::updateHybrid(const Route &route,float actual,float dt,uint32_t s
         &&s>=route.segments[phaseIndex].offset+route.segments[phaseIndex].length-0.5f) {
         if(phaseIndex+1<route.segmentCount&&route.segments[phaseIndex+1].kind==ROTATE){s=route.segments[phaseIndex+1].offset;speed=0;}
         ++phaseIndex;stableSeconds=turnSeconds=badSeconds=0;rateReady=false;
-        phaseStopped=false;quiet.reset();hold.reset();
+        phaseStopped=false;quiet.reset();if(!movingBlock)hold.reset();
     }
     if(phaseIndex>=route.segmentCount){out.reference=c.endHeading;out.error=turn(actual,out.reference);out.finished=true;return out;}
     if(movingBlock&&route.segments[phaseIndex].kind==ROTATE){out.finished=true;return out;}
@@ -213,18 +213,27 @@ Output Tracker::updateHybrid(const Route &route,float actual,float dt,uint32_t s
         if(!movingBlock&&badSeconds>=0.2f){out.failure="HEADING_ERROR";return out;}
         float remaining=fmaxf(0,route.nextStop(phaseIndex)-s);
         float target=fminf(route.speedCap(s),sqrtf(2*c.accel*remaining+c.accel*c.accel*dt*dt)-c.accel*dt);
-        target*=clamp(1-(fabsf(out.error)-1)/4,0.2f,1);
+        if(!movingBlock)target*=clamp(1-(fabsf(out.error)-1)/4,0.2f,1);
         float acceleration=c.accel;
         if(phase.kind==CUBIC) {
             float slope=fabsf(turn(phase.h0,phase.h1))*1.875f/phase.length;
-            if(slope>0.000001f)acceleration=fminf(acceleration,30/slope);
+            if(slope>0.000001f)acceleration=fminf(acceleration,(c.omegaAccel/3)/slope);
         }
         speed=clamp(target,fmaxf(0,speed-acceleration*dt),speed+acceleration*dt);
         float correction=hold.update(actual,out.error,sampleMs,c.kp,c.correction);
         targetOmega=clamp(route.phaseSlope(phaseIndex,s-phase.offset)*speed+correction,-c.maxOmega,c.maxOmega);
     }
-    omega=clamp(targetOmega,omega-90*dt,omega+90*dt);
-    Vec body=rotating?Vec{}:worldToBody(route.phaseAt(phaseIndex,s-phase.offset).tangent*speed,actual);
+    omega=clamp(targetOmega,omega-c.omegaAccel*dt,omega+c.omegaAccel*dt);
+    Pose desired=route.phaseAt(phaseIndex,s-phase.offset);
+    Vec velocity=desired.tangent*speed;
+    if(movingBlock&&!rotating) {
+        // 编码器/H30里程计的横向闭环；不把工位视觉的绝对定位职责交给IMU。
+        Vec normal{-desired.tangent.y,desired.tangent.x};
+        float lateral=dot(desired.p-estimated,normal);
+        float reserve=fmaxf(40,speed*.25f);
+        velocity=velocity+normal*clamp(lateral*2,-reserve,reserve);
+    }
+    Vec body=rotating?Vec{}:worldToBody(velocity,actual);
     out.wheels=wheels(body,omega,c);return out;
 }
 } // namespace continuous

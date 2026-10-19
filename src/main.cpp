@@ -84,7 +84,7 @@ void Task_MainStateMachine(void *pvParameters) {
         case STATE_READ_TASK: { // 读取任务码
             updateDisplay("DISPLAY", "DEBUG", "READ TASK");
             InitArm_start();
-            constexpr float SCAN_APPROACH_MM = 600.0f;   // 扫码前沿指定方向接近二维码区域的距离（毫米）
+            constexpr float SCAN_APPROACH_MM = 700.0f;   // 扫码前沿指定方向接近二维码区域的距离（毫米）
             constexpr float SCAN_RANGE_MM = 400.0f;      // 每次往返搜索二维码时移动的距离（毫米）
             constexpr uint8_t SCAN_MAX_RETRIES = 3;      // 首次扫描失败后允许的最大重试次数
             // 按实车方向：启停区1向左扫码（+Y），启停区2向右扫码（-Y）。
@@ -114,7 +114,6 @@ void Task_MainStateMachine(void *pvParameters) {
                     Serial.println("[SCANNER] ERR: approach failed");
                 } else {
                     // 首次沿接近方向扫描 400 mm；失败后在同一区域反向重试三遍。
-                    // 沿接近方向距起点的端点依次为 1300、900、1300、900 mm。
                     for (uint8_t attempt = 0; attempt <= SCAN_MAX_RETRIES; ++attempt) {
                         if (pollTaskCode()) break;
                         const float distance = scanDirection * ((attempt % 2 == 0) ? SCAN_RANGE_MM : -SCAN_RANGE_MM);

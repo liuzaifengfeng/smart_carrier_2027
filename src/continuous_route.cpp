@@ -14,9 +14,9 @@ const char *Route::build(const Node *nodes,const Config &cfg) {
     for(float v:values)if(!isfinite(v))return "RANGE";
     if(cfg.startHeading<0||cfg.startHeading>=360||cfg.endHeading<0||cfg.endHeading>=360
         ||cfg.maxRpm<1||cfg.maxRpm>5000||cfg.maxRpm!=floorf(cfg.maxRpm)||cfg.accel<1||cfg.accel>((cfg.policy==2||cfg.policy==3)?4000:2000)
-        ||cfg.lateralAccel<1||cfg.lateralAccel>3000||cfg.lateralPpm<0.01f||cfg.lateralPpm>1000
+        ||cfg.lateralAccel<1||cfg.lateralAccel>(cfg.policy==3?4000:3000)||cfg.lateralPpm<0.01f||cfg.lateralPpm>1000
         ||cfg.forwardPpm<0.01f||cfg.forwardPpm>1000||cfg.rotationPpd<=0||cfg.rotationPpd>10000
-        ||cfg.kp<0.1f||cfg.kp>10||cfg.maxOmega<5||cfg.maxOmega>90
+        ||cfg.kp<0.1f||cfg.kp>10||cfg.maxOmega<5||cfg.maxOmega>(cfg.policy==3?240:90)
         ||cfg.correction<1||cfg.correction>=cfg.maxOmega)return "RANGE";
     if(cfg.policy)return buildHybrid(nodes,cfg);
     Vec direction[MAX_NODES];float distance[MAX_NODES]={},trim[MAX_NODES]={};
@@ -116,9 +116,9 @@ float Route::geometricCap(float s) const {
         const Segment &phase=segments[movingPhase(s)];
         if(phase.kind==CUBIC) {
             // 五次姿态插值的 |d²theta/ds²| 峰值为 10/sqrt(3)*|delta|/L²。
-            // 90deg/s²执行器斜率限制中，给几何变化45、平移加速30，保留15纠偏。
+            // 角加速度预算：几何变化1/2、平移加速1/3，余量用于纠偏。
             float peak=fabsf(turn(phase.h0,phase.h1))*5.773503f/(phase.length*phase.length);
-            if(peak>0.000001f)cap=fminf(cap,sqrtf(45/peak));
+            if(peak>0.000001f)cap=fminf(cap,sqrtf(config.omegaAccel*.5f/peak));
         }
     }
     return cap;

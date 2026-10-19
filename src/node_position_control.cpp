@@ -233,9 +233,26 @@ const char *outerBlock(const Route &route,size_t begin,size_t end,IO &io,Result 
         const char *error=sample(io,m,result.heading);if(error)return error;
         if((m.fields&7)!=7)result.heading=wrap(oldHeading+(pulses[0]+pulses[1]+pulses[2]+pulses[3])/(4*route.config.rotationPpd));
         Vec world=bodyToWorld(body,oldHeading+turn(oldHeading,result.heading)*.5f);
-        Vec tangent=route.phaseAt(tracker.phaseIndex,tracker.s-route.segments[tracker.phaseIndex].offset).tangent;
         result.estimated=result.estimated+world;
-        tracker.estimated=result.estimated;tracker.s=fminf(stop,tracker.s+fmaxf(0,dot(world,tangent)));result.s=tracker.s;
+        tracker.estimated=result.estimated;
+        // 在相邻弧长窗口投影到真实曲线，避免沿旧切线累加造成进度与位置脱节。
+        float window=norm(world)*2+20;
+        float lo=fmaxf(route.segments[begin].offset,tracker.s-window),hi=fminf(stop,tracker.s+window);
+        auto distanceAt=[&](float s) {
+            size_t index=route.movingPhase(s);
+            return norm(route.phaseAt(index,s-route.segments[index].offset).p-result.estimated);
+        };
+        float best=lo,bestDistance=distanceAt(lo);
+        for(float s=lo;s<=hi;s+=5) {
+            float d=distanceAt(s);if(d<bestDistance){best=s;bestDistance=d;}
+        }
+        if(distanceAt(hi)<bestDistance)best=hi;
+        float a=fmaxf(lo,best-5),b=fminf(hi,best+5);
+        for(int i=0;i<12;++i) {
+            float u=a+(b-a)/3,v=b-(b-a)/3;
+            if(distanceAt(u)<distanceAt(v))b=v;else a=u;
+        }
+        tracker.s=fmaxf(tracker.s,(a+b)*.5f);result.s=tracker.s;
         return static_cast<const char *>(nullptr);
     };
     for(;;) {
@@ -266,9 +283,9 @@ const char *outerBlock(const Route &route,size_t begin,size_t end,IO &io,Result 
 }
 }
 const char *run(const Route &route,const Settings &settings,IO &io,Result &result) {
-    if(!isfinite(settings.speedMmS)||settings.speedMmS<10||settings.speedMmS>2000
+    if(!isfinite(settings.speedMmS)||settings.speedMmS<10||settings.speedMmS>5000
         ||!isfinite(settings.accelMmS2)||settings.accelMmS2<1||settings.accelMmS2>4000
-        ||!isfinite(settings.turnDegS)||settings.turnDegS<10||settings.turnDegS>240
+        ||!isfinite(settings.turnDegS)||settings.turnDegS<10||settings.turnDegS>500
         ||!isfinite(settings.turnAccelDegS2)||settings.turnAccelDegS2<30||settings.turnAccelDegS2>720
         ||!isfinite(settings.headingDeadbandDeg)||settings.headingDeadbandDeg<1||settings.headingDeadbandDeg>8)return "RANGE";
     result.estimated=route.segments[0].start;

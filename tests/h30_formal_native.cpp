@@ -46,14 +46,14 @@ static void vTaskDelay(int){status.state=DONE;}
 int main(){
     uint8_t path[]={10,19,20,21,22};
     CHECK(H30StartNodePath(path,5,300,180));CHECK(launches==1&&status.formal&&status.async);
-    CHECK(route.config.policy==3&&route.config.forwardPpm==Y_PULSE&&route.config.lateralPpm==X_PULSE);
+    CHECK(route.config.policy==2&&route.config.forwardPpm==Y_PULSE&&route.config.lateralPpm==X_PULSE);
     CHECK(route.config.accel==425.5f&&route.config.maxRpm==node_position::rpmFor(300,Y_PULSE));
     CHECK(formalSettings.speedMmS==300&&formalSettings.accelMmS2==425.5f);
     CHECK(formalSettings.turnDegS==150&&formalSettings.turnAccelDegS2==360);
     CHECK(formalSettings.headingDeadbandDeg==3);
     CHECK(referenceVersion==7&&initialHeading>180.8f&&!configured);
     bool outerCurve=false;for(size_t i=0;i<route.segmentCount;++i)outerCurve|=route.segments[i].kind==CUBIC;
-    CHECK(outerCurve);
+    CHECK(!outerCurve); // 外侧拐角也必须停车转向，禁止生成漂移曲线。
     NODE_PATH_ACCEL_MM_S2=600;
     CHECK(!H30StartNodePath(path,5,300,180));CHECK(launches==1&&route.config.accel==425.5f);
     status.state=DONE;sensorError="OFFLINE";
@@ -68,9 +68,9 @@ int main(){
     CHECK(H30RunNodePath(path,5,120,180));CHECK(launches==4&&!status.async);
     CHECK(route.config.accel==600&&route.config.maxRpm==node_position::rpmFor(120,Y_PULSE));
     NODE_PATH_ACCEL_MM_S2=0;CHECK(!H30StartNodePath(path,5,120,180));CHECK(launches==4);
-    NODE_PATH_ACCEL_MM_S2=4000;NODE_PATH_TURN_DEG_S=240;NODE_PATH_TURN_ACCEL_DEG_S2=720;
-    CHECK(!H30StartNodePath(path,5,2001,180));
-    CHECK(H30StartNodePath(path,5,2000,180));CHECK(launches==5&&route.config.accel==4000);
-    CHECK(formalSettings.turnDegS==240&&formalSettings.turnAccelDegS2==720);
+    NODE_PATH_ACCEL_MM_S2=4000;NODE_PATH_TURN_DEG_S=500;NODE_PATH_TURN_ACCEL_DEG_S2=720;
+    CHECK(!H30StartNodePath(path,5,5001,180));
+    CHECK(H30StartNodePath(path,5,5000,180));CHECK(launches==5&&route.config.accel==4000);
+    CHECK(formalSettings.speedMmS==5000&&formalSettings.turnDegS==500&&formalSettings.turnAccelDegS2==720);
     puts("actual formal adapter safety and shared controller OK");return 0;
 }

@@ -272,16 +272,33 @@ int main() {
     CHECK(norm(returning.location-Vec(720,1200))<2);
     for(int field=0;field<4;++field) {
         Settings invalid;float *values[]={&invalid.speedMmS,&invalid.accelMmS2,&invalid.turnDegS,&invalid.turnAccelDegS2};
-        const float maxima[]={2000,4000,240,720};*values[field]=maxima[field]+1;
+        const float maxima[]={5000,4000,500,720};*values[field]=maxima[field]+1;
         Sim untouched;error=run(route,invalid,untouched,result);
         CHECK(error&&!strcmp(error,"RANGE")&&untouched.syncs==0);
     }
+    Settings upperLimit=settings;upperLimit.speedMmS=5000;upperLimit.turnDegS=500;
+    Sim atLimit;error=run(route,upperLimit,atLimit,result);CHECK(!error);
     printf("same-route model: old profile %lums, new profile %lums\n",(unsigned long)(previous.time-1000),(unsigned long)(upgraded.time-1000));
     // 正式外圈2-3-4-5-14：4号角连续外绕，块内不插入位置动作或停车。
     Config mixed=cfg;mixed.policy=3;mixed.count=5;mixed.startHeading=180;mixed.endHeading=90;
     mixed.maxRpm=rpmFor(newProfile.speedMmS,13.6f);mixed.accel=newProfile.accelMmS2;
+    mixed.maxOmega=newProfile.turnDegS;mixed.omegaAccel=newProfile.turnAccelDegS2;
+    mixed.lateralAccel=mixed.accel;
     Route outer;CHECK(!outer.build(benchNodes,mixed));bool hasCurve=false;
     for(size_t i=0;i<outer.segmentCount;++i)hasCurve|=outer.segments[i].kind==CUBIC;CHECK(hasCurve);
+    // 横向误差在运动中回拉；不降低切向速度，也不追加停车校准。
+    Tracker tracked;tracked.begin(outer,180);tracked.movingBlock=true;
+    tracked.s=100;tracked.speed=200;tracked.estimated={1300,260};
+    Output corrected=tracked.update(outer,180,.02f,100);
+    Vec correctedWorld=bodyToWorld(corrected.wheels.body,180);
+    CHECK(correctedWorld.x>0&&correctedWorld.y<0&&!corrected.failure);
+    Tracker yawNoise;yawNoise.begin(outer,183);yawNoise.movingBlock=true;
+    yawNoise.s=100;yawNoise.speed=200;yawNoise.estimated={1300,240};
+    Output noisy=yawNoise.update(outer,183,.02f,100);
+    CHECK(yawNoise.speed>=200&&!noisy.failure); // 3度误差不再把目标速度砍半
+    Config oldCurve=mixed;oldCurve.maxOmega=45;oldCurve.omegaAccel=90;oldCurve.lateralAccel=300;
+    Route slowCurve;CHECK(!slowCurve.build(benchNodes,oldCurve));
+    CHECK(outer.plannedSeconds<slowCurve.plannedSeconds);
     Sim drift;drift.location={1200,240};drift.heading=180;
     error=run(outer,newProfile,drift,result);
     if(error)fprintf(stderr,"outer: %s\n",error);CHECK(!error);
@@ -312,6 +329,7 @@ int main() {
     Node crossNodes[]={{{720,1200},0},{{1200,1200},0},{{1200,1680},0}};
     mixed.count=3;mixed.startHeading=0;mixed.endHeading=90;Route center,oldCenter;
     CHECK(!center.build(crossNodes,mixed));Config stoppedConfig=mixed;stoppedConfig.policy=2;
+    stoppedConfig.maxOmega=45;stoppedConfig.omegaAccel=90;
     CHECK(!oldCenter.build(crossNodes,stoppedConfig)&&center.segmentCount==oldCenter.segmentCount);
     for(size_t i=0;i<center.segmentCount;++i) {
         CHECK(center.segments[i].kind==oldCenter.segments[i].kind&&center.segments[i].kind!=CUBIC);

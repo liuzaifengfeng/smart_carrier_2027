@@ -142,7 +142,7 @@ void initialize() {
     registerArmSpeed("搬运/速度/放料松爪", materialMotionSteps.placeReleaseSpeed);
     registerArmSpeed("搬运/速度/放料提起", materialMotionSteps.placeLiftSpeed);
     RegisterChassisParameters();
-    RegisterRuntimeFloat("底盘/节点导航速度(mm/s)", NODE_PATH_SPEED_MM_S, 10, 2000);
+    RegisterRuntimeFloat("底盘/节点导航速度(mm/s)", NODE_PATH_SPEED_MM_S, 10, 5000);
     RegisterRuntimeUInt("底盘/扫码接近轮速(RPM)", SCAN_APPROACH_SPEED_RPM, 1, 5000);
     RegisterRuntimeUInt("底盘/扫码往返轮速(RPM)", SCAN_SEARCH_SPEED_RPM, 1, 5000);
     RegisterRuntimeUInt("对齐/最大轮速(RPM)", ALIGN_PID_MAX_SPEED_RPM, 1, 5000);
@@ -150,7 +150,7 @@ void initialize() {
     registerMaterialDelays();
     // 只追加，不改变既有参数索引。
     RegisterRuntimeFloat("底盘/节点导航平移加速度(mm/s²)", NODE_PATH_ACCEL_MM_S2, 1, 4000);
-    RegisterRuntimeFloat("底盘/节点导航转向速度(°/s)", NODE_PATH_TURN_DEG_S, 10, 240);
+    RegisterRuntimeFloat("底盘/节点导航转向速度(°/s)", NODE_PATH_TURN_DEG_S, 10, 500);
     RegisterRuntimeFloat("底盘/节点导航转向加速度(°/s²)", NODE_PATH_TURN_ACCEL_DEG_S2, 30, 720);
     RegisterRuntimeFloat("底盘/节点导航独立纠偏死区(°)", NODE_PATH_HEADING_DEADBAND_DEG, 1, 8);
     // 反向九组最后追加，保留公共、正向、辅助及底盘参数的既有编号。

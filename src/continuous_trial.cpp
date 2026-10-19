@@ -251,7 +251,7 @@ const char *ContinuousTrialStatus(uint32_t id) {
 
 bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async) {
     ConfigurationGuard guard;if(!guard.held)return false;
-    if(!worker||otaBusy()||!path||count<2||count>MAX_NODES||!isfinite(speedMmS)||speedMmS<10||speedMmS>2000||taskMotionAborted)return false;
+    if(!worker||otaBusy()||!path||count<2||count>MAX_NODES||!isfinite(speedMmS)||speedMmS<10||speedMmS>5000||taskMotionAborted)return false;
     // 预留共享规划/任务资源；上传和其他运动不能在构建过程中插入。
     portENTER_CRITICAL(&trialMux);
     if(status.state==RUNNING||status.state==STOPPING){portEXIT_CRITICAL(&trialMux);return false;}
@@ -267,7 +267,7 @@ bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float fina
         Serial.printf("[Route] H30 assist unavailable at start (%s); using planned heading\n",error);
         heading=currentPose.theta;version=0;error=nullptr;
     }
-    Config cfg;cfg.count=count;cfg.policy=3;cfg.startHeading=heading; // 正式导航：外圈连续外绕，内侧停转
+    Config cfg;cfg.count=count;cfg.policy=2;cfg.startHeading=heading; // 正式导航统一到节点停车转向，不使用漂移切弯。
     cfg.maxRpm=node_position::rpmFor(speedMmS,Y_PULSE);
     cfg.accel=NODE_PATH_ACCEL_MM_S2; // 与轮速一同冻结，运行中不跟随参数写入变化。
     cfg.rotationPpd=THETA_PULSE;
@@ -277,7 +277,7 @@ bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float fina
     formalSettings.turnDegS=NODE_PATH_TURN_DEG_S;
     formalSettings.turnAccelDegS2=NODE_PATH_TURN_ACCEL_DEG_S2;
     formalSettings.headingDeadbandDeg=NODE_PATH_HEADING_DEADBAND_DEG;
-    if(!isfinite(formalSettings.turnDegS)||formalSettings.turnDegS<10||formalSettings.turnDegS>240
+    if(!isfinite(formalSettings.turnDegS)||formalSettings.turnDegS<10||formalSettings.turnDegS>500
         ||!isfinite(formalSettings.turnAccelDegS2)||formalSettings.turnAccelDegS2<30||formalSettings.turnAccelDegS2>720
         ||!isfinite(formalSettings.headingDeadbandDeg)||formalSettings.headingDeadbandDeg<1||formalSettings.headingDeadbandDeg>8)error="RANGE";
     float end=heading;
