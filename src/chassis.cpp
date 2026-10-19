@@ -378,14 +378,10 @@ void RegisterChassisParameters() {
  */
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed) {
     if (taskMotionAborted) return false;
-    constexpr float ARM_COMMAND_SPEED_MIN = 1.0f;
-    constexpr float ARM_COMMAND_SPEED_MAX = 500.0f;
-    if (!isfinite(speed) || speed < ARM_COMMAND_SPEED_MIN
-            || speed > ARM_COMMAND_SPEED_MAX) {
-        Serial.println("[Arm] ERR: speed must be in 1~500 range");
+    if (!isfinite(speed) || speed < 1.0f) {
+        Serial.println("[Arm] ERR: speed must be finite and >= 1");
         return false;
     }
-    int acc = 220;
     // 舵机动作时间统一缩短为原标定值的 1/5。
     // 2号转台按实际转角计时：180度用210ms，最短80ms；加减速时间同比缩短。
     constexpr float TURRET_REFERENCE_ANGLE_DEG = 180.0f;   // 计算转台动作时间所采用的基准转角
@@ -454,7 +450,9 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
                 return false;
             } else {
                 uint32_t pulses = (uint32_t)(high * HEIGHT_PULSE);
-                Emm_V5_Pos_Control(5, 1, speed*8, 240, pulses, true, false);
+                // 仅在转换为协议的16位RPM字段时饱和，避免大速度溢出回绕。
+                const uint16_t rpm = speed >= UINT16_MAX / 8.0f ? UINT16_MAX : speed * 8.0f;
+                Emm_V5_Pos_Control(5, 1, rpm, 240, pulses, true, false);
                 vTaskDelay(pdMS_TO_TICKS(10));
                 currentArm.high = high;
             }
@@ -467,7 +465,8 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
                 return false;
             } else {
                 uint32_t pulses = (uint32_t)(length * LENGTH_PULSE);
-                Emm_V5_Pos_Control(6, 1, speed*6, 240, pulses, true, false);
+                const uint16_t rpm = speed >= UINT16_MAX / 6.0f ? UINT16_MAX : speed * 6.0f;
+                Emm_V5_Pos_Control(6, 1, rpm, 240, pulses, true, false);
                 vTaskDelay(pdMS_TO_TICKS(10));
                 currentArm.length = length;
             }
@@ -498,12 +497,10 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
                         return false;
                     }
                     const float travelDeg = fabsf(nearestAngle - measuredAngle);
-                    const float angularSpeedDegS = speed
-                        * GRIPPER_REFERENCE_ANGULAR_SPEED_DEG_S
-                        / GRIPPER_REFERENCE_COMMAND_SPEED;
+                    const float calculatedMs = travelDeg / speed
+                        * (1000.0f * GRIPPER_REFERENCE_COMMAND_SPEED / GRIPPER_REFERENCE_ANGULAR_SPEED_DEG_S);
                     uint32_t gripperIntervalMs = 0;
                     if (travelDeg > 0.0f) {
-                        const float calculatedMs = travelDeg * 1000.0f / angularSpeedDegS;
                         gripperIntervalMs = calculatedMs < GRIPPER_MIN_TIME_MS
                             ? GRIPPER_MIN_TIME_MS
                             : static_cast<uint32_t>(calculatedMs + 0.5f);

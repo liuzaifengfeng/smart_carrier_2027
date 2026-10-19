@@ -658,7 +658,7 @@ static void serialDispatch(const SerialFrame &frame) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         const bool first = strcmp(frame.fields[2], "MOVE1") == 0;
         const float minimum[] = {first ? -1.0f : TURRET_CABLE_MIN_DEG, first ? -1.0f : -360.0f, 1.0f};
-        const float maximum[] = {first ? ARM_HEIGHT_LIMIT_MM : 360.0f, first ? 170.0f : 360.0f, 300.0f};
+        const float maximum[] = {first ? ARM_HEIGHT_LIMIT_MM : 360.0f, first ? 170.0f : 360.0f, FLT_MAX};
         float values[3];
         if (!serialFloats(frame, values, minimum, maximum, 3)
                 || (first && ((values[0] < 0 && values[0] != -1)

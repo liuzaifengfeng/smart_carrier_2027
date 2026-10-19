@@ -192,7 +192,7 @@ constexpr bool guards() {
         && !startup.MoveArm(-1,-1,90,-1,250) && startup.count==0 && startup.turretQueries==0
         && !aborted.MoveArm(-1,-1,90,-1,250) && aborted.count==0 && aborted.turretQueries==0
         && !zeroSpeed.MoveArm(-1,-1,-1,0,0) && zeroSpeed.count==0
-        && !excessiveSpeed.MoveArm(-1,-1,-1,0,301) && excessiveSpeed.count==0
+        && excessiveSpeed.MoveArm(-1,-1,-1,0,1000) && excessiveSpeed.count==1
         && !invalidSpeed.MoveArm(-1,-1,-1,0,__builtin_nanf("")) && invalidSpeed.count==0
         && skip.MoveArm(-1,-1,-1,-1,250) && skip.count==0 && skip.turretQueries==0;
 }

@@ -312,3 +312,5 @@ Release 自动流程继续使用 DISC 定位完成后开启 DISC_MATERIAL 的切
 原 COLOR、GRAB、FORCE_GRAB 保留兼容，仍会调用旧固定位置的真实动作。机载电脑迁移到本流程后，只发 DISC_POSITIONS；不要同时发旧 COLOR/GRAB，否则旧入口仍可能触发固定位置运动。FORCE_GRAB 仅用于原动作调试。
 
 固件堵转检查已临时禁用：`src/node_position_control.h` 的 `MOTOR_STALL_CHECK_ENABLED=false` 对全部四轮生效，不再仅凭堵转状态位报告 `MOTOR_STALL`；驱动器自身保护未修改，其他错误和到位条件保持有效。恢复时将开关改为 `true` 后重新编译烧录。
+
+机械臂速度参数（ARM MOVE1/MOVE2 与全部搬运速度）统一接受有限且≥1的float数值，取消300/500人为上限。转换到升降/伸缩驱动转速时，仅按16位RPM字段饱和，避免整数回绕。

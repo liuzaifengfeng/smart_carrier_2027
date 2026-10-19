@@ -1545,11 +1545,11 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
     elif command == "MoveArm_1":
         require_range_or_skip(0, 0.0, ARM_HEIGHT_LIMIT_MM, "大臂高度")
         require_range_or_skip(1, 0.0, ARM_TRAVEL_LIMIT_MM, "伸缩距离")
-        require_range(2, 1.0, 300.0, "速度")
+        require_range(2, 1.0, 3.4028234663852886e38, "速度")
     elif command == "MoveArm_2":
         require_range_or_skip(0, TURRET_CABLE_MIN_DEG, TURRET_CABLE_MAX_DEG, "舵盘角度")
         require_range_or_skip(1, -360.0, 360.0, "夹爪角度")
-        require_range(2, 1.0, 300.0, "速度")
+        require_range(2, 1.0, 3.4028234663852886e38, "速度")
     elif command == "SERVO":
         require_range(0, 0.0, 253.0, "舵机 ID")
         require_range(1,
