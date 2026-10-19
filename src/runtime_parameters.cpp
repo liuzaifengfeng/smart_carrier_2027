@@ -95,7 +95,6 @@ void registerMaterialDelays() {
     RegisterRuntimeUInt("动作组延时/扫码准备2/转向(ms)", materialAuxiliaryDelays.lidarZone2TurnMs, 0, 60000);
 }
 
-<<<<<<< HEAD
 void registerReverseMaterialDelays() {
     for (uint8_t w = 0; w < MATERIAL_STATION_COUNT; ++w) {
         for (uint8_t c = 0; c < MATERIAL_STATION_COUNT; ++c) {
@@ -104,11 +103,11 @@ void registerReverseMaterialDelays() {
             registerTransferDelays(prefix, workAreaToCargoDelays[w][c]);
         }
     }
-=======
+}
+
 // 所有搬运速度共用同一校验：正数且可表示为float，无人为速度上限。
 void registerArmSpeed(const char *name, float &value) {
     RegisterRuntimeFloat(name, value, 1, FLT_MAX);
->>>>>>> 7b4fd9f877e860347113b0cdaee3af2f54b0be7b
 }
 
 void initialize() {

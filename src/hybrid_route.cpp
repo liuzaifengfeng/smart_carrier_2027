@@ -62,7 +62,7 @@ bool Route::addRotation(Vec p,float from,float to) {
     return !validate(v,config.margin);
 }
 const char *Route::buildHybrid(const Node *nodes,const Config &cfg) {
-    if(cfg.policy!=1&&cfg.policy!=2)return "POLICY";
+    if(cfg.policy!=1&&cfg.policy!=2&&cfg.policy!=3)return "POLICY";
     if(!isfinite(cfg.outset)||cfg.outset<0||cfg.outset>100
         ||!isfinite(cfg.margin)||cfg.margin<10||cfg.margin>40)return "POLICY_RANGE";
     Vec direction[MAX_NODES];float distance[MAX_NODES]={},trim[MAX_NODES]={},outsets[MAX_NODES]={};
@@ -81,7 +81,7 @@ const char *Route::buildHybrid(const Node *nodes,const Config &cfg) {
         if(fabsf(d)>0.001f&&d>-0.9999f)return "TURN_NOT_90";
         Vec p=nodes[i].p;
         bool outside=(p.x<550||p.x>1850)&&(p.y<550||p.y>1850);
-        if(cfg.policy==1&&outside&&fabsf(d)<0.001f) {
+        if((cfg.policy==1||cfg.policy==3)&&outside&&fabsf(d)<0.001f) {
             float amount=fminf(180,fminf((distance[i-1]-20)*0.45f,(distance[i]-20)*0.45f));
             if(amount>=30) {
                 const float offsets[]={cfg.outset,80,100,40,20,0};
@@ -152,7 +152,7 @@ float Route::nextStop(size_t index) const {
 }
 Output Tracker::updateHybrid(const Route &route,float actual,float dt,uint32_t sampleMs) {
     Output out;const Config &c=route.config;
-    if(!isfinite(dt)||dt<=0||dt>0.120f){out.failure="CONTROL_OVERRUN";return out;}
+    if(!movingBlock&&(!isfinite(dt)||dt<=0||dt>0.120f)){out.failure="CONTROL_OVERRUN";return out;}
     while(phaseIndex<route.segmentCount&&route.segments[phaseIndex].kind!=ROTATE
         &&s>=route.segments[phaseIndex].offset+route.segments[phaseIndex].length-0.5f) {
         if(phaseIndex+1<route.segmentCount&&route.segments[phaseIndex+1].kind==ROTATE){s=route.segments[phaseIndex+1].offset;speed=0;}
@@ -160,6 +160,7 @@ Output Tracker::updateHybrid(const Route &route,float actual,float dt,uint32_t s
         phaseStopped=false;quiet.reset();hold.reset();
     }
     if(phaseIndex>=route.segmentCount){out.reference=c.endHeading;out.error=turn(actual,out.reference);out.finished=true;return out;}
+    if(movingBlock&&route.segments[phaseIndex].kind==ROTATE){out.finished=true;return out;}
     const Segment &phase=route.segments[phaseIndex];bool rotating=phase.kind==ROTATE;
     float reference=rotating?phase.h1:route.phaseHeading(phaseIndex,s-phase.offset);
     out.reference=reference;out.error=turn(actual,reference);
@@ -209,7 +210,7 @@ Output Tracker::updateHybrid(const Route &route,float actual,float dt,uint32_t s
         stage="HEADING_HOLD";
         finishing=false;
         badSeconds=fabsf(out.error)>5?badSeconds+dt:0;
-        if(badSeconds>=0.2f){out.failure="HEADING_ERROR";return out;}
+        if(!movingBlock&&badSeconds>=0.2f){out.failure="HEADING_ERROR";return out;}
         float remaining=fmaxf(0,route.nextStop(phaseIndex)-s);
         float target=fminf(route.speedCap(s),sqrtf(2*c.accel*remaining+c.accel*c.accel*dt*dt)-c.accel*dt);
         target*=clamp(1-(fabsf(out.error)-1)/4,0.2f,1);

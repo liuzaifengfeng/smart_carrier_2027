@@ -27,6 +27,7 @@ struct Sim : IO {
     int actions=0,updates=0,syncs=0,halts=0,zeroGroups=0;float heading=0;Vec location={310,1200};
     uint32_t arrivalAt=0,maxGap=0;bool wasMoving=false,newAction=false;
     int encoderPolarity[4]={1,1,1,1};
+    bool velocityMode=false;int16_t velocityRpm[4]={};int velocityUpdates=0,curveReports=0;
     uint32_t now()override{return time;}
     bool cancelled()override{return cancel||(cancelAt&&time>=cancelAt);}
     void wait(uint32_t ms)override {
@@ -34,6 +35,7 @@ struct Sim : IO {
         for(int i=0;i<4;++i) {
             double amount=rpm[i]*PULSES_PER_REV*ms/60000.0;
             double delta=fmax(-amount,fmin(amount,goal[i]-actual[i]));
+            if(velocityMode)delta=velocityRpm[i]*PULSES_PER_REV*ms/60000.0;
             if(frozen)delta=0;
             actual[i]+=delta;pulses[i]=delta;
         }
@@ -87,10 +89,18 @@ struct Sim : IO {
         pending[i]=next;stagedRpm[i]=speed;lastAcceleration=acceleration;peak=fmaxf(peak,speed);++updates;return nullptr;
     }
     const char *sync()override {
+        velocityMode=false;
         if(newAction){if(arrivalAt&&time-arrivalAt>maxGap)maxGap=time-arrivalAt;newAction=false;}
         if(residualActive&&!persistentResidual)residualActive=false;
         if(stagedRpm[0]!=stagedRpm[1])differential=true;
         for(int i=0;i<4;++i){goal[i]=pending[i];rpm[i]=stagedRpm[i];}++syncs;return nullptr;
+    }
+    const char *velocity(const WheelCommand &command)override {
+        if(cancelled())return "STOPPED";
+        if(reject)return "MOTOR_COMMAND_REJECTED";
+        velocityMode=true;targetSent=true;++velocityUpdates;
+        for(int i=0;i<4;++i){velocityRpm[i]=command.rpm[i];rpm[i]=abs(command.rpm[i]);}
+        return nullptr;
     }
     void beginAction()override{
         // 新动作（包括停止后校角）不能在上一动作仍运动时插入。
@@ -105,8 +115,11 @@ struct Sim : IO {
         for(int i=0;i<4;++i)CHECK(abs(m[i].rpm)<=3);
         ++waitReports;
     }
-    void halt()override {for(int i=0;i<4;++i){goal[i]=actual[i];pending[i]=0;rpm[i]=0;}++halts;}
-    void report(const char *stage,const Result&,float)override{if(!strcmp(stage,"POSITION_RECOVER"))++recoveries;}
+    void halt()override {velocityMode=false;for(int i=0;i<4;++i){goal[i]=actual[i];pending[i]=0;rpm[i]=0;}++halts;}
+    void report(const char *stage,const Result&,float)override{
+        if(!strcmp(stage,"POSITION_RECOVER"))++recoveries;
+        if(!strcmp(stage,"OUTER_CURVE"))++curveReports;
+    }
     void motorDiagnostic(uint8_t,const char*,double,const Motor&)override{++diagnostics;}
 };
 int main() {
@@ -264,5 +277,47 @@ int main() {
         CHECK(error&&!strcmp(error,"RANGE")&&untouched.syncs==0);
     }
     printf("same-route model: old profile %lums, new profile %lums\n",(unsigned long)(previous.time-1000),(unsigned long)(upgraded.time-1000));
+    // 正式外圈2-3-4-5-14：4号角连续外绕，块内不插入位置动作或停车。
+    Config mixed=cfg;mixed.policy=3;mixed.count=5;mixed.startHeading=180;mixed.endHeading=90;
+    mixed.maxRpm=rpmFor(newProfile.speedMmS,13.6f);mixed.accel=newProfile.accelMmS2;
+    Route outer;CHECK(!outer.build(benchNodes,mixed));bool hasCurve=false;
+    for(size_t i=0;i<outer.segmentCount;++i)hasCurve|=outer.segments[i].kind==CUBIC;CHECK(hasCurve);
+    Sim drift;drift.location={1200,240};drift.heading=180;
+    error=run(outer,newProfile,drift,result);
+    if(error)fprintf(stderr,"outer: %s\n",error);CHECK(!error);
+    printf("outer end %.2f %.2f heading %.2f, actions=%d velocity=%d\n",drift.location.x,drift.location.y,drift.heading,drift.actions,drift.velocityUpdates);
+    CHECK(drift.velocityUpdates>0&&drift.curveReports>0&&drift.updates==0&&drift.actions==1&&drift.halts==3);
+    CHECK(norm(drift.location-Vec(2090,1200))<15&&fabsf(turn(drift.heading,90))<=newProfile.headingDeadbandDeg);
+    Sim noImu;noImu.location={1200,240};noImu.heading=180;noImu.missing=true;
+    noImu.encoderPolarity[0]=noImu.encoderPolarity[3]=-1;
+    Result noImuResult;noImuResult.heading=180;
+    error=run(outer,newProfile,noImu,noImuResult);CHECK(!error&&noImu.velocityUpdates>0);
+    CHECK(norm(noImu.location-Vec(2090,1200))<15);
+    Sim cancelCurve;cancelCurve.location={1200,240};cancelCurve.heading=180;cancelCurve.cancelAt=3000;
+    error=run(outer,newProfile,cancelCurve,result);CHECK(error&&!strcmp(error,"STOPPED")&&!cancelCurve.velocityMode);
+    Node enterCenter[]={{{1200,240},0},{{1680,240},0},{{2090,240},0},{{2090,720},0},
+                         {{2090,1200},0},{{1680,1200},0},{{1200,1200},0}};
+    mixed.count=7;mixed.endHeading=180;Route entering;
+    CHECK(!entering.build(enterCenter,mixed));Sim enter;enter.location={1200,240};enter.heading=180;
+    enter.encoderPolarity[1]=enter.encoderPolarity[3]=-1;
+    error=run(entering,newProfile,enter,result);if(error)fprintf(stderr,"mixed: %s\n",error);CHECK(!error);
+    CHECK(enter.velocityUpdates>0&&enter.updates==8&&enter.actions==3);
+    CHECK(norm(enter.location-Vec(1200,1200))<15);
+    Node upperLeft[]={{{310,1200},0},{{310,1680},0},{{310,2020},0},{{720,2020},0},{{1200,2020},0}};
+    mixed.count=5;mixed.startHeading=180.855f;mixed.endHeading=180;Route aroundLeft;
+    CHECK(!aroundLeft.build(upperLeft,mixed));Sim left;left.heading=180.855f;
+    error=run(aroundLeft,newProfile,left,result);if(error)fprintf(stderr,"upper left: %s\n",error);CHECK(!error);
+    CHECK(left.velocityUpdates>0&&left.updates==4&&norm(left.location-Vec(1200,2020))<15);
+    // 中间十字11-12-17：新旧规划的分段与朝向一致，依旧纯位置模式。
+    Node crossNodes[]={{{720,1200},0},{{1200,1200},0},{{1200,1680},0}};
+    mixed.count=3;mixed.startHeading=0;mixed.endHeading=90;Route center,oldCenter;
+    CHECK(!center.build(crossNodes,mixed));Config stoppedConfig=mixed;stoppedConfig.policy=2;
+    CHECK(!oldCenter.build(crossNodes,stoppedConfig)&&center.segmentCount==oldCenter.segmentCount);
+    for(size_t i=0;i<center.segmentCount;++i) {
+        CHECK(center.segments[i].kind==oldCenter.segments[i].kind&&center.segments[i].kind!=CUBIC);
+        CHECK(center.segments[i].h0==oldCenter.segments[i].h0&&center.segments[i].h1==oldCenter.segments[i].h1);
+    }
+    Sim crossing;crossing.location={720,1200};error=run(center,newProfile,crossing,result);
+    CHECK(!error&&crossing.velocityUpdates==0&&crossing.actions==3);
     puts("fixed position targets, feedback gating, units, merging and faults OK");return 0;
 }

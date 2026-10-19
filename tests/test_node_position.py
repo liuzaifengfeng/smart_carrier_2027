@@ -26,7 +26,12 @@ class PositionTests(unittest.TestCase):
         self.assertIn('MovePosition(0, scanDirection * SCAN_APPROACH_MM, 0, SCAN_APPROACH_SPEED_RPM)', main)
         self.assertIn('MovePosition(0, distance, 0, SCAN_SEARCH_SPEED_RPM, pollTaskCode)', main)
         source = (ROOT/'src/node_position_hardware.cpp').read_text(encoding='utf-8')
-        self.assertNotIn('Emm_V5_Vel_Control(', source)
+        self.assertIn('Emm_V5_Vel_Control(', source)  # 仅外圈连续移动块使用速度模式
+        engine = (ROOT/'src/node_position_control.cpp').read_text(encoding='utf-8')
+        self.assertIn('if(curved)', engine)
+        self.assertIn('outerBlock(route,i,end', engine)
+        position_action = engine[engine.index('const char *move('):engine.index('const char *align(')]
+        self.assertNotIn('io.velocity(', position_action)
         self.assertIn('pulses,true,true', source)
         controller = (ROOT/'src/continuous_trial.cpp').read_text(encoding='utf-8')
         self.assertIn('while(!job.formal&&!failure&&!success)', controller)

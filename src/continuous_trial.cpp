@@ -267,7 +267,7 @@ bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float fina
         Serial.printf("[Route] H30 assist unavailable at start (%s); using planned heading\n",error);
         heading=currentPose.theta;version=0;error=nullptr;
     }
-    Config cfg;cfg.count=count;cfg.policy=2;cfg.startHeading=heading;
+    Config cfg;cfg.count=count;cfg.policy=3;cfg.startHeading=heading; // 正式导航：外圈连续外绕，内侧停转
     cfg.maxRpm=node_position::rpmFor(speedMmS,Y_PULSE);
     cfg.accel=NODE_PATH_ACCEL_MM_S2; // 与轮速一同冻结，运行中不跟随参数写入变化。
     cfg.rotationPpd=THETA_PULSE;

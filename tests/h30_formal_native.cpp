@@ -46,13 +46,14 @@ static void vTaskDelay(int){status.state=DONE;}
 int main(){
     uint8_t path[]={10,19,20,21,22};
     CHECK(H30StartNodePath(path,5,300,180));CHECK(launches==1&&status.formal&&status.async);
-    CHECK(route.config.policy==2&&route.config.forwardPpm==Y_PULSE&&route.config.lateralPpm==X_PULSE);
+    CHECK(route.config.policy==3&&route.config.forwardPpm==Y_PULSE&&route.config.lateralPpm==X_PULSE);
     CHECK(route.config.accel==425.5f&&route.config.maxRpm==node_position::rpmFor(300,Y_PULSE));
     CHECK(formalSettings.speedMmS==300&&formalSettings.accelMmS2==425.5f);
     CHECK(formalSettings.turnDegS==150&&formalSettings.turnAccelDegS2==360);
     CHECK(formalSettings.headingDeadbandDeg==3);
     CHECK(referenceVersion==7&&initialHeading>180.8f&&!configured);
-    for(size_t i=0;i<route.segmentCount;++i)CHECK(route.segments[i].kind!=CUBIC);
+    bool outerCurve=false;for(size_t i=0;i<route.segmentCount;++i)outerCurve|=route.segments[i].kind==CUBIC;
+    CHECK(outerCurve);
     NODE_PATH_ACCEL_MM_S2=600;
     CHECK(!H30StartNodePath(path,5,300,180));CHECK(launches==1&&route.config.accel==425.5f);
     status.state=DONE;sensorError="OFFLINE";

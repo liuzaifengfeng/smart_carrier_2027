@@ -32,7 +32,7 @@ struct Config {
     float startHeading=0,endHeading=0,maxRpm=80,accel=200,lateralAccel=300;
     float lateralPpm=13.3f,forwardPpm=13.6f,rotationPpd=51.8f;
     float kp=2,maxOmega=45,correction=20;
-    uint8_t policy=0; // 0仅保留旧数学模型；实际试跑必须显式选择1自动/2全程停转。
+    uint8_t policy=0; // 0旧模型；试跑1自动/2停转；3正式外圈连续、内侧位置模式。
     float outset=60,margin=20;
 };
 struct Pose { Vec p,tangent; float curvature=0; };
@@ -91,6 +91,7 @@ public:
     bool finishing=false;
     size_t phaseIndex=0;
     bool requireInertial=false;
+    bool movingBlock=false; // 正式外圈只复用移动段，不接管内侧原地转向或引入试跑故障门槛。
     const char *stage="MOVE";
     H30Attitude motionSample;
     void observeMotion(const H30Attitude &sample){motionSample=sample;}

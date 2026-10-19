@@ -437,6 +437,7 @@ class ContinuousTrialPanel(ttk.Frame):
             names = {"HEADING_HOLD": "运动中航向纠偏", "SETTLE_BEFORE_TURN": "等待车体安静",
                      "TURN": "转向闭环", "FINAL_HEADING": "终点航向闭环", "SETTLE_AFTER_TURN": "转向后停稳确认"}
             names.update(POSITION_STRAIGHT="位置直行：H30辅助纠偏", POSITION_TURN="位置转向：辅助修正并确认停稳", POSITION_RECOVER="末端残差：低速自动修正", POSITION_SETTLE="交接停稳：自动重新确认")
+            names.update(OUTER_DRIFT="外侧路径：连续移动", OUTER_CURVE="外侧转角：外绕连续过弯")
             self.motion_stage = names.get(f[4], f[4])
             self.status.set(self.motion_stage)
             return

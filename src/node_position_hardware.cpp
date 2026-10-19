@@ -75,6 +75,15 @@ public:
         if(cancelled())return "STOPPED";
         Emm_V5_Synchronous_motion(0);Serial1.flush();return nullptr;
     }
+    const char *velocity(const continuous::WheelCommand &command)override {
+        for(uint8_t id=1;id<=4;++id) {
+            if(cancelled())return "STOPPED";
+            int16_t rpm=command.rpm[id-1];
+            Emm_V5_Vel_Control(id,rpm>=0?1:0,abs(rpm),0,true);
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+        return sync();
+    }
     void halt()override {
         for(uint8_t id=1;id<=4;++id){Emm_V5_Stop_Now(id,true);vTaskDelay(pdMS_TO_TICKS(5));}
         Emm_V5_Synchronous_motion(0);Serial1.flush();

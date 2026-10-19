@@ -210,6 +210,60 @@ const char *align(IO &io,const Settings &settings,const Config &cfg,Result &resu
     H30Attitude m;const char *error=sample(io,m,result.heading);if(error)return error;
     return fabsf(turn(result.heading,heading))<=settings.headingDeadbandDeg?nullptr:"TURN_HEADING_ERROR";
 }
+// 复用原外绕轨迹/航向控制器；直线-曲线-直线之间不停车，进度来自编码器。
+const char *outerBlock(const Route &route,size_t begin,size_t end,IO &io,Result &result,Context &context) {
+    Tracker tracker;tracker.begin(route,result.heading);tracker.movingBlock=true;
+    tracker.phaseIndex=begin;tracker.s=route.segments[begin].offset;tracker.estimated=result.estimated;
+    const Segment &last=route.segments[end-1];const float stop=last.offset+last.length;
+    int64_t positions[4];for(int i=0;i<4;++i)positions[i]=context.stopped[i].position;
+    WheelCommand applied;uint32_t previous=io.now(),reported=0;
+    context.valid=false;io.beginAction();io.timing("OUTER_DRIFT_SENT");
+    auto displacement=[&](const Motor (&states)[4]) {
+        float pulses[4];
+        for(int i=0;i<4;++i) {
+            int64_t delta=states[i].position-positions[i];
+            if(!context.encoderSign[i]&&llabs(delta)>128&&applied.rpm[i])
+                context.encoderSign[i]=(delta>=0?1:-1)*(applied.rpm[i]>=0?1:-1);
+            pulses[i]=context.encoderSign[i]?static_cast<float>(delta*context.encoderSign[i])*PULSES_PER_REV/65536:0;
+            positions[i]=states[i].position;
+        }
+        Vec body{(-pulses[0]-pulses[1]+pulses[2]+pulses[3])/(4*route.config.lateralPpm),
+                  (pulses[0]-pulses[1]+pulses[2]-pulses[3])/(4*route.config.forwardPpm)};
+        float oldHeading=result.heading;H30Attitude m;
+        const char *error=sample(io,m,result.heading);if(error)return error;
+        if((m.fields&7)!=7)result.heading=wrap(oldHeading+(pulses[0]+pulses[1]+pulses[2]+pulses[3])/(4*route.config.rotationPpd));
+        Vec world=bodyToWorld(body,oldHeading+turn(oldHeading,result.heading)*.5f);
+        Vec tangent=route.phaseAt(tracker.phaseIndex,tracker.s-route.segments[tracker.phaseIndex].offset).tangent;
+        result.estimated=result.estimated+world;
+        tracker.estimated=result.estimated;tracker.s=fminf(stop,tracker.s+fmaxf(0,dot(world,tangent)));result.s=tracker.s;
+        return static_cast<const char *>(nullptr);
+    };
+    for(;;) {
+        if(io.cancelled())return "STOPPED";
+        uint32_t now=io.now();float dt=fmaxf(.001f,(now-previous)*.001f);previous=now;
+        Motor states[4];
+        for(uint8_t id=1;id<=4;++id) {
+            const char *error=io.read(id,states[id-1]);if(error)return error;
+            error=health(io,id,states[id-1]);if(error)return error;
+        }
+        const char *error=displacement(states);if(error)return error;
+        if(tracker.s>=stop-.5f)break;
+        H30Attitude m;error=sample(io,m,result.heading);if(error)return error;
+        Output out=tracker.update(route,result.heading,dt,m.receivedAtMs);
+        if(out.finished)break;
+        if(out.failure)return out.failure;
+        error=io.velocity(out.wheels);if(error)return error;
+        applied=out.wheels;tracker.commit(applied,io.now());
+        if(now-reported>=200) {
+            io.report(route.segments[tracker.phaseIndex].kind==CUBIC?"OUTER_CURVE":"OUTER_DRIFT",result,out.reference);
+            reported=now;
+        }
+        io.wait(20);
+    }
+    io.halt();const char *error=quiet(io,result,context);if(error)return error;
+    error=displacement(context.stopped);if(error)return error;
+    context.prepared=true;io.timing("OUTER_DRIFT_ARRIVED");return nullptr;
+}
 }
 const char *run(const Route &route,const Settings &settings,IO &io,Result &result) {
     if(!isfinite(settings.speedMmS)||settings.speedMmS<10||settings.speedMmS>2000
@@ -221,7 +275,18 @@ const char *run(const Route &route,const Settings &settings,IO &io,Result &resul
     Context context;io.halt();const char *error=quiet(io,result,context);if(error){io.halt();return error;}
     for(size_t i=0;i<route.segmentCount;++i) {
         const Segment &phase=route.segments[i];
-        if(phase.kind==CUBIC){io.halt();return "POSITION_ONLY";}
+        if(phase.kind!=ROTATE) {
+            size_t end=i;bool curved=false;
+            while(end<route.segmentCount&&route.segments[end].kind!=ROTATE) {
+                curved|=route.segments[end].kind==CUBIC;++end;
+            }
+            if(curved) {
+                error=align(io,settings,route.config,result,phase.h0,context);
+                if(!error)error=outerBlock(route,i,end,io,result,context);
+                if(error){io.halt();return error;}
+                i=end-1;continue;
+            }
+        }
         if(phase.kind==ROTATE)error=align(io,settings,route.config,result,phase.h1,context);
         else {
             // 同向共线节点不各停一次；合并成同一有限脉冲目标。

@@ -44,6 +44,7 @@ struct IO {
     // 每个动作只装载一次绝对目标、最大轮速和加速度，由驱动器完成加减速。
     virtual const char *target(uint8_t id,bool positive,uint16_t rpm,uint8_t acceleration,uint32_t pulses)=0;
     virtual const char *sync()=0;
+    virtual const char *velocity(const continuous::WheelCommand &command)=0;
     virtual void halt()=0;
     virtual void report(const char *stage,const Result &result,float reference)=0;
     virtual void beginAction(){}
