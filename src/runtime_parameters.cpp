@@ -18,7 +18,7 @@ extern uint32_t SCAN_APPROACH_SPEED_RPM;
 extern uint32_t SCAN_SEARCH_SPEED_RPM;
 
 namespace {
-constexpr size_t MAX_PARAMETERS = 384; // 原有134项 + 正反向动作组延时235项，并预留空间。
+constexpr size_t MAX_PARAMETERS = 400; // 包含角点独立 PID 的12项参数，并预留空间。
 struct Parameter {
     char name[80];
     void *address;
@@ -155,6 +155,8 @@ void initialize() {
     RegisterRuntimeFloat("底盘/节点导航独立纠偏死区(°)", NODE_PATH_HEADING_DEADBAND_DEG, 1, 8);
     // 反向九组最后追加，保留公共、正向、辅助及底盘参数的既有编号。
     registerReverseMaterialDelays();
+    // 角点 PID 最后追加，保留既有参数编号。
+    RegisterCornerAlignmentParameters();
 }
 
 bool parseUnsigned(const char *text, uint32_t &value) {

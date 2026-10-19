@@ -20,6 +20,13 @@ def positions():
 
 
 class HybridTests(unittest.TestCase):
+    def test_stopped_route_uses_final_heading_to_avoid_extra_half_turn(self):
+        for start in (270, 269.6, 270.4):
+            plan = HybridPlan([10, 19, 20, 21, 22], positions(), TrialConfig(start=start, end=180, policy=2))
+            turns = [p for p in plan.segments if p.kind == 'ROTATE' and abs((p.h1-p.h0+180) % 360-180) > 1]
+            self.assertEqual(len(turns), 1)
+            self.assertEqual((turns[0].h0, turns[0].h1), (270, 180))
+
     def plan(self, policy=1):
         return HybridPlan([14, 15, 24, 23, 22], positions(), TrialConfig(start=90, end=180, policy=policy))
 

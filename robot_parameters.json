@@ -394,6 +394,90 @@
           "minimum": 0.0,
           "maximum": 100000.0,
           "integer": false
+        },
+        "PID/CORNER/视觉X/Kp": {
+          "value": 0.00999999978,
+          "description": "CORNER角点对齐专用：比例增益，乘以当前误差。误差单位沿用视觉端输出，不能默认视为毫米。",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "integer": false
+        },
+        "PID/CORNER/视觉X/Ki": {
+          "value": 0.000500000024,
+          "description": "CORNER角点对齐专用：积分增益，乘以累计误差积分。误差单位沿用视觉端输出，不能默认视为毫米。",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "integer": false
+        },
+        "PID/CORNER/视觉X/Kd": {
+          "value": 0.0,
+          "description": "CORNER角点对齐专用：微分增益，乘以误差变化率。误差单位沿用视觉端输出，不能默认视为毫米。",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "integer": false
+        },
+        "PID/CORNER/视觉X/积分限幅": {
+          "value": 200.0,
+          "description": "CORNER角点对齐专用：累计误差积分的绝对值上限，在乘以Ki之前限幅。误差单位沿用视觉端输出，不能默认视为毫米。",
+          "minimum": 0.0,
+          "maximum": 100000.0,
+          "integer": false
+        },
+        "PID/CORNER/视觉Y/Kp": {
+          "value": 0.00999999978,
+          "description": "CORNER角点对齐专用：比例增益，乘以当前误差。误差单位沿用视觉端输出，不能默认视为毫米。",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "integer": false
+        },
+        "PID/CORNER/视觉Y/Ki": {
+          "value": 0.000500000024,
+          "description": "CORNER角点对齐专用：积分增益，乘以累计误差积分。误差单位沿用视觉端输出，不能默认视为毫米。",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "integer": false
+        },
+        "PID/CORNER/视觉Y/Kd": {
+          "value": 0.0,
+          "description": "CORNER角点对齐专用：微分增益，乘以误差变化率。误差单位沿用视觉端输出，不能默认视为毫米。",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "integer": false
+        },
+        "PID/CORNER/视觉Y/积分限幅": {
+          "value": 300.0,
+          "description": "CORNER角点对齐专用：累计误差积分的绝对值上限，在乘以Ki之前限幅。误差单位沿用视觉端输出，不能默认视为毫米。",
+          "minimum": 0.0,
+          "maximum": 100000.0,
+          "integer": false
+        },
+        "PID/CORNER/角度/Kp": {
+          "value": 0.0299999993,
+          "description": "CORNER角点对齐专用：比例增益，乘以当前误差。误差单位为度。",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "integer": false
+        },
+        "PID/CORNER/角度/Ki": {
+          "value": 0.000500000024,
+          "description": "CORNER角点对齐专用：积分增益，乘以累计误差积分。误差单位为度。",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "integer": false
+        },
+        "PID/CORNER/角度/Kd": {
+          "value": 0.0,
+          "description": "CORNER角点对齐专用：微分增益，乘以误差变化率。误差单位为度。",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "integer": false
+        },
+        "PID/CORNER/角度/积分限幅": {
+          "value": 20.0,
+          "description": "CORNER角点对齐专用：累计误差积分的绝对值上限，在乘以Ki之前限幅。误差单位为度。",
+          "minimum": 0.0,
+          "maximum": 100000.0,
+          "integer": false
         }
       }
     },
@@ -611,361 +695,6 @@
           "description": "伸缩脉冲每毫米；用于运动指令换算，不是PID增益。",
           "minimum": 0.00100000005,
           "maximum": 100000.0,
-          "integer": false
-        }
-      }
-    },
-    "地图": {
-      "description": "场地节点0~24的绝对坐标，单位mm。5x5蛇形编号：底部0~4，上一行9~5，再10~14、19~15、20~24。",
-      "parameters": {
-        "地图/节点0/X(mm)": {
-          "value": 310.0,
-          "description": "节点0的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点0/Y(mm)": {
-          "value": 240.0,
-          "description": "节点0的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点1/X(mm)": {
-          "value": 720.0,
-          "description": "节点1的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点1/Y(mm)": {
-          "value": 240.0,
-          "description": "节点1的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点2/X(mm)": {
-          "value": 1200.0,
-          "description": "节点2的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点2/Y(mm)": {
-          "value": 240.0,
-          "description": "节点2的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点3/X(mm)": {
-          "value": 1680.0,
-          "description": "节点3的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点3/Y(mm)": {
-          "value": 240.0,
-          "description": "节点3的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点4/X(mm)": {
-          "value": 2090.0,
-          "description": "节点4的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点4/Y(mm)": {
-          "value": 240.0,
-          "description": "节点4的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点5/X(mm)": {
-          "value": 2090.0,
-          "description": "节点5的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点5/Y(mm)": {
-          "value": 720.0,
-          "description": "节点5的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点6/X(mm)": {
-          "value": 1680.0,
-          "description": "节点6的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点6/Y(mm)": {
-          "value": 720.0,
-          "description": "节点6的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点7/X(mm)": {
-          "value": 1200.0,
-          "description": "节点7的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点7/Y(mm)": {
-          "value": 720.0,
-          "description": "节点7的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点8/X(mm)": {
-          "value": 720.0,
-          "description": "节点8的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点8/Y(mm)": {
-          "value": 720.0,
-          "description": "节点8的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点9/X(mm)": {
-          "value": 310.0,
-          "description": "节点9的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点9/Y(mm)": {
-          "value": 720.0,
-          "description": "节点9的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点10/X(mm)": {
-          "value": 310.0,
-          "description": "节点10的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点10/Y(mm)": {
-          "value": 1200.0,
-          "description": "节点10的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点11/X(mm)": {
-          "value": 720.0,
-          "description": "节点11的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点11/Y(mm)": {
-          "value": 1200.0,
-          "description": "节点11的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点12/X(mm)": {
-          "value": 1200.0,
-          "description": "节点12的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点12/Y(mm)": {
-          "value": 1200.0,
-          "description": "节点12的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点13/X(mm)": {
-          "value": 1680.0,
-          "description": "节点13的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点13/Y(mm)": {
-          "value": 1200.0,
-          "description": "节点13的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点14/X(mm)": {
-          "value": 2090.0,
-          "description": "节点14的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点14/Y(mm)": {
-          "value": 1200.0,
-          "description": "节点14的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点15/X(mm)": {
-          "value": 2090.0,
-          "description": "节点15的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点15/Y(mm)": {
-          "value": 1680.0,
-          "description": "节点15的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点16/X(mm)": {
-          "value": 1680.0,
-          "description": "节点16的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点16/Y(mm)": {
-          "value": 1680.0,
-          "description": "节点16的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点17/X(mm)": {
-          "value": 1200.0,
-          "description": "节点17的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点17/Y(mm)": {
-          "value": 1680.0,
-          "description": "节点17的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点18/X(mm)": {
-          "value": 720.0,
-          "description": "节点18的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点18/Y(mm)": {
-          "value": 1680.0,
-          "description": "节点18的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点19/X(mm)": {
-          "value": 310.0,
-          "description": "节点19的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点19/Y(mm)": {
-          "value": 1680.0,
-          "description": "节点19的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点20/X(mm)": {
-          "value": 310.0,
-          "description": "节点20的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点20/Y(mm)": {
-          "value": 2020.0,
-          "description": "节点20的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点21/X(mm)": {
-          "value": 720.0,
-          "description": "节点21的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点21/Y(mm)": {
-          "value": 2020.0,
-          "description": "节点21的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点22/X(mm)": {
-          "value": 1200.0,
-          "description": "节点22的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点22/Y(mm)": {
-          "value": 2020.0,
-          "description": "节点22的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点23/X(mm)": {
-          "value": 1680.0,
-          "description": "节点23的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点23/Y(mm)": {
-          "value": 2020.0,
-          "description": "节点23的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点24/X(mm)": {
-          "value": 2090.0,
-          "description": "节点24的场地X坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
-          "integer": false
-        },
-        "地图/节点24/Y(mm)": {
-          "value": 2020.0,
-          "description": "节点24的场地Y坐标；原点在左下角，X向右、Y向上。",
-          "minimum": 0.0,
-          "maximum": 2400.0,
           "integer": false
         }
       }
