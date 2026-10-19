@@ -337,5 +337,19 @@ int main() {
     }
     Sim crossing;crossing.location={720,1200};error=run(center,newProfile,crossing,result);
     CHECK(!error&&crossing.velocityUpdates==0&&crossing.actions==3);
+    // 用户实测：10(270)-19-20-21-22(180)，应只在20转-90，不在22掉头。
+    Config cornerCfg;cornerCfg.policy=2;cornerCfg.count=5;cornerCfg.startHeading=270;cornerCfg.endHeading=180;
+    Route corner;CHECK(!corner.build(upperLeft,cornerCfg));
+    int realTurns=0;
+    for(size_t i=0;i<corner.segmentCount;++i)if(corner.segments[i].kind==ROTATE) {
+        float delta=turn(corner.segments[i].h0,corner.segments[i].h1);
+        if(fabsf(delta)>.01f){++realTurns;CHECK(fabsf(delta+90)<.01f);}
+    }
+    CHECK(realTurns==1);
+    Sim cornerCar;cornerCar.heading=270;
+    error=run(corner,newProfile,cornerCar,result);CHECK(!error&&cornerCar.actions==3&&cornerCar.velocityUpdates==0);
+    CHECK(norm(cornerCar.location-Vec(1200,2020))<3&&fabsf(turn(cornerCar.heading,180))<=3);
+    cornerCfg.startHeading=270.4f;CHECK(!corner.build(upperLeft,cornerCfg));
+    CHECK(corner.segments[0].h1==270&&corner.segments[corner.segmentCount-1].h0==180);
     puts("fixed position targets, feedback gating, units, merging and faults OK");return 0;
 }

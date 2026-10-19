@@ -83,6 +83,16 @@ PidController s_alignVisualYPid = {
 PidController s_alignAnglePid = {
     0.03f, 0.0005f, 0.0f, 20.0f, 0.0f, 0.0f, false
 };
+// CORNER 独立调参，并独立保存积分和微分历史。
+PidController s_cornerVisualXPid = {
+    0.01f, 0.0005f, 0.0f, 200.0f, 0.0f, 0.0f, false
+};
+PidController s_cornerVisualYPid = {
+    0.01f, 0.0005f, 0.0f, 300.0f, 0.0f, 0.0f, false
+};
+PidController s_cornerAnglePid = {
+    0.03f, 0.0005f, 0.0f, 20.0f, 0.0f, 0.0f, false
+};
 
 float clampFloat(float value, float minimum, float maximum) {
     return fmaxf(minimum, fminf(value, maximum));
@@ -329,6 +339,21 @@ bool ChassisGetNodePosition(uint8_t node,float &x,float &y) {
 }
 
 // 注册原变量地址，上位机修改后由底盘和 PID 算法直接使用。
+void RegisterCornerAlignmentParameters() {
+    PidController *controllers[] = {&s_cornerVisualXPid, &s_cornerVisualYPid, &s_cornerAnglePid};
+    const char *axes[] = {"视觉X", "视觉Y", "角度"};
+    const char *fields[] = {"Kp", "Ki", "Kd", "积分限幅"};
+    for (uint8_t i = 0; i < 3; ++i) {
+        float *values[] = {&controllers[i]->kp, &controllers[i]->ki,
+                           &controllers[i]->kd, &controllers[i]->integralLimit};
+        for (uint8_t j = 0; j < 4; ++j) {
+            char name[80];
+            snprintf(name, sizeof(name), "PID/CORNER/%s/%s", axes[i], fields[j]);
+            RegisterRuntimeFloat(name, *values[j], 0, j == 3 ? 100000 : 100);
+        }
+    }
+}
+
 void RegisterChassisParameters() {
     PidController *controllers[] = {&s_alignVisualXPid, &s_alignVisualYPid, &s_alignAnglePid};
     const char *axes[] = {"视觉X", "视觉Y", "角度"};
@@ -867,6 +892,9 @@ void ResetDiscAlignmentPid() {
     resetPid(s_alignVisualXPid);
     resetPid(s_alignVisualYPid);
     resetPid(s_alignAnglePid);
+    resetPid(s_cornerVisualXPid);
+    resetPid(s_cornerVisualYPid);
+    resetPid(s_cornerAnglePid);
 }
 
 /**
@@ -929,23 +957,27 @@ bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg,
     float visualXOutput = 0.0f;
     float visualYOutput = 0.0f;
     float angleOutput = 0.0f;
+    const bool corner = mode == VisionStartMode::CORNER;
+    auto &visualXPid = corner ? s_cornerVisualXPid : s_alignVisualXPid;
+    auto &visualYPid = corner ? s_cornerVisualYPid : s_alignVisualYPid;
+    auto &anglePid = corner ? s_cornerAnglePid : s_alignAnglePid;
 
     if (xAligned) {
-        resetPid(s_alignVisualXPid);
+        resetPid(visualXPid);
     } else {
-        visualXOutput = updatePid( s_alignVisualXPid, visualXError, dtSeconds
+        visualXOutput = updatePid( visualXPid, visualXError, dtSeconds
         );
     }
     if (yAligned) {
-        resetPid(s_alignVisualYPid);
+        resetPid(visualYPid);
     } else {
-        visualYOutput = updatePid( s_alignVisualYPid, visualYError, dtSeconds
+        visualYOutput = updatePid( visualYPid, visualYError, dtSeconds
         );
     }
     if (angleAligned) {
-        resetPid(s_alignAnglePid);
+        resetPid(anglePid);
     } else {
-        angleOutput = updatePid( s_alignAnglePid, angleErrorDeg, dtSeconds
+        angleOutput = updatePid( anglePid, angleErrorDeg, dtSeconds
         );
     }
 

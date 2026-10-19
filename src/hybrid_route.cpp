@@ -44,6 +44,26 @@ float roadHeading(float current,Vec direction) {
     float forward=wrap(atan2f(direction.y,direction.x)*180/PI_F),back=wrap(forward+180);
     return fabsf(turn(current,back))<fabsf(turn(current,forward))-0.01f?back:forward;
 }
+// 全停转路径同时考虑终点朝向，避免局部90度平局选错后在终点再掉头。
+void stoppedHeadings(const Vec *directions,size_t edges,float start,float end,float *heads) {
+    float candidates[MAX_NODES][2],cost[MAX_NODES][2];
+    for(size_t i=0;i<edges;++i) {
+        candidates[i][0]=wrap(atan2f(directions[i].y,directions[i].x)*180/PI_F);
+        candidates[i][1]=wrap(candidates[i][0]+180);
+    }
+    for(int i=static_cast<int>(edges)-1;i>=0;--i)for(int k=0;k<2;++k) {
+        if(i==static_cast<int>(edges)-1)cost[i][k]=fabsf(turn(candidates[i][k],end));
+        else cost[i][k]=fminf(fabsf(turn(candidates[i][k],candidates[i+1][0]))+cost[i+1][0],
+                             fabsf(turn(candidates[i][k],candidates[i+1][1]))+cost[i+1][1]);
+    }
+    float current=start;
+    for(size_t i=0;i<edges;++i) {
+        float a=fabsf(turn(current,candidates[i][0])),b=fabsf(turn(current,candidates[i][1]));
+        float ca=a+cost[i][0],cb=b+cost[i][1];
+        int k=cb<ca-.01f||(fabsf(cb-ca)<=.01f&&b<a-.01f)?1:0;
+        heads[i]=candidates[i][k];current=heads[i];
+    }
+}
 Segment outsideCurve(Vec p,Vec incoming,Vec outgoing,float trim,float outset,float from,float to) {
     Segment v;v.kind=CUBIC;v.start=p-incoming*trim;v.end=p+outgoing*trim;
     // 与内切圆弧相反：控制柄超过原节点，曲线中部向远离黄色角点的一侧鼓出。
@@ -72,10 +92,11 @@ const char *Route::buildHybrid(const Node *nodes,const Config &cfg) {
         if(i+1<cfg.count){distance[i]=norm(nodes[i+1].p-nodes[i].p);if(distance[i]<20)return "SHORT_SEGMENT";
             direction[i]=(nodes[i+1].p-nodes[i].p)*(1/distance[i]);}
     }
-    heads[0]=roadHeading(cfg.startHeading,direction[0]);
+    if(cfg.policy==2)stoppedHeadings(direction,cfg.count-1,cfg.startHeading,cfg.endHeading,heads);
+    else heads[0]=roadHeading(cfg.startHeading,direction[0]);
     if(fabsf(turn(cfg.startHeading,heads[0]))>0.05f&&!addRotation(nodes[0].p,cfg.startHeading,heads[0]))return "INITIAL_TURN_SPACE";
     for(size_t i=1;i+1<cfg.count;++i) {
-        heads[i]=roadHeading(heads[i-1],direction[i]);
+        if(cfg.policy!=2)heads[i]=roadHeading(heads[i-1],direction[i]);
         float d=dot(direction[i-1],direction[i]);
         if(d>0.9999f)continue;
         if(fabsf(d)>0.001f&&d>-0.9999f)return "TURN_NOT_90";

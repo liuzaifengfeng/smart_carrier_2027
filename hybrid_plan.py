@@ -11,6 +11,27 @@ def road_heading(current, direction):
     return back if abs(angle_delta(current, back)) < abs(angle_delta(current, forward)) - .01 else forward
 
 
+def stopped_headings(directions, start, end):
+    candidates = []
+    for x, y in directions:
+        forward = math.degrees(math.atan2(y, x)) % 360
+        candidates.append((forward, (forward+180) % 360))
+    costs = [[0., 0.] for _ in candidates]
+    for i in range(len(candidates)-1, -1, -1):
+        for k, heading in enumerate(candidates[i]):
+            costs[i][k] = (abs(angle_delta(heading, end)) if i == len(candidates)-1 else
+                           min(abs(angle_delta(heading, h))+costs[i+1][j]
+                               for j, h in enumerate(candidates[i+1])))
+    heads, current = [], start
+    for i, pair in enumerate(candidates):
+        a, b = (abs(angle_delta(current, h)) for h in pair)
+        ca, cb = a+costs[i][0], b+costs[i][1]
+        k = int(cb < ca-.01 or (abs(cb-ca) <= .01 and b < a-.01))
+        current = pair[k]
+        heads.append(current)
+    return heads
+
+
 @dataclass
 class Phase:
     start: tuple
@@ -96,12 +117,14 @@ class HybridPlan(TrialPlan):
                 raise ValueError("节点间距不足20mm")
             distances.append(d)
             directions.append(tuple((v-u)/d for u, v in zip(a, b)))
-        heads = [road_heading(config.start, directions[0])]
+        heads = (stopped_headings(directions, config.start, config.end)
+                 if config.policy == 2 and not auto_end else [road_heading(config.start, directions[0])])
         if abs(angle_delta(config.start, heads[0])) > .05:
             self._append(Phase(points[0], points[0], config.start, heads[0], "ROTATE"), "起点原地转向空间不足")
         curves = {}
         for i in range(1, len(nodes)-1):
-            heads.append(road_heading(heads[-1], directions[i]))
+            if config.policy != 2 or auto_end:
+                heads.append(road_heading(heads[-1], directions[i]))
             dot = sum(a*b for a, b in zip(directions[i-1], directions[i]))
             if dot > .9999:
                 continue

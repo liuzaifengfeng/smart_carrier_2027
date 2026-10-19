@@ -26,6 +26,8 @@ def supported_names():
                   "取料下降", "取料夹紧", "取料提起", "放料下降", "放料松爪", "放料提起"))
     names.update(f"PID/{axis}/{field}" for axis in ("视觉X", "视觉Y", "角度")
                  for field in ("Kp", "Ki", "Kd", "积分限幅"))
+    names.update(f"PID/CORNER/{axis}/{field}" for axis in ("视觉X", "视觉Y", "角度")
+                 for field in ("Kp", "Ki", "Kd", "积分限幅"))
     names.update(f"对齐/{mode}/{field}" for mode in
                  ("DISC", "DISC_MATERIAL", "WORK_AREA", "WORK_AREA_LOADED", "CORNER")
                  for field in ("X死区", "Y死区", "角度死区(deg)"))
@@ -40,8 +42,6 @@ def supported_names():
     names.update("标定/" + field for field in
                  ("X脉冲每毫米", "Y脉冲每毫米", "旋转脉冲每度",
                   "升降脉冲每毫米", "伸缩脉冲每毫米"))
-    names.update(f"地图/节点{i}/{axis}(mm)" for i in range(25)
-                 for axis in ("X", "Y"))
     return names
 
 

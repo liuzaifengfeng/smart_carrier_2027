@@ -46,6 +46,9 @@ def config_edits(data, parameters):
     edits = {}
     for group in data["groups"].values():
         for name, entry in group["parameters"].items():
+            # 旧 JSON 中的地图坐标不再导入，节点默认坐标由固件源码维护。
+            if name.startswith("地图/"):
+                continue
             if name not in by_name:
                 raise ValueError(f"当前固件不支持参数：{name}")
             value = entry["value"]
@@ -66,8 +69,8 @@ def export_config(path, parameters, edits):
     }
     groups = {}
     for p in parameters.values():
-        # 动作组延时单独写回 C++，避免 JSON 默认值覆盖已调好的源码配置。
-        if p.name.startswith(DELAY_PREFIX):
+        # 动作组延时单独写回 C++；地图坐标也由源码维护，不导出到 JSON。
+        if p.name.startswith((DELAY_PREFIX, "地图/")):
             continue
         category = p.name.split("/", 1)[0]
         group = groups.setdefault(category, {
