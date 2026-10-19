@@ -114,7 +114,7 @@ void ResetAlignmentWait();
 
 // @brief 机械臂移动到位.
 // 升降/伸缩使用 EMM V5 绝对位置模式，以开机当前位置清零为原点；-1 跳过该轴。
-// speed 是1~300的公共速度指令；夹爪基于200≈90°/s的原标定计算后，将耗时缩短为1/5。
+// speed 为有限且≥1的公共速度指令，无人为上限；升降/伸缩RPM仅按16位协议饱和；夹爪基于200≈90°/s的原标定计算后，将耗时缩短为1/5。
 // 返回值表示所请求的控制命令是否全部成功下发，不代表机构已物理到位。
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
 

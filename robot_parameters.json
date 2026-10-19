@@ -170,7 +170,7 @@
           "value": 300.0,
           "description": "上位机单轴试动作的默认速度；自动抓放流程使用下方各步骤独立速度。升降/伸缩驱动速度为value*3；舵机时间参数为(300-value)*10。",
           "minimum": 1.0,
-          "maximum": 300.0,
+          "maximum": 3.4028234663852886e38,
           "integer": false
         },
         "搬运/夹爪张开(deg)": {
@@ -233,77 +233,77 @@
           "value": 400.0,
           "description": "圆盘抓取第1步：升降、伸缩、转台和张爪共用的 MoveArm 速度。",
           "minimum": 1.0,
-          "maximum": 500.0,
+          "maximum": 3.4028234663852886e38,
           "integer": false
         },
         "搬运/速度/圆盘夹紧": {
           "value": 300.0,
           "description": "圆盘抓取第2步：夹紧夹爪的 MoveArm 速度。",
           "minimum": 1.0,
-          "maximum": 300.0,
+          "maximum": 3.4028234663852886e38,
           "integer": false
         },
         "搬运/速度/圆盘提起": {
           "value": 400.0,
           "description": "圆盘抓取第3步：升至圆盘提起高度的 MoveArm 速度。",
           "minimum": 1.0,
-          "maximum": 500.0,
+          "maximum": 3.4028234663852886e38,
           "integer": false
         },
         "搬运/速度/移至工位平移": {
           "value": 300.0,
           "description": "每次取料/放料前：升至安全高度、伸向目标并设置夹爪角度。",
           "minimum": 1.0,
-          "maximum": 300.0,
+          "maximum": 3.4028234663852886e38,
           "integer": false
         },
         "搬运/速度/移至工位转向": {
           "value": 250.0,
           "description": "每次取料/放料前：在安全高度转向目标工位。",
           "minimum": 1.0,
-          "maximum": 300.0,
+          "maximum": 3.4028234663852886e38,
           "integer": false
         },
         "搬运/速度/取料下降": {
           "value": 300.0,
           "description": "从载物台或工作区取料：下降到工位高度。",
           "minimum": 1.0,
-          "maximum": 300.0,
+          "maximum": 3.4028234663852886e38,
           "integer": false
         },
         "搬运/速度/取料夹紧": {
           "value": 250.0,
           "description": "从载物台或工作区取料：夹紧夹爪。",
           "minimum": 1.0,
-          "maximum": 300.0,
+          "maximum": 3.4028234663852886e38,
           "integer": false
         },
         "搬运/速度/取料提起": {
           "value": 300.0,
           "description": "从载物台或工作区取料：升至安全高度。",
           "minimum": 1.0,
-          "maximum": 300.0,
+          "maximum": 3.4028234663852886e38,
           "integer": false
         },
         "搬运/速度/放料下降": {
           "value": 300.0,
           "description": "放入载物台或工作区：下降到目标高度。",
           "minimum": 1.0,
-          "maximum": 300.0,
+          "maximum": 3.4028234663852886e38,
           "integer": false
         },
         "搬运/速度/放料松爪": {
           "value": 250.0,
           "description": "放入载物台或工作区：张开夹爪。",
           "minimum": 1.0,
-          "maximum": 300.0,
+          "maximum": 3.4028234663852886e38,
           "integer": false
         },
         "搬运/速度/放料提起": {
           "value": 300.0,
           "description": "放入载物台或工作区：升至安全高度。",
           "minimum": 1.0,
-          "maximum": 300.0,
+          "maximum": 3.4028234663852886e38,
           "integer": false
         }
       }

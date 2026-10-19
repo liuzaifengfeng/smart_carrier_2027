@@ -4,6 +4,7 @@
 #include "material_transfer.h"
 #include "generated_parameter_defaults.h"
 #include <math.h>
+#include <float.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -94,6 +95,7 @@ void registerMaterialDelays() {
     RegisterRuntimeUInt("动作组延时/扫码准备2/转向(ms)", materialAuxiliaryDelays.lidarZone2TurnMs, 0, 60000);
 }
 
+<<<<<<< HEAD
 void registerReverseMaterialDelays() {
     for (uint8_t w = 0; w < MATERIAL_STATION_COUNT; ++w) {
         for (uint8_t c = 0; c < MATERIAL_STATION_COUNT; ++c) {
@@ -102,6 +104,11 @@ void registerReverseMaterialDelays() {
             registerTransferDelays(prefix, workAreaToCargoDelays[w][c]);
         }
     }
+=======
+// 所有搬运速度共用同一校验：正数且可表示为float，无人为速度上限。
+void registerArmSpeed(const char *name, float &value) {
+    RegisterRuntimeFloat(name, value, 1, FLT_MAX);
+>>>>>>> 7b4fd9f877e860347113b0cdaee3af2f54b0be7b
 }
 
 void initialize() {
@@ -117,25 +124,24 @@ void initialize() {
     }
     RegisterRuntimeFloat("搬运/安全高度(mm)", materialTransferLayout.approachHeight, 0, ARM_HEIGHT_LIMIT_MM);
     RegisterRuntimeFloat("搬运/二层高度增量(mm)", materialTransferLayout.secondLayerOffset, 0, ARM_HEIGHT_LIMIT_MM);
-    // 公共搬运速度仍限制1~300；圆盘预抓/提起单独允许到500，与MoveArm范围一致。
-    RegisterRuntimeFloat("搬运/速度", materialTransferLayout.moveSpeed, 1, 300);
+    registerArmSpeed("搬运/速度", materialTransferLayout.moveSpeed);
     RegisterRuntimeFloat("搬运/夹爪张开(deg)", materialTransferLayout.clawOpenAngle, -360, 360);
     RegisterRuntimeFloat("搬运/夹爪夹紧(deg)", materialTransferLayout.clawClosedAngle, -360, 360);
     RegisterRuntimeUInt("搬运/等待时间(ms)", materialTransferLayout.motionWaitMs, 1, 60000);
     registerPose("搬运/圆盘预抓", materialMotionSteps.discApproach);
     RegisterRuntimeFloat("搬运/圆盘预抓/张爪(deg)", materialMotionSteps.discOpenAngle, -360, 360);
     RegisterRuntimeFloat("搬运/圆盘提起/高度(mm)", materialMotionSteps.discLiftHeight, 0, ARM_HEIGHT_LIMIT_MM);
-    RegisterRuntimeFloat("搬运/速度/圆盘预抓", materialMotionSteps.discApproachSpeed, 1, 500);
-    RegisterRuntimeFloat("搬运/速度/圆盘夹紧", materialMotionSteps.discGripSpeed, 1, 300);
-    RegisterRuntimeFloat("搬运/速度/圆盘提起", materialMotionSteps.discLiftSpeed, 1, 500);
-    RegisterRuntimeFloat("搬运/速度/移至工位平移", materialMotionSteps.approachTranslateSpeed, 1, 300);
-    RegisterRuntimeFloat("搬运/速度/移至工位转向", materialMotionSteps.approachRotateSpeed, 1, 300);
-    RegisterRuntimeFloat("搬运/速度/取料下降", materialMotionSteps.pickDescendSpeed, 1, 300);
-    RegisterRuntimeFloat("搬运/速度/取料夹紧", materialMotionSteps.pickGripSpeed, 1, 300);
-    RegisterRuntimeFloat("搬运/速度/取料提起", materialMotionSteps.pickLiftSpeed, 1, 300);
-    RegisterRuntimeFloat("搬运/速度/放料下降", materialMotionSteps.placeDescendSpeed, 1, 300);
-    RegisterRuntimeFloat("搬运/速度/放料松爪", materialMotionSteps.placeReleaseSpeed, 1, 300);
-    RegisterRuntimeFloat("搬运/速度/放料提起", materialMotionSteps.placeLiftSpeed, 1, 300);
+    registerArmSpeed("搬运/速度/圆盘预抓", materialMotionSteps.discApproachSpeed);
+    registerArmSpeed("搬运/速度/圆盘夹紧", materialMotionSteps.discGripSpeed);
+    registerArmSpeed("搬运/速度/圆盘提起", materialMotionSteps.discLiftSpeed);
+    registerArmSpeed("搬运/速度/移至工位平移", materialMotionSteps.approachTranslateSpeed);
+    registerArmSpeed("搬运/速度/移至工位转向", materialMotionSteps.approachRotateSpeed);
+    registerArmSpeed("搬运/速度/取料下降", materialMotionSteps.pickDescendSpeed);
+    registerArmSpeed("搬运/速度/取料夹紧", materialMotionSteps.pickGripSpeed);
+    registerArmSpeed("搬运/速度/取料提起", materialMotionSteps.pickLiftSpeed);
+    registerArmSpeed("搬运/速度/放料下降", materialMotionSteps.placeDescendSpeed);
+    registerArmSpeed("搬运/速度/放料松爪", materialMotionSteps.placeReleaseSpeed);
+    registerArmSpeed("搬运/速度/放料提起", materialMotionSteps.placeLiftSpeed);
     RegisterChassisParameters();
     RegisterRuntimeFloat("底盘/节点导航速度(mm/s)", NODE_PATH_SPEED_MM_S, 10, 2000);
     RegisterRuntimeUInt("底盘/扫码接近轮速(RPM)", SCAN_APPROACH_SPEED_RPM, 1, 5000);

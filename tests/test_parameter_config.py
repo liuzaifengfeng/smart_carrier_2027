@@ -30,13 +30,14 @@ class ConfigTests(unittest.TestCase):
     def test_compiled_material_speed_defaults_match_firmware_ranges(self):
         source = (DEFAULT_CONFIG_PATH.parent/'src/runtime_parameters.cpp').read_text(encoding='utf-8')
         parameters = load_config(DEFAULT_CONFIG_PATH)['groups']['搬运']['parameters']
-        for name, minimum, maximum in re.findall(
-                r'RegisterRuntimeFloat\("(搬运/速度[^\"]*)",\s*[^,]+,\s*([\d.]+),\s*([\d.]+)\)', source):
+        names = re.findall(r'registerArmSpeed\("([^"]+)"', source)
+        self.assertEqual(len(names), 12)
+        for name in names:
             with self.subTest(name=name):
                 entry = parameters[name]
-                self.assertGreaterEqual(entry['value'], float(minimum))
-                self.assertLessEqual(entry['value'], float(maximum))
-                self.assertLessEqual(entry['maximum'], float(maximum))
+                self.assertGreaterEqual(entry['value'], 1)
+                self.assertGreater(entry['maximum'], 5000)
+                self.assertLessEqual(entry['maximum'], 3.4028234663852886e38)
 
     def setUp(self):
         self.data = load_config(DEFAULT_CONFIG_PATH)

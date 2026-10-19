@@ -59,11 +59,11 @@ class FrameTests(unittest.TestCase):
     def test_arm_command_speed_range(self):
         for command, axes in (("MoveArm_1", ["0", "0"]),
                               ("MoveArm_2", ["0", "0"])):
-            self.assertEqual(build_debug_command(command, axes + ["300"]),
+            self.assertEqual(build_debug_command(command, axes + ["1000"]),
                              "{CMD,ARM," + ("MOVE1" if command == "MoveArm_1" else "MOVE2")
-                             + ",0,0,300}")
+                             + ",0,0,1000}")
             with self.assertRaises(ValueError):
-                build_debug_command(command, axes + ["300.1"])
+                build_debug_command(command, axes + ["0"])
 
     def test_five_stop_requests_and_invalid_modes(self):
         for mode in ("DISC", "DISC_MATERIAL", "WORK_AREA", "WORK_AREA_LOADED", "CORNER"):
