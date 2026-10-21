@@ -15,12 +15,6 @@ volatile bool taskMotionAborted = false;
 RobotPose currentPose = {0, 0, 0};//X,Y,Theta
 //机械臂位姿——大臂高度、小臂伸出长度、转台角度、夹爪角度
 ArmPose currentArm = {0, 0, 0, 0};//high,length,turret_angle,pawl_angle
-static bool s_turretStartupReferenceFault = false;
-static const char* s_turretStartupReferenceFaultReason = "UNKNOWN";
-void DisableTurretMotionUntilRestart(const char* reason) {
-    s_turretStartupReferenceFault = true;
-    s_turretStartupReferenceFaultReason = reason;
-}
 
 namespace {
 
@@ -45,7 +39,7 @@ NodePosition NODE_POSITIONS[FIELD_NODE_COUNT] = {
 
 constexpr uint32_t MOTOR_PULSES_PER_REVOLUTION = 3200; // 16 细分时，电机转一圈的脉冲数
 constexpr uint32_t MOTOR_COMMAND_GAP_MS = 5;           // 连续发送两条电机命令的间隔
-constexpr double MOTOR_MOTION_TIME_MARGIN = 1.00;      // 运动估算增加 30% 等待余量
+constexpr double MOTOR_MOTION_TIME_MARGIN = 1.00;      // 运动估算增加 0% 等待余量
 uint32_t ROUTE_SETTLE_TIME_MS = 100;         // 每次运动结束后的停车稳定时间
 constexpr float ROUTE_ANGLE_EPSILON_DEG = 0.01f;       // 小于该角度时不再执行转向
 
@@ -62,7 +56,7 @@ VisionAlignmentDeadzone ALIGN_DEADZONES[] = {
 AlignmentFrameWaiter s_alignmentWaiter;
 constexpr float ALIGN_DT_MIN_SECONDS = 0.02f;// 时间步长单位为秒
 constexpr float ALIGN_DT_MAX_SECONDS = 0.30f;// 时间步长单位为秒
-constexpr uint16_t OMNI_MIN_MOVING_RPM = 2;// 小误差最低启动轮速，单位RPM；原为1
+constexpr uint16_t OMNI_MIN_MOVING_RPM = 1;// 小误差最低启动轮速，单位RPM；原为1
 constexpr uint8_t OMNI_ACCELERATION = 0;// 加速度单位为转/分^2
 
 struct PidController {
@@ -148,8 +142,7 @@ bool areAdjacentNodes(uint8_t first, uint8_t second) {
 // 判断 start -> middle -> end 是否是方向不变的一条直线。
 // 叉积为 0 代表三点共线，点积大于 0 代表没有掉头。
 // 例如 1-2-3 返回 true，而 1-2-1 返回 false。
-bool continuesStraight(const NodePosition &start, const NodePosition &middle,
-                       const NodePosition &end) {
+bool continuesStraight(const NodePosition &start, const NodePosition &middle, const NodePosition &end) {
     float firstX = middle.x - start.x;
     float firstY = middle.y - start.y;
     float secondX = end.x - middle.x;
@@ -173,8 +166,7 @@ float normalizeHeading(float heading) {
  * 每增加 1 RPM 用时 (256 - acceleration) * 50 us。
  * 位置模式按对称加减速估算；短行程使用三角速度曲线。
  */
-uint32_t estimateMotionTimeMs(uint32_t pulses, uint16_t speedRpm,
-                              uint8_t acceleration) {
+uint32_t estimateMotionTimeMs(uint32_t pulses, uint16_t speedRpm, uint8_t acceleration) {
     if (pulses == 0 || speedRpm == 0) {
         return 0;
     }
@@ -223,8 +215,7 @@ uint32_t estimateMotionTimeMs(uint32_t pulses, uint16_t speedRpm,
 
 // 按运动估算及等待余量阻塞当前 FreeRTOS 任务，实际到位仍需确认。
 // vTaskDelay 只阻塞调用本函数的任务，不会卡住串口等其他 FreeRTOS 任务。
-void waitForPhysicalMotion(uint32_t pulses, uint16_t speedRpm,
-                           uint8_t acceleration) {
+void waitForPhysicalMotion(uint32_t pulses, uint16_t speedRpm, uint8_t acceleration) {
     uint32_t delayMs = estimateMotionTimeMs(pulses, speedRpm, acceleration);
     if (delayMs > 0) {
         Serial.printf("[Route] Waiting for motion to complete: %lu ms\n",
@@ -234,8 +225,7 @@ void waitForPhysicalMotion(uint32_t pulses, uint16_t speedRpm,
 }
 
 // 下发四轮同步原地旋转命令，然后等待车辆完全停稳。
-void commandSynchronizedRotation(float angle, uint16_t speedRpm,
-                                 uint8_t acceleration) {
+void commandSynchronizedRotation(float angle, uint16_t speedRpm, uint8_t acceleration) {
     // 这里沿用现有 GotoPose 的旋转方向约定：负角度用方向 0，正角度用方向 1。
     uint8_t direction = (angle < 0.0f) ? 0 : 1;
     // 角度乘以旋转标定系数，得到每个电机需要运行的脉冲数。
@@ -255,8 +245,7 @@ void commandSynchronizedRotation(float angle, uint16_t speedRpm,
 }
 
 // 下发四轮同步车身 Y 轴直行命令；负距离为后退。
-void commandSynchronizedStraight(float distance, uint16_t speedRpm,
-                                uint8_t acceleration) {
+void commandSynchronizedStraight(float distance, uint16_t speedRpm, uint8_t acceleration) {
     // 沿用原前进标定 X_PULSE，后退仅反转四轮方向，不做横向平移。
     uint32_t pulses =
         static_cast<uint32_t>(lroundf(fabsf(distance) * X_PULSE));
@@ -279,9 +268,7 @@ void commandSynchronizedStraight(float distance, uint16_t speedRpm,
 }
 
 // 执行一段已经简化好的节点移动：选择转角较小的前进/后退朝向，再直行。
-bool executeNodeSegment(uint8_t startNode, uint8_t endNode,
-                        uint16_t speedRpm, uint8_t acceleration,
-                        float finalHeading = NAN) {
+bool executeNodeSegment(uint8_t startNode, uint8_t endNode, uint16_t speedRpm, uint8_t acceleration, float finalHeading = NAN) {
     NodePosition start;
     NodePosition end;
     if (!getNodePosition(startNode, start) || !getNodePosition(endNode, end)) {
@@ -396,11 +383,6 @@ void RegisterChassisParameters() {
 
 bool ReadArmTurretAngle(float &angle) {
     if (taskMotionAborted) return false;
-    if (s_turretStartupReferenceFault) {
-        Serial.printf("[Arm] ERR: turret startup turn count unverified (%s); motion skipped\n",
-                      s_turretStartupReferenceFaultReason);
-        return false;
-    }
     float measuredAngle = 0.0f;
     if (!Servo_QueryAngleMTurn(2, measuredAngle, 100) || !isfinite(measuredAngle)) {
         Serial.println("[Arm] ERR: turret multi-turn angle read failed; motion skipped");
@@ -426,15 +408,10 @@ bool ReadArmTurretAngle(float &angle) {
  * @param speed 速度 (mm/s)
  * @note 规划模式下转台使用精确多圈角度；其他情况下 -1 表示不操作该轴
  */
-static bool MoveArmInternal(float high, float length, float turret_angle,
-                            float pawl_angle, float speed, bool absoluteTurret) {
+static bool MoveArmInternal(float high, float length, float turret_angle, float pawl_angle, float speed, bool absoluteTurret) {
     if (taskMotionAborted) return false;
-    if (!isfinite(speed) || speed < 1.0f) {
-        Serial.println("[Arm] ERR: speed must be finite and >= 1");
-        return false;
-    }
     // 舵机动作时间统一缩短为原标定值的 1/5。
-    // 2号转台按实际转角计时：180度用210ms，最短80ms；加减速时间同比缩短。
+    // 2号转台按实际转角计时：180度用100ms，最短40ms。
     constexpr float TURRET_REFERENCE_ANGLE_DEG = 180.0f;   // 计算转台动作时间所采用的基准转角
     constexpr uint32_t TURRET_REFERENCE_TIME_MS = 100;     // 转过基准角度所需的标定时间（毫秒）
     constexpr uint32_t TURRET_MIN_TIME_MS = 40;            // 转台单次动作允许的最短时间（毫秒）
@@ -449,11 +426,6 @@ static bool MoveArmInternal(float high, float length, float turret_angle,
     uint32_t turretIntervalMs = TURRET_MIN_TIME_MS;
     const bool moveTurret = absoluteTurret || turret_angle != -1.0f;
     if (moveTurret) {
-        if (!isfinite(turret_angle) || turret_angle < TURRET_CABLE_MIN_DEG
-                || turret_angle > TURRET_CABLE_MAX_DEG) {
-            Serial.println("[Arm] ERR: turret request outside cable range [-150,360]");
-            return false;
-        }
         float measuredAngle = 0.0f;
         if (!ReadArmTurretAngle(measuredAngle)) return false;
         float bestDistance = INFINITY;
@@ -473,10 +445,6 @@ static bool MoveArmInternal(float high, float length, float turret_angle,
                 }
             }
         }
-        if (!isfinite(bestDistance)) {
-            Serial.println("[Arm] ERR: no turret target within cable range");
-            return false;
-        }
         // bestDistance 来自实测多圈角度与最终安全目标的差，不使用上次目标缓存。
         const float scaledIntervalMs = bestDistance * TURRET_REFERENCE_TIME_MS
             / TURRET_REFERENCE_ANGLE_DEG;
@@ -485,76 +453,51 @@ static bool MoveArmInternal(float high, float length, float turret_angle,
         }
     }
 
-        if (taskMotionAborted) return false;
-        // 绝对坐标以开机清零位置为原点；方向 1 表示原有升高/伸出正方向。
-        // 即使目标等于缓存也重新发令，缓存不是驱动器实际位置反馈。
-        if (high != -1) {
-            if(!isfinite(high) || high < 0 || high > ARM_HEIGHT_LIMIT_MM){//行程保护
-                Serial.println("high out of range");
-                return false;
-            } else {
-                uint32_t pulses = (uint32_t)(high * HEIGHT_PULSE);
-                // 仅在转换为协议的16位RPM字段时饱和，避免大速度溢出回绕。
-                const uint16_t rpm = speed >= UINT16_MAX / 8.0f ? UINT16_MAX : speed * 15.0f;
-                Emm_V5_Pos_Control(5, 1, rpm, 250, pulses, true, false);
-                vTaskDelay(pdMS_TO_TICKS(10));
-                currentArm.high = high;
-            }
-        }
+    if (taskMotionAborted) return false;
+    // 绝对坐标以开机清零位置为原点；缓存不是驱动器实际位置反馈。
+    if (high != -1) {
+        const uint32_t pulses = static_cast<uint32_t>(high * HEIGHT_PULSE);
+        // RPM 写入协议的 16 位字段，在此完成数值饱和。
+        const uint16_t rpm = speed >= UINT16_MAX / 15.0f ? UINT16_MAX : speed * 15.0f;
+        Emm_V5_Pos_Control(5, 1, rpm, 250, pulses, true, false);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        currentArm.high = high;
+    }
 
-        if (taskMotionAborted) return false;
-        if (length != -1) {
-            if(!isfinite(length) || length < 0 || length > 170){//行程保护
-                Serial.println("length out of range");
-                return false;
-            } else {
-                uint32_t pulses = (uint32_t)(length * LENGTH_PULSE);
-                const uint16_t rpm = speed >= UINT16_MAX / 6.0f ? UINT16_MAX : speed * 6.0f;
-                Emm_V5_Pos_Control(6, 1, rpm, 240, pulses, true, false);
-                vTaskDelay(pdMS_TO_TICKS(10));
-                currentArm.length = length;
-            }
-        }
-        
-        if (taskMotionAborted) return false;
-        if(moveTurret) {
-            Servo_SetAngleMTurnByInterval(2, safeTurretTarget, turretIntervalMs,
-                                         TURRET_ACCEL_TIME_MS, TURRET_DECEL_TIME_MS, 0);
-            currentArm.turret_angle = safeTurretTarget;
-        }
+    if (taskMotionAborted) return false;
+    if (length != -1) {
+        const uint32_t pulses = static_cast<uint32_t>(length * LENGTH_PULSE);
+        const uint16_t rpm = speed >= UINT16_MAX / 6.0f ? UINT16_MAX : speed * 6.0f;
+        Emm_V5_Pos_Control(6, 1, rpm, 240, pulses, true, false);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        currentArm.length = length;
+    }
 
-        if (taskMotionAborted) return false;
-        if(pawl_angle != -1) {
-            if( pawl_angle < -360 || pawl_angle > 360){//行程保护
-                Serial.println("pawl_angle out of range");
-                return false;
-            } else {
-                float measuredAngle = 0.0f;
-                if (!Servo_QueryAngleMTurn(1, measuredAngle, 100) || !isfinite(measuredAngle)) {
-                    Serial.println("[Arm] ERR: gripper multi-turn angle read failed; motion skipped");
-                    return false;
-                } else {
-                    const float nearestAngle = pawl_angle
-                        + 360.0f * roundf((measuredAngle - pawl_angle) / 360.0f);
-                    if (!isfinite(nearestAngle) || fabsf(nearestAngle) > 368640.0f) {
-                        Serial.println("[Arm] ERR: gripper multi-turn target out of servo range");
-                        return false;
-                    }
-                    const float travelDeg = fabsf(nearestAngle - measuredAngle);
-                    const float calculatedMs = travelDeg / speed
-                        * (1000.0f * GRIPPER_REFERENCE_COMMAND_SPEED / GRIPPER_REFERENCE_ANGULAR_SPEED_DEG_S);
-                    uint32_t gripperIntervalMs = 0;
-                    if (travelDeg > 0.0f) {
-                        gripperIntervalMs = calculatedMs < GRIPPER_MIN_TIME_MS
-                            ? GRIPPER_MIN_TIME_MS
-                            : static_cast<uint32_t>(calculatedMs + 0.5f);
-                    }
-                    if (taskMotionAborted) return false;
-                    Servo_SetAngleMTurn(1, nearestAngle, gripperIntervalMs, 0);
-                    currentArm.pawl_angle = pawl_angle;
-                }
-            }
+    if (taskMotionAborted) return false;
+    if (moveTurret) {
+        Servo_SetAngleMTurnByInterval(2, safeTurretTarget, turretIntervalMs,  TURRET_ACCEL_TIME_MS, TURRET_DECEL_TIME_MS, 0);
+        currentArm.turret_angle = safeTurretTarget;
+    }
+
+    if (taskMotionAborted) return false;
+    if (pawl_angle != -1) {
+        float measuredAngle = 0.0f;
+        if (!Servo_QueryAngleMTurn(1, measuredAngle, 100) || !isfinite(measuredAngle)) {
+            Serial.println("[Arm] ERR: gripper multi-turn angle read failed; motion skipped");
+            return false;
         }
+        const float nearestAngle = pawl_angle
+            + 360.0f * roundf((measuredAngle - pawl_angle) / 360.0f);
+        const float travelDeg = fabsf(nearestAngle - measuredAngle);
+        const float calculatedMs = travelDeg / speed
+            * (1000.0f * GRIPPER_REFERENCE_COMMAND_SPEED / GRIPPER_REFERENCE_ANGULAR_SPEED_DEG_S);
+        const uint32_t gripperIntervalMs = travelDeg == 0.0f ? 0
+            : (calculatedMs < GRIPPER_MIN_TIME_MS ? GRIPPER_MIN_TIME_MS
+               : static_cast<uint32_t>(calculatedMs + 0.5f));
+        if (taskMotionAborted) return false;
+        Servo_SetAngleMTurn(1, nearestAngle, gripperIntervalMs, 0);
+        currentArm.pawl_angle = pawl_angle;
+    }
 
     return true;
 }
@@ -730,20 +673,7 @@ void GotoPose(float x, float y, float theta, bool isRelative) {
 /**
  * @brief 麦克纳姆轮全向速度混合并同步下发四轮速度。
  */
-void OmniMove(float xVelocity, float yVelocity, float rotationVelocity,
-              uint16_t speedRpm) {
-    if (!isfinite(xVelocity) || !isfinite(yVelocity) || !isfinite(rotationVelocity) || speedRpm > 5000) {
-        Serial.println("[OmniMove] ERR: invalid velocity or speed");
-        xVelocity = 0.0f;
-        yVelocity = 0.0f;
-        rotationVelocity = 0.0f;
-        speedRpm = 0;
-    }
-
-    xVelocity = clampFloat(xVelocity, -1.0f, 1.0f);
-    yVelocity = clampFloat(yVelocity, -1.0f, 1.0f);
-    rotationVelocity = clampFloat(rotationVelocity, -1.0f, 1.0f);
-
+void OmniMove(float xVelocity, float yVelocity, float rotationVelocity, uint16_t speedRpm) {
     // 方向符号与现有 MovePose/GotoPose 的四轮接线约定保持一致。
     float wheelVelocity[4] = {
         -xVelocity + yVelocity + rotationVelocity,
@@ -785,18 +715,6 @@ void OmniMove(float xVelocity, float yVelocity, float rotationVelocity,
 }
 
 bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)()) {
-    // 完整验证后才下发命令，避免四轮只装载了一部分参数。
-    if (!isfinite(x) || !isfinite(y) || !isfinite(theta)
-            || !isfinite(speed) || speed < 1.0f || speed > 5000.0f
-            || !isfinite(X_PULSE) || X_PULSE <= 0.0f
-            || !isfinite(Y_PULSE) || Y_PULSE <= 0.0f
-            || !isfinite(THETA_PULSE) || THETA_PULSE <= 0.0f
-            || !isfinite(currentPose.x) || !isfinite(currentPose.y)
-            || !isfinite(currentPose.theta)) {
-        Serial.println("[MovePosition] ERR: invalid pose, speed or calibration");
-        return false;
-    }
-
     // SE(2) 指数映射的逆：x/y 是起始车身系中的终点位移。
     // 转动过程中车身系也在转动，不能直接把终点 x/y 当作累计车身位移。
     const double angle = static_cast<double>(theta) * PI / 180.0;
@@ -825,10 +743,6 @@ bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)
     uint32_t maximumPulses = 0;
     for (size_t i = 0; i < 4; ++i) {
         const double rounded = floor(fabs(wheelPulses[i]) + 0.5);
-        if (!isfinite(rounded) || rounded > UINT32_MAX) {
-            Serial.println("[MovePosition] ERR: pulse count overflow");
-            return false;
-        }
         pulses[i] = static_cast<uint32_t>(rounded);
         if (pulses[i] > maximumPulses) maximumPulses = pulses[i];
     }
@@ -850,12 +764,6 @@ bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)
     // 与导航/扫码统一：theta=0时车头(+Y)朝地图+X，车身+X朝地图-Y。
     const double targetX = currentPose.x + x * sin(heading) + y * cos(heading);
     const double targetY = currentPose.y - x * cos(heading) + y * sin(heading);
-    if (waitMs > UINT32_MAX || !isfinite(targetX) || !isfinite(targetY)
-            || fabs(targetX) > FLT_MAX || fabs(targetY) > FLT_MAX) {
-        Serial.println("[MovePosition] ERR: duration or target pose overflow");
-        return false;
-    }
-
     if (shouldStop != nullptr && shouldStop()) return false;
     for (uint8_t motor = 1; motor <= 4; ++motor) {
         // 耗时计算与实际下发使用同一加速度档位。
@@ -908,8 +816,7 @@ bool MoveScanPosition(float distance,float speed,bool (*shouldStop)()) {
     return completed;
 }
 
-bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t searchRpm,
-                      bool (*received)()) {
+bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t searchRpm, bool (*received)()) {
     const RobotPose start=currentPose;
     float forward=0;
     const ScanMotionSettings settings={approach,search,Y_PULSE,approachRpm,searchRpm};
@@ -948,27 +855,13 @@ void ResetAlignmentWait() {
     s_alignmentWaiter.reset();
 }
 
-bool WaitForAlignment(VisionStartMode mode, float angleErrorDeg,
-                      float visualXError, float visualYError,
-                      float dtSeconds, uint16_t speedRpm) {
+bool WaitForAlignment(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm) {
     const bool withinDeadzone = AlignToVisionContinuous(
         mode, angleErrorDeg, visualXError, visualYError, dtSeconds, speedRpm);
     return s_alignmentWaiter.update(mode, withinDeadzone);
 }
 
-bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg,
-                             float visualXError, float visualYError,
-                             float dtSeconds, uint16_t speedRpm) {
-    if (!isfinite(angleErrorDeg) || !isfinite(visualXError)
-            || !isfinite(visualYError) || !isfinite(dtSeconds)
-            || dtSeconds <= 0.0f || speedRpm == 0 || speedRpm > 5000
-            || static_cast<uint8_t>(mode) >= 5) {
-        OmniMove(0.0f, 0.0f, 0.0f, 0);
-        ResetDiscAlignmentPid();
-        Serial.println("[Align PID] ERR: invalid feedback, dt, or speed");
-        return false;
-    }
-
+bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm) {
     dtSeconds = clampFloat(
         dtSeconds, ALIGN_DT_MIN_SECONDS, ALIGN_DT_MAX_SECONDS
     );
@@ -1031,42 +924,7 @@ bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg,
 /**
  * @brief 按节点序号路径移动，只原地转向和沿车身 Y 轴前后直行。
  */
-bool MoveNodePath(const uint8_t *path, size_t pathLength,
-                  float speedMmS, uint8_t acceleration, float finalHeading) {
-    // 第 1 步：检查调用参数。
-    if (path == nullptr || pathLength < 2) {
-        Serial.println("[Route] Error: path requires at least two nodes");
-        return false;
-    }
-    if (!isfinite(speedMmS) || speedMmS < 10 || speedMmS > 5000) {
-        Serial.println("[Route] Error: speed must be in 10~5000 mm/s range");
-        return false;
-    }
-    if (!isfinite(currentPose.theta) || (!isnan(finalHeading) && !isfinite(finalHeading))) {
-        Serial.println("[Route] Error: heading must be finite (NaN final heading means unconstrained)");
-        return false;
-    }
-    if (X_PULSE <= 0.0f || THETA_PULSE <= 0.0f) {
-        Serial.println("[Route] Error: forward and rotation pulse calibration coefficients must be > 0");
-        return false;
-    }
-
-    // 第 2 步：开始运动前完整检查节点，避免走到一半才发现路径无效。
-    for (size_t index = 0; index < pathLength; ++index) {
-        NodePosition ignored;
-        if (!getNodePosition(path[index], ignored)) {
-            Serial.printf("[Route] Error: node %u does not exist\n", path[index]);
-            return false;
-        }
-        if (index > 0 && !areAdjacentNodes(path[index - 1], path[index])) {
-            Serial.printf(
-                "[Route] Error: node %u and node %u are not adjacent\n",
-                path[index - 1], path[index]
-            );
-            return false;
-        }
-    }
-
+bool MoveNodePath(const uint8_t *path, size_t pathLength, float speedMmS, uint8_t acceleration, float finalHeading) {
     // 正式节点导航使用固定位置目标和驱动器反馈，绝不走试跑的速度积分推进。
     // 不生成外绕/移动转向；同向共线节点合并，路口编码器到位并停稳后原地转。
     // acceleration是旧位置模式档位，新控制器使用独立mm/s²加速度限幅。

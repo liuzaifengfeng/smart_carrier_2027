@@ -297,11 +297,6 @@ const char *outerBlock(const Route &route,size_t begin,size_t end,IO &io,Result 
 }
 }
 const char *run(const Route &route,const Settings &settings,IO &io,Result &result) {
-    if(!isfinite(settings.speedMmS)||settings.speedMmS<10||settings.speedMmS>5000
-        ||!isfinite(settings.accelMmS2)||settings.accelMmS2<1||settings.accelMmS2>4000
-        ||!isfinite(settings.turnDegS)||settings.turnDegS<10||settings.turnDegS>500
-        ||!isfinite(settings.turnAccelDegS2)||settings.turnAccelDegS2<30||settings.turnAccelDegS2>720
-        ||!isfinite(settings.headingDeadbandDeg)||settings.headingDeadbandDeg<0||settings.headingDeadbandDeg>8)return "RANGE";
     Vec offset=settings.startOffset;
     result.estimated=route.segments[0].start+offset;
     Context context;io.halt();const char *error=quiet(io,result,context);if(error){io.halt();return error;}

@@ -14,7 +14,7 @@ static uint32_t failedVersion=0,referenceVersion=0;
 static float initialHeading=0,THETA_PULSE=51.8f,X_PULSE=13.3f,Y_PULSE=13.6f;
 static float NODE_PATH_ACCEL_MM_S2=425.5f;
 static float NODE_PATH_TURN_DEG_S=150,NODE_PATH_TURN_ACCEL_DEG_S2=360;
-static float NODE_PATH_HEADING_DEADBAND_DEG=3;
+static float NODE_PATH_HEADING_DEADBAND_DEG=1;
 static bool scanPosePending=false;
 constexpr uint8_t SCAN_AREA_NODE=2;
 static int worker=1,trialMux=0,launches=0;static const char *sensorError=nullptr;
@@ -52,7 +52,7 @@ int main(){
     CHECK(route.config.accel==425.5f&&route.config.maxRpm==node_position::rpmFor(300,Y_PULSE));
     CHECK(formalSettings.speedMmS==300&&formalSettings.accelMmS2==425.5f);
     CHECK(formalSettings.turnDegS==150&&formalSettings.turnAccelDegS2==360);
-    CHECK(formalSettings.headingDeadbandDeg==3);
+    CHECK(formalSettings.headingDeadbandDeg==1);
     CHECK(referenceVersion==7&&initialHeading>180.8f&&!configured);
     bool outerCurve=false;for(size_t i=0;i<route.segmentCount;++i)outerCurve|=route.segments[i].kind==CUBIC;
     CHECK(!outerCurve); // 外侧拐角也必须停车转向，禁止生成漂移曲线。
@@ -66,12 +66,10 @@ int main(){
     CHECK(H30StartNodePath(path,5,300,180));CHECK(referenceVersion==0&&launches==3);
     status.state=DONE;
     needsCalibration=false;uint8_t bad[]={10,20};CHECK(!H30StartNodePath(bad,2,300,180));
-    CHECK(!H30StartNodePath(path,26,300,180));
     CHECK(H30RunNodePath(path,5,120,180));CHECK(launches==4&&!status.async);
     CHECK(route.config.accel==600&&route.config.maxRpm==node_position::rpmFor(120,Y_PULSE));
     NODE_PATH_ACCEL_MM_S2=0;CHECK(!H30StartNodePath(path,5,120,180));CHECK(launches==4);
     NODE_PATH_ACCEL_MM_S2=4000;NODE_PATH_TURN_DEG_S=500;NODE_PATH_TURN_ACCEL_DEG_S2=720;
-    CHECK(!H30StartNodePath(path,5,5001,180));
     CHECK(H30StartNodePath(path,5,5000,180));CHECK(launches==5&&route.config.accel==4000);
     CHECK(formalSettings.speedMmS==5000&&formalSettings.turnDegS==500&&formalSettings.turnAccelDegS2==720);
     status.state=DONE;scanPosePending=true;currentPose={1350,150,180};

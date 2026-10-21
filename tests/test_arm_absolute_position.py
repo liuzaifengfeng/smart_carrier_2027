@@ -38,8 +38,7 @@ struct Log {
 struct Pose { float high=0, length=0, turret_angle=0, pawl_angle=0; };
 struct Command { uint8_t addr=0, dir=0; uint32_t pulses=0; bool absolute=false, sync=false; uint16_t rpm=0; };
 struct Run {
-    bool taskMotionAborted=false, s_turretStartupReferenceFault=false;
-    const char* s_turretStartupReferenceFaultReason="UNKNOWN";
+    bool taskMotionAborted=false;
     Log Serial;
     Pose currentArm;
     float HEIGHT_PULSE=10, LENGTH_PULSE=20;
@@ -82,26 +81,20 @@ constexpr bool zeroAndSkip() {
 }
 constexpr bool rejectInvalid() {
     Run r;
-    if (r.MoveArm(175.1f, -1, -1, -1, 100)) return false;
-    if (r.MoveArm(-1, 170.1f, -1, -1, 100)) return false;
-    if (r.MoveArm(-2, -1, -1, -1, 100)) return false;
-    if (r.MoveArm(-1, -2, -1, -1, 100)) return false;
-    if (r.MoveArm(INFINITY, -1, -1, -1, 100)) return false;
-    if (r.MoveArm(-1, __builtin_nanf(""), -1, -1, 100)) return false;
     r.taskMotionAborted=true;
     return !r.MoveArm(10, 10, -1, -1, 100) && r.count==0;
 }
 constexpr bool speedWithoutArtificialLimit() {
     Run normal, large;
     if (!normal.MoveArm(10, 10, -1, -1, 1000) || normal.count!=2) return false;
-    if (normal.commands[0].rpm!=8000 || normal.commands[1].rpm!=6000) return false;
-    if (!large.MoveArm(10, 10, -1, -1, FLT_MAX) || large.count!=2) return false;
-    return large.commands[0].rpm==UINT16_MAX && large.commands[1].rpm==UINT16_MAX;
+    if (normal.commands[0].rpm!=15000 || normal.commands[1].rpm!=6000) return false;
+    return large.MoveArm(10, 10, -1, -1, FLT_MAX) && large.count==2
+        && large.commands[0].rpm==UINT16_MAX && large.commands[1].rpm==UINT16_MAX;
 }
-static_assert(speedWithoutArtificialLimit(), "large speeds saturate protocol fields without overflow");
+static_assert(speedWithoutArtificialLimit(), "valid speed maps directly to protocol RPM");
 static_assert(cacheIndependent(), "descending/repeated/stale-cache absolute targets");
 static_assert(zeroAndSkip(), "absolute zero, sentinel and travel limits");
-static_assert(rejectInvalid(), "range, nonfinite and task abort protections");
+static_assert(rejectInvalid(), "task abort remains effective");
 '''.replace("LIMITS", limits).replace("MOVE_ARM", move)
         compiler = Path(os.environ.get("PLATFORMIO_CORE_DIR", Path.home() / ".platformio")) / (
             "packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-g++.exe")

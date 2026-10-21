@@ -1,7 +1,6 @@
 #include "scan_motion_control.h"
 
-const char *RunScanMotion(const ScanMotionSettings &cfg,node_position::IO &io,
-                         bool (*received)(),float &forwardTravel) {
+const char *RunScanMotion(const ScanMotionSettings &cfg,node_position::IO &io, bool (*received)(),float &forwardTravel) {
     int64_t origin[4],positions[4];
     for(uint8_t id=1;id<=4;++id) {
         const char *error=io.readPosition(id,origin[id-1]);

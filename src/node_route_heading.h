@@ -27,8 +27,7 @@ struct NodeSegmentHeading {
     bool reverse;
 };
 
-constexpr NodeSegmentHeading PlanNodeSegmentHeading(float current, float travel,
-                                                    bool finish, float finalHeading) {
+constexpr NodeSegmentHeading PlanNodeSegmentHeading(float current, float travel, bool finish, float finalHeading) {
     return {NodeRouteHeading(current, travel, finish, finalHeading),
             NodeRouteTurn(current, NodeRouteHeading(current, travel, finish, finalHeading)),
             finish ? NodeRouteTurn(NodeRouteHeading(current, travel, finish, finalHeading), finalHeading) : 0.0f,

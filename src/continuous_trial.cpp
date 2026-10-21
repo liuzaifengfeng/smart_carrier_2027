@@ -251,7 +251,7 @@ const char *ContinuousTrialStatus(uint32_t id) {
 
 bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async) {
     ConfigurationGuard guard;if(!guard.held)return false;
-    if(!worker||otaBusy()||!path||count<2||count>MAX_NODES||!isfinite(speedMmS)||speedMmS<10||speedMmS>5000||taskMotionAborted)return false;
+    if(!worker||otaBusy()||taskMotionAborted)return false;
     // 预留共享规划/任务资源；上传和其他运动不能在构建过程中插入。
     portENTER_CRITICAL(&trialMux);
     if(status.state==RUNNING||status.state==STOPPING){portEXIT_CRITICAL(&trialMux);return false;}
@@ -277,9 +277,6 @@ bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float fina
     formalSettings.turnDegS=NODE_PATH_TURN_DEG_S;
     formalSettings.turnAccelDegS2=NODE_PATH_TURN_ACCEL_DEG_S2;
     formalSettings.headingDeadbandDeg=NODE_PATH_HEADING_DEADBAND_DEG;
-    if(!isfinite(formalSettings.turnDegS)||formalSettings.turnDegS<10||formalSettings.turnDegS>500
-        ||!isfinite(formalSettings.turnAccelDegS2)||formalSettings.turnAccelDegS2<30||formalSettings.turnAccelDegS2>720
-        ||!isfinite(formalSettings.headingDeadbandDeg)||formalSettings.headingDeadbandDeg<0||formalSettings.headingDeadbandDeg>8)error="RANGE";
     float end=heading;
     for(size_t i=0;i<count&&!error;++i) {
         float x=0,y=0;

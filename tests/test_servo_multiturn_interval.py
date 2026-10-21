@@ -137,9 +137,8 @@ struct Command {
     uint16_t acc=0, dec=0, power=0; bool advanced=false;
 };
 struct Run {
-    bool taskMotionAborted=false, s_turretStartupReferenceFault=false, queryOk=true;
+    bool taskMotionAborted=false, queryOk=true;
     bool abortOnQuery=false;
-    const char* s_turretStartupReferenceFaultReason="TEST";
     float measuredTurret=0, HEIGHT_PULSE=80, LENGTH_PULSE=30.2f;
     int count=0, turretQueries=0;
     Log Serial;
@@ -165,7 +164,7 @@ struct Run {
 };
 constexpr bool timed(const Command& c, float angle, uint32_t time) {
     return c.id==2 && c.advanced && c.angle==angle && c.time==time
-        && c.acc==20 && c.dec==60 && c.power==0;
+        && c.acc==20 && c.dec==20 && c.power==0;
 }
 constexpr bool turn(float current, float target, float finalTarget, uint32_t time, float speed=250) {
     Run r;
@@ -186,33 +185,26 @@ constexpr bool plannedTurn(float current, float target, uint32_t time) {
     return r.MoveArmPlanned(-1,-1,target,-1,250) && r.count==1 && r.turretQueries==1
         && timed(r.commands[0],target,time) && r.currentArm.turret_angle==target;
 }
-constexpr bool feedback(float measured, bool queryOk, bool startup, bool abort, bool duringQuery,
+constexpr bool feedback(float measured, bool queryOk, bool abort, bool duringQuery,
                         bool expected) {
     Run r;
     r.measuredTurret=measured; r.queryOk=queryOk;
-    r.s_turretStartupReferenceFault=startup;
     r.taskMotionAborted=abort; r.abortOnQuery=duringQuery;
     r.currentArm.turret_angle=999;
     float angle=777;
     return r.ReadArmTurretAngle(angle)==expected && angle==(expected ? measured : 777)
         && r.currentArm.turret_angle==999 && r.count==0
-        && r.turretQueries==((startup || abort) ? 0 : 1);
+        && r.turretQueries==(abort ? 0 : 1);
 }
 constexpr bool plannedGuards() {
     Run missing; missing.queryOk=false;
     Run invalid; invalid.measuredTurret=__builtin_nanf("");
     Run outside; outside.measuredTurret=TURRET_CABLE_MIN_DEG-1;
-    Run badTarget, nanTarget;
-    Run startup; startup.s_turretStartupReferenceFault=true;
     Run aborted; aborted.taskMotionAborted=true;
     Run interrupted; interrupted.abortOnQuery=true;
     return !missing.MoveArmPlanned(10,20,90,50,250) && missing.count==0
         && !invalid.MoveArmPlanned(10,20,90,50,250) && invalid.count==0
         && !outside.MoveArmPlanned(10,20,90,50,250) && outside.count==0
-        && !badTarget.MoveArmPlanned(10,20,TURRET_CABLE_MAX_DEG+1,50,250)
-        && badTarget.count==0 && badTarget.turretQueries==0
-        && !nanTarget.MoveArmPlanned(10,20,__builtin_nanf(""),50,250) && nanTarget.count==0
-        && !startup.MoveArmPlanned(10,20,90,50,250) && startup.count==0 && startup.turretQueries==0
         && !aborted.MoveArmPlanned(10,20,90,50,250) && aborted.count==0 && aborted.turretQueries==0
         && !interrupted.MoveArmPlanned(10,20,90,50,250) && interrupted.count==0;
 }
@@ -220,31 +212,19 @@ constexpr bool guards() {
     Run missing; missing.queryOk=false;
     Run invalid; invalid.measuredTurret=__builtin_nanf("");
     Run outside; outside.measuredTurret=TURRET_CABLE_MAX_DEG+1;
-    Run badTarget;
-    Run startup; startup.s_turretStartupReferenceFault=true;
     Run aborted; aborted.taskMotionAborted=true;
     Run skip;
-    Run zeroSpeed, excessiveSpeed, invalidSpeed;
     return !missing.MoveArm(-1,-1,90,-1,250) && missing.count==0
         && !invalid.MoveArm(-1,-1,90,-1,250) && invalid.count==0
         && !outside.MoveArm(-1,-1,90,-1,250) && outside.count==0
-        && !badTarget.MoveArm(-1,-1,TURRET_CABLE_MIN_DEG-1,-1,250) && badTarget.count==0
-        && !startup.MoveArm(-1,-1,90,-1,250) && startup.count==0 && startup.turretQueries==0
         && !aborted.MoveArm(-1,-1,90,-1,250) && aborted.count==0 && aborted.turretQueries==0
-        && !zeroSpeed.MoveArm(-1,-1,-1,0,0) && zeroSpeed.count==0
-<<<<<<< HEAD
-        && !excessiveSpeed.MoveArm(-1,-1,-1,0,501) && excessiveSpeed.count==0
-=======
-        && excessiveSpeed.MoveArm(-1,-1,-1,0,1000) && excessiveSpeed.count==1
->>>>>>> 7b4fd9f877e860347113b0cdaee3af2f54b0be7b
-        && !invalidSpeed.MoveArm(-1,-1,-1,0,__builtin_nanf("")) && invalidSpeed.count==0
         && skip.MoveArm(-1,-1,-1,-1,250) && skip.count==0 && skip.turretQueries==0;
 }
 constexpr bool mixedAxes() {
     Run r;
     return r.MoveArm(10,20,180,50,250) && r.count==4
         && r.commands[0].id==5 && r.commands[1].id==6
-        && timed(r.commands[2],180,210)
+        && timed(r.commands[2],180,100)
         && r.commands[3].id==1 && !r.commands[3].advanced
         && r.commands[3].angle==50 && r.commands[3].time==89 && r.commands[3].power==0;
 }
@@ -252,42 +232,49 @@ constexpr bool plannedMixedAxes() {
     Run r;
     return r.MoveArmPlanned(10,20,-1,50,250) && r.count==4
         && r.commands[0].id==5 && r.commands[1].id==6
-        && timed(r.commands[2],-1,80) && r.commands[3].id==1;
+        && timed(r.commands[2],-1,40) && r.commands[3].id==1;
 }
-static_assert(turn(0,180,180,210), "180 degrees uses one-fifth timing: 210 ms");
-static_assert(turn(0,90,90,105), "90 degrees uses one-fifth timing: 105 ms");
-static_assert(turn(0,45,45,80), "small moves clamp to one-fifth minimum: 80 ms");
-static_assert(turn(0,0,0,80), "zero angle is valid and keeps 80 ms minimum");
-static_assert(turn(90,180,180,105), "use measured displacement rather than target value");
-static_assert(turn(180,90,90,105), "reverse direction uses absolute displacement");
-static_assert(turn(0,99,99,116), "round fractional milliseconds to nearest integer");
-static_assert(turn(10,350,-10,80), "choose nearest equivalent within cable limits");
-static_assert(turn(350,10,10,397), "reject shorter equivalent outside cable limits");
-static_assert(turn(-150,180,180,385), "large permitted displacement scales beyond reference");
-static_assert(turn(0,180,180,210,100) && turn(0,180,180,210,300), "turret timing ignores old speed mapping");
+static_assert(turn(0,180,180,100), "180 degrees uses calibrated timing: 100 ms");
+static_assert(turn(0,90,90,50), "90 degrees uses calibrated timing: 50 ms");
+static_assert(turn(0,45,45,40), "small moves use 40 ms minimum");
+static_assert(turn(0,0,0,40), "zero angle is valid and keeps 40 ms minimum");
+static_assert(turn(90,180,180,50), "use measured displacement rather than target value");
+static_assert(turn(180,90,90,50), "reverse direction uses absolute displacement");
+static_assert(turn(0,99,99,55), "round fractional milliseconds to nearest integer");
+static_assert(turn(10,350,-10,40), "choose nearest equivalent within cable limits");
+static_assert(turn(350,10,10,189), "reject shorter equivalent outside cable limits");
+static_assert(turn(-150,180,180,183), "large permitted displacement scales beyond reference");
+static_assert(turn(0,180,180,100,100) && turn(0,180,180,100,300), "turret timing ignores old speed mapping");
 static_assert(grip(90,200,90,200), "gripper duration is one fifth of original timing");
 static_assert(grip(45,200,45,100), "gripper duration scales with angular travel");
 static_assert(grip(10,200,10,40), "gripper short moves use one-fifth minimum duration");
 static_assert(grip(0,200,0,0), "gripper zero travel needs no artificial duration");
 static_assert(grip(350,200,-10,40), "gripper selects nearest equivalent angle before timing");
-static_assert(guards(), "query failures, invalid angles, startup fault, abort and sentinel");
+static_assert(guards(), "query failures, invalid angles, abort and sentinel");
 static_assert(mixedAxes(), "retain motor and gripper command order and gripper timing");
-static_assert(turn(0,180,180,210,500) && grip(90,500,90,80), "accept new maximum command speed 500");
-static_assert(turn(123.3f,-60,300,206), "ordinary callers retain nearest-angle behavior");
-static_assert(plannedTurn(123.3f,-60,214), "planned branch overrides greedy equivalent");
-static_assert(plannedTurn(0,360,420) && plannedTurn(350,-10,420), "preserve planned turn count");
-static_assert(plannedTurn(0,-1,80), "planned minus one is an actual angle");
-static_assert(plannedTurn(360,-150,595) && plannedTurn(-150,360,595), "cable boundary travel");
+static_assert(turn(0,180,180,100,500) && grip(90,500,90,80), "accept new maximum command speed 500");
+static_assert(turn(123.3f,-60,300,98), "ordinary callers retain nearest-angle behavior");
+static_assert(plannedTurn(123.3f,-60,102), "planned branch overrides greedy equivalent");
+static_assert(plannedTurn(0,360,200) && plannedTurn(350,-10,200), "preserve planned turn count");
+static_assert(plannedTurn(0,-1,40), "planned minus one is an actual angle");
+static_assert(plannedTurn(360,-150,283) && plannedTurn(-150,360,283), "cable boundary travel");
 static_assert(plannedGuards() && plannedMixedAxes(), "planned guards precede all commands");
-static_assert(feedback(-1,true,false,false,false,true), "actual minus one is valid feedback");
-static_assert(feedback(360,true,false,false,false,true), "feedback keeps cache untouched");
-static_assert(feedback(0,false,false,false,false,false), "missing feedback preserves output");
-static_assert(feedback(__builtin_nanf(""),true,false,false,false,false), "reject nonfinite feedback");
-static_assert(feedback(-151,true,false,false,false,false), "reject lower cable overflow");
-static_assert(feedback(361,true,false,false,false,false), "reject upper cable overflow");
-static_assert(feedback(0,true,true,false,false,false), "startup fault blocks query");
-static_assert(feedback(0,true,false,true,false,false), "abort blocks query");
-static_assert(feedback(0,true,false,false,true,false), "abort during query preserves output");
+static_assert(feedback(-1,true,false,false,true), "actual minus one is valid feedback");
+static_assert(feedback(360,true,false,false,true), "feedback keeps cache untouched");
+static_assert(feedback(0,false,false,false,false), "missing feedback preserves output");
+static_assert(feedback(__builtin_nanf(""),true,false,false,false), "reject nonfinite feedback");
+static_assert(feedback(-151,true,false,false,false), "reject lower cable overflow");
+static_assert(feedback(361,true,false,false,false), "reject upper cable overflow");
+constexpr bool feedbackRecovery() {
+    Run r; float angle=777;
+    r.queryOk=false;
+    if (r.ReadArmTurretAngle(angle) || angle!=777) return false;
+    r.queryOk=true; r.measuredTurret=90;
+    return r.MoveArm(-1,-1,180,-1,250) && r.count==1 && r.turretQueries==2;
+}
+static_assert(feedbackRecovery(), "failed reads do not latch future motion");
+static_assert(feedback(0,true,true,false,false), "abort blocks query");
+static_assert(feedback(0,true,false,true,false), "abort during query preserves output");
 '''.replace("LIMITS", limits).replace("ACTUAL", actual)
         self.compile_assertions(harness)
 

@@ -99,12 +99,9 @@ extern MaterialAuxiliaryDelays materialAuxiliaryDelays;
 
 // materialTransferLayout：所有固定位置和动作参数，标定值在 cpp 文件顶部填写。
 // cargoPlatforms：三个载物台当前的物料状态，下标 0~2 对应载物台编号 1~3。
-// 位姿未填写完整时，程序会拒绝执行搬运动作，不会控制机械臂移动。
+// 契约：调用前已完成标定；任务码已在扫码/串口入口校验。
 extern MaterialTransferLayout materialTransferLayout;
 extern CargoPlatform cargoPlatforms[MATERIAL_STATION_COUNT];
-
-// 检查圆盘、三个载物台和三个区域位置是否已经全部标定。
-bool MaterialTransferPosesReady();
 
 // ================= 四个单次搬运动作 =================
 // 所有载物台编号和区域位置编号都从 1 开始，而不是从 0 开始。
@@ -129,25 +126,23 @@ bool DemoWorkAreaToCargo();
 
 // 码放调试示例：手动装好三个载物台并将小车停在码放区后，发送 {CMD,ARM,DEMO2}。
 // 顺序为 1 -> 1、2 -> 2、3 -> 3；松手高度为区域基础高度 + secondLayerOffset。
-// 三个目标高度均通过行程检查后才开始动作；本函数不负责底盘导航。
+// 调用方保证目标高度在机械行程内；本函数不负责底盘导航。
 bool DemoStackCargoToWorkArea();
 
 // 码放第三层调试示例：手动装好三个载物台并将小车停在码放区后，发送 {CMD,ARM,DEMO3}。
 // 顺序为 1 -> 1、2 -> 2、3 -> 3；松手高度为区域基础高度 + 2 倍 secondLayerOffset。
-// 三个目标高度均通过行程检查后才开始动作；本函数不负责底盘导航。
+// 调用方保证目标高度在机械行程内；本函数不负责底盘导航。
 bool DemoStackCargoToWorkArea3();
 
 // ================= 开局雷达扫描位姿 =================
 // 根据当前启停区执行不同的底盘移动，再执行若干机械臂动作。
 // startZoneCode：1 表示启停区 1，2 表示启停区 2；其他值会直接返回 false。
 // 具体距离和机械臂动作在 material_transfer.cpp 的函数内填写。
-// 未完成实车标定前，函数中的 LIDAR_SCAN_ACTION_READY 保持 false，不会控制机构运动。
 bool PrepareLidarScanPose(uint8_t startZoneCode);
 
 // 从粗加工区或暂存区的指定位置抓取物料，然后放到指定载物台。
 // materialCode 用于恢复载物台中的物料状态记录。
-bool MoveWorkAreaToCargo(uint8_t materialCode, uint8_t workAreaCode,
-                         uint8_t cargoCode);
+bool MoveWorkAreaToCargo(uint8_t materialCode, uint8_t workAreaCode, uint8_t cargoCode);
 
 // 从指定载物台抓取物料，然后码放到区域指定位置的第二层。
 bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode);
@@ -161,9 +156,8 @@ bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode);
 // 例如第一批 PlaceTaskCargoToWorkArea(currentTask.round1_pos, 1)，
 // 第二批 PlaceTaskCargoToWorkArea(currentTask.round2_pos, 2)。
 // 调用前必须已装料并停在目标区域；本函数不负责底盘导航。
-// 开始运动前检查全部三个目标，失败返回 false 且不会启动本组动作。
-bool PlaceTaskCargoToWorkArea(
-    const int positionCodes[MATERIAL_STATION_COUNT], uint8_t layer);
+// 调用方保证目标高度在机械行程内；执行失败返回 false。
+bool PlaceTaskCargoToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT], uint8_t layer);
 
 // 按颜色码依次从圆盘抓取三个物料，分别放到 1、2、3 号载物台。
 // 示例：LoadRoundFromDisc(currentTask.round1_colors);
@@ -176,16 +170,14 @@ bool PlaceRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]);
 // 按位置码从区域中取回三个物料，分别放回 1、2、3 号载物台。
 // 示例：RetrieveRoundToCargo(currentTask.round1_colors,
 //                              currentTask.round1_pos);
-bool RetrieveRoundToCargo(
-    const int materialCodes[MATERIAL_STATION_COUNT],
-    const int positionCodes[MATERIAL_STATION_COUNT]);
+bool RetrieveRoundToCargo(const int materialCodes[MATERIAL_STATION_COUNT], const int positionCodes[MATERIAL_STATION_COUNT]);
 
 // 第二层兼容入口，等价于 PlaceTaskCargoToWorkArea(positionCodes, 2)。
 // 示例：StackRoundToWorkArea(currentTask.round2_pos);
 bool StackRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]);
 
 // 圆盘抓取接口
-// force=true 时，载物台占用仅警告并继续；其余校验保留。
+// force=true 时，载物台占用仅警告并继续。
 // true 表示预设动作执行完成并已登记物料；不代表传感器确认实物。
 bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force = false);
 

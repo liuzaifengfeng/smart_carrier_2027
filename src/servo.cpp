@@ -29,7 +29,6 @@ static HardwareSerial *s_servoSerial = &Serial2;
 static void sendPacket(uint8_t cmdId, const uint8_t *content, uint8_t contentSize) {
     ServoBusGuard guard;
     if (!guard.locked) return;
-    if (!s_servoSerial) return;
 
     uint8_t headerLow = FSUS_PACK_REQ_HEADER & 0xFF;         // 0x12
     uint8_t headerHigh = (FSUS_PACK_REQ_HEADER >> 8) & 0xFF; // 0x4C
@@ -49,7 +48,7 @@ static void sendPacket(uint8_t cmdId, const uint8_t *content, uint8_t contentSiz
     s_servoSerial->write(headerHigh);
     s_servoSerial->write(cmdId);
     s_servoSerial->write(contentSize);
-    if (contentSize > 0 && content != nullptr) {
+    if (contentSize > 0) {
         s_servoSerial->write(content, contentSize);
     }
     s_servoSerial->write(checksum);
@@ -60,8 +59,6 @@ static void sendPacket(uint8_t cmdId, const uint8_t *content, uint8_t contentSiz
  * 应答帧头: 0x05, 0x1C (0x1C05)
  */
 static uint8_t receivePacket(uint8_t expectedCmdId, uint8_t *contentBuf, uint8_t *contentSize, uint32_t timeoutMs) {
-    if (!s_servoSerial) return FSUS_STATUS_TIMEOUT;
-
     uint32_t startMs = millis();
     uint8_t step = 0;
     uint8_t cmdId = 0;
@@ -105,7 +102,7 @@ static uint8_t receivePacket(uint8_t expectedCmdId, uint8_t *contentBuf, uint8_t
                     }
                     break;
                 case 4: // Content
-                    if (count < 32 && contentBuf != nullptr) {
+                    if (count < 32) {
                         contentBuf[count] = b;
                     }
                     sum += b;
@@ -118,7 +115,7 @@ static uint8_t receivePacket(uint8_t expectedCmdId, uint8_t *contentBuf, uint8_t
                     checksum = b;
                     if ((sum % 256) == checksum) {
                         if (cmdId == expectedCmdId) {
-                            if (contentSize != nullptr) *contentSize = length;
+                            *contentSize = length;
                             return FSUS_STATUS_SUCCESS;
                         }
                     }
@@ -142,9 +139,7 @@ void Servo_Init(HardwareSerial *serialPort, uint32_t baudrate, int rxPin, int tx
         Serial.println("[Servo] ERR: bus mutex allocation failed");
         return;
     }
-    if (serialPort != nullptr) {
-        s_servoSerial = serialPort;
-    }
+    s_servoSerial = serialPort;
     // 配置 ESP32 硬件串口
     s_servoSerial->begin(baudrate, SERIAL_8N1, rxPin, txPin);
     Serial.printf("[Servo] Bus Servo UART initialized on TX:%d RX:%d at %d bps\n", txPin, rxPin, baudrate);
@@ -152,10 +147,6 @@ void Servo_Init(HardwareSerial *serialPort, uint32_t baudrate, int rxPin, int tx
 
 // 设置舵机单圈绝对角度
 void Servo_SetAngle(uint8_t servoId, float angle, uint16_t interval, uint16_t power) {
-    // 约束范围: -135.0° ~ 135.0°
-    if (angle < -135.0f) angle = -135.0f;
-    if (angle > 135.0f) angle = 135.0f;
-
     int16_t angleInt = (int16_t)(angle * 10.0f); // 0.1°精度
 
     uint8_t content[7];
@@ -192,8 +183,7 @@ void Servo_SetAngleMTurn(uint8_t servoId, float angle, uint32_t interval, uint16
 
 // 官方 UART/RS-485 协议第11节：高级多圈角度控制（基于时间）。
 // https://fashionstar.com.cn/wiki/protocols/servo/uart-rs485/
-void Servo_SetAngleMTurnByInterval(uint8_t servoId, float angle, uint32_t interval,
-                                 uint16_t t_acc, uint16_t t_dec, uint16_t power) {
+void Servo_SetAngleMTurnByInterval(uint8_t servoId, float angle, uint32_t interval, uint16_t t_acc, uint16_t t_dec, uint16_t power) {
     const int32_t angleInt = static_cast<int32_t>(angle * 10.0f);
     // 先转为无符号位模式，负角度也按32位补码、小端顺序发送。
     const uint32_t angleBits = static_cast<uint32_t>(angleInt);
@@ -221,9 +211,6 @@ void Servo_SetAngleMTurnByInterval(uint8_t servoId, float angle, uint32_t interv
 
 // 梯形加减速角度控制
 void Servo_SetAngleByInterval(uint8_t servoId, float angle, uint16_t interval, uint16_t t_acc, uint16_t t_dec, uint16_t power) {
-    if (angle < -135.0f) angle = -135.0f;
-    if (angle > 135.0f) angle = 135.0f;
-
     int16_t angleInt = (int16_t)(angle * 10.0f);
 
     uint8_t content[11];
@@ -264,27 +251,24 @@ bool Servo_QueryAngleMTurn(uint8_t servoId, float &currentAngle, uint32_t timeou
     ServoBusGuard guard;
     if (!guard.locked) return false;
     uint8_t content[1] = { servoId };
-    for (uint8_t attempt = 0; attempt < 2; ++attempt) {
-        if (attempt != 0) vTaskDelay(pdMS_TO_TICKS(10));
-        sendPacket(FSUS_CMD_QUERY_ANGLE_MTURN, content, 1);
+    sendPacket(FSUS_CMD_QUERY_ANGLE_MTURN, content, 1);
 
-        uint8_t rxBuf[32];
-        uint8_t rxLen = 0;
-        const uint8_t res = receivePacket(FSUS_CMD_QUERY_ANGLE_MTURN, rxBuf, &rxLen, timeoutMs);
-        // 应答为：ID(1) + 有符号多圈角度(4, 0.1度) + 圈数(2)。
-        if (res == FSUS_STATUS_SUCCESS && rxLen == 7 && rxBuf[0] == servoId) {
-            const uint32_t rawBits = static_cast<uint32_t>(rxBuf[1])
-                | (static_cast<uint32_t>(rxBuf[2]) << 8)
-                | (static_cast<uint32_t>(rxBuf[3]) << 16)
-                | (static_cast<uint32_t>(rxBuf[4]) << 24);
-            const int32_t rawAngle = static_cast<int32_t>(rawBits);
-            currentAngle = static_cast<float>(rawAngle) / 10.0f;
-            return true;
-        }
-        Serial.printf("[Servo] multi-turn query ID=%u failed: status=%u length=%u attempt=%u\n",
-                      static_cast<unsigned>(servoId), static_cast<unsigned>(res),
-                      static_cast<unsigned>(rxLen), static_cast<unsigned>(attempt + 1));
+    uint8_t rxBuf[32];
+    uint8_t rxLen = 0;
+    const uint8_t res = receivePacket(FSUS_CMD_QUERY_ANGLE_MTURN, rxBuf, &rxLen, timeoutMs);
+    // 应答为：ID(1) + 有符号多圈角度(4, 0.1度) + 圈数(2)。
+    if (res == FSUS_STATUS_SUCCESS && rxLen == 7 && rxBuf[0] == servoId) {
+        const uint32_t rawBits = static_cast<uint32_t>(rxBuf[1])
+            | (static_cast<uint32_t>(rxBuf[2]) << 8)
+            | (static_cast<uint32_t>(rxBuf[3]) << 16)
+            | (static_cast<uint32_t>(rxBuf[4]) << 24);
+        const int32_t rawAngle = static_cast<int32_t>(rawBits);
+        currentAngle = static_cast<float>(rawAngle) / 10.0f;
+        return true;
     }
+    Serial.printf("[Servo] multi-turn query ID=%u failed: status=%u length=%u\n",
+                  static_cast<unsigned>(servoId), static_cast<unsigned>(res),
+                  static_cast<unsigned>(rxLen));
     return false;
 }
 
@@ -303,11 +287,7 @@ bool Servo_ResetTurnCount(uint8_t servoId, float &newAngle) {
     // 不论后续回读是否成功，都先恢复当前位置锁力。
     sendPacket(FSUS_CMD_STOP, holdContent, sizeof(holdContent));
     vTaskDelay(pdMS_TO_TICKS(10));
-    for (uint8_t attempt = 0; attempt < 3; ++attempt) {
-        if (attempt != 0) vTaskDelay(pdMS_TO_TICKS(30));
-        if (Servo_QueryAngleMTurn(servoId, newAngle, 100)) return true;
-    }
-    return false;
+    return Servo_QueryAngleMTurn(servoId, newAngle, 100);
 }
 
 // 检测舵机通讯状态 (Ping)

@@ -68,8 +68,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
     return false;
 }
 
-static bool serialFloats(const SerialFrame &frame, float *values, const float *minimum,
-                         const float *maximum, size_t count) {
+static bool serialFloats(const SerialFrame &frame, float *values, const float *minimum, const float *maximum, size_t count) {
     if (frame.count != count + 3) return false;
     for (size_t i = 0; i < count; ++i) {
         if (!serialFloat(frame.fields[i + 3], values[i], minimum[i], maximum[i])) return false;

@@ -18,19 +18,14 @@ struct VisionAlignmentDeadzone {
     float angleDeg;
 };
 
-constexpr bool IsWithinAlignmentDeadzone(const VisionAlignmentDeadzone &zone,
-                                     float angle, float x, float y) {
-    return isfinite(angle) && isfinite(x) && isfinite(y)
-        && isfinite(zone.visualX) && isfinite(zone.visualY) && isfinite(zone.angleDeg)
-        && zone.visualX >= 0 && zone.visualY >= 0 && zone.angleDeg >= 0
-        && fabsf(x) <= zone.visualX && fabsf(y) <= zone.visualY
+constexpr bool IsWithinAlignmentDeadzone(const VisionAlignmentDeadzone &zone, float angle, float x, float y) {
+    return fabsf(x) <= zone.visualX && fabsf(y) <= zone.visualY
         && fabsf(angle) <= zone.angleDeg;
 }
 
 constexpr uint8_t ALIGNMENT_REQUIRED_FRAMES = 2;
 
-constexpr uint8_t NextAlignmentFrameCount(uint8_t count, bool withinDeadzone,
-                                         bool sameMode) {
+constexpr uint8_t NextAlignmentFrameCount(uint8_t count, bool withinDeadzone, bool sameMode) {
     return !withinDeadzone ? 0 : !sameMode ? 1
         : count < ALIGNMENT_REQUIRED_FRAMES ? count + 1 : ALIGNMENT_REQUIRED_FRAMES;
 }

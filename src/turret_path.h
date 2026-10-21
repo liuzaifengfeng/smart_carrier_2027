@@ -23,8 +23,7 @@ constexpr float TurretPathDistance(float from, float to) {
 // 限位内等效角思路参考 https://github.com/ros/angles ，本模块比较整组累计转角。
 // 固定任务顺序，最小化总转角；不检测空间障碍物。失败时保留原有输出。
 // 输出是真实多圈绝对目标，可能等于-1；执行层不能把它当跳过值或再次就近选角。
-inline bool PlanTurretPath(float currentAngle, const float *logicalAngles, size_t count,
-                           float minimumAngle, float maximumAngle, TurretPathPlan &output) {
+inline bool PlanTurretPath(float currentAngle, const float *logicalAngles, size_t count, float minimumAngle, float maximumAngle, TurretPathPlan &output) {
     if (!logicalAngles || count == 0 || count > TURRET_PATH_MAX_TARGETS
             || !TurretPathFinite(currentAngle) || !TurretPathFinite(minimumAngle)
             || !TurretPathFinite(maximumAngle) || minimumAngle >= maximumAngle

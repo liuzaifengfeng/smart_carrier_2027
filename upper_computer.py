@@ -1682,10 +1682,7 @@ class SerialLink:
         port = self._port
         self._port = None
         if port is not None:
-            try:
-                port.close()
-            except Exception:
-                pass
+            port.close()
         reader = self._reader
         self._reader = None
         if reader is not None and reader is not threading.current_thread():
@@ -1715,7 +1712,7 @@ class SerialLink:
                 if len(pending) > 2048:
                     self.events.put(("RX", "[串口] 丢弃超过 2048 字节的未换行数据", datetime.now()))
                     pending.clear()
-        except Exception as exc:
+        except (OSError, RuntimeError) as exc:
             if not self._stop.is_set():
                 self.events.put(("ERROR", f"串口读取失败：{exc}", datetime.now()))
         finally:
@@ -3304,8 +3301,7 @@ class UpperComputerApp:
             self.connection_var.set("未安装 pyserial")
 
     def toggle_connection(self) -> None:
-        if hasattr(self, "trial_panel"):
-            self.trial_panel.shutdown()
+        self.trial_panel.shutdown()
         self._reset_imu_query("连接已变更，请重新查询 H30")
         self.led_status.set("连接已变更，请重新查询亮度")
         self.parameter_panel.disconnected()
@@ -3336,7 +3332,7 @@ class UpperComputerApp:
         try:
             self.serial_link.connect(port_name)
             self.serial_link.send_line(build_frame("CMD", "SYS", "HELLO"))
-        except Exception as exc:
+        except (OSError, RuntimeError) as exc:
             messagebox.showerror("串口连接失败", str(exc), parent=self.root)
             self.append_log("ERROR", str(exc))
             return
@@ -3526,7 +3522,7 @@ class UpperComputerApp:
             self.force_disc_grab_warning = f"警告：载物台 {cargo} 已记录颜色 {color} 的物料，忽略占用并继续强制抓取。"
             message = self.force_disc_grab_warning
         elif action == "FORCE_GRAB":
-            message = (getattr(self, "force_disc_grab_warning", "")
+            message = (self.force_disc_grab_warning
                        + f"强制抓取函数已调用并返回：颜色 {color} → 载物台 {cargo}；结果请查看物料日志，实际抓取成功需确认。")
         elif action == "COLOR" and status == "GRAB":
             message = f"颜色 {color} 匹配下一件任务：调用载物台 {cargo} 的抓取函数，结果请查看物料日志。"
@@ -3675,7 +3671,7 @@ class UpperComputerApp:
             if key in self.pressed_rotation_keys:
                 return "break"
             self.pressed_rotation_keys.add(key)
-            if not (getattr(event, "state", 0) & 0x0001):
+            if not (event.state & 0x0001):
                 self._send_keyboard_rotation(key)
                 return "break"
 
@@ -4071,8 +4067,7 @@ class UpperComputerApp:
                 break
             self.append_log(kind, text, timestamp)
             if kind == "RX":
-                if hasattr(self, "trial_panel"):
-                    self.trial_panel.receive(text)
+                self.trial_panel.receive(text)
                 fields = parse_frame(text)
                 if fields is not None and fields[:4] == ("RSP", "SYS", "HELLO", "OK"):
                     if len(fields) == 5 and fields[4] == PROTOCOL_VERSION:
@@ -4117,8 +4112,7 @@ class UpperComputerApp:
                         FIELD_NODES = tuple((i, values[f"地图/节点{i}/X(mm)"], values[f"地图/节点{i}/Y(mm)"]) for i in range(FIELD_NODE_COUNT))
                         self.field.redraw()
                 if text.startswith("version:") or text in ("Debug mode", "Release mode"):
-                    if hasattr(self, "trial_panel"):
-                        self.trial_panel.disconnected("设备启动或模式改变")
+                    self.trial_panel.disconnected("设备启动或模式改变")
                     self._reset_imu_query("设备启动或模式改变，请重新查询 H30")
                     self.parameter_panel.disconnected()
                     self.led_status.set("设备启动或模式改变，请重新查询亮度")
@@ -4126,8 +4120,7 @@ class UpperComputerApp:
                 self._accept_pose_response(text)
                 self._accept_imu_response(text)
             if kind == "ERROR":
-                if hasattr(self, "trial_panel"):
-                    self.trial_panel.disconnected("串口异常断开")
+                self.trial_panel.disconnected("串口异常断开")
                 self._reset_imu_query("串口异常断开，请重新查询 H30")
                 self.led_status.set("串口异常断开，亮度回读已失效")
                 self._cancel_protocol_timer()
@@ -4146,8 +4139,7 @@ class UpperComputerApp:
         self.root.after(60, self.poll_serial_events)
 
     def on_close(self) -> None:
-        if hasattr(self, "trial_panel"):
-            self.trial_panel.shutdown()
+        self.trial_panel.shutdown()
         self._reset_imu_query("已关闭")
         self._cancel_protocol_timer()
         self._stop_keyboard_drive()

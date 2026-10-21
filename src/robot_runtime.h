@@ -115,8 +115,7 @@ extern SemaphoreHandle_t xLidarPoseMutex;
 
 bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode, float finalHeading = NAN);
 AutoAlignmentState getAutoAlignmentState();
-void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false,
-                         VisionStartMode owner = VisionStartMode::NONE, bool onlyOwner = false);
+void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false, VisionStartMode owner = VisionStartMode::NONE, bool onlyOwner = false);
 bool runLidarPoseAction(bool fromCommand = false, bool allowRepeat = false);
 bool updateDisplay(const char *commandType, const char *displayType, const char *content);
 void requestVisionStart(VisionStartMode mode);

@@ -95,8 +95,7 @@ void Servo_SetAngleMTurn(uint8_t servoId, float angle, uint32_t interval = 0, ui
  * @param t_dec 减速时间（ms，不小于 20）
  * @param power 执行功率（mW），0 使用舵机功率保护阈值
  */
-void Servo_SetAngleMTurnByInterval(uint8_t servoId, float angle, uint32_t interval,
-                                 uint16_t t_acc, uint16_t t_dec, uint16_t power = 0);
+void Servo_SetAngleMTurnByInterval(uint8_t servoId, float angle, uint32_t interval, uint16_t t_acc, uint16_t t_dec, uint16_t power = 0);
 
 /**
  * @brief 梯形加减速角度控制 (平滑平稳运动)

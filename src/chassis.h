@@ -61,14 +61,13 @@ void GotoPose(float x, float y, float theta, bool isRelative);
  * 阻塞当前任务至估算时间结束。混合运动沿恒定车身速度的圆弧到达终点；
  * 全圈旋转同时平移等无法用单段圆弧表示的请求返回 false。
  * 调用期间须独占底盘，不能同时使用 MovePose/OmniMove/视觉对齐。
- * @return true 命令已下发并等待结束（开环估计），false 参数无效或超范围。
+ * 契约：位移、转角、速度和标定系数有效，由输入入口负责校验。
+ * @return true 命令已下发并等待结束（开环估计），false 被取消或请求无法用单段圆弧表示。
  */
-bool MovePosition(float x, float y, float theta, float speed,
-                  bool (*shouldStop)() = nullptr);
+bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)() = nullptr);
 // 扫码直行：用四轮编码器记录完整行程或提前停车后的实际行程。
 bool MoveScanPosition(float distance,float speed,bool (*shouldStop)() = nullptr);
-bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t searchRpm,
-                      bool (*received)());
+bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t searchRpm, bool (*received)());
 
 /**
  * @brief 麦克纳姆轮全向速度控制。
@@ -81,8 +80,7 @@ bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t 
  * @param rotationVelocity 旋转速度权重，正值与 GotoPose theta 正方向一致
  * @param speedRpm         最大轮速，范围 0~5000 RPM；0 表示停车
  */
-void OmniMove(float xVelocity, float yVelocity, float rotationVelocity,
-              uint16_t speedRpm);
+void OmniMove(float xVelocity, float yVelocity, float rotationVelocity, uint16_t speedRpm);
 
 /**
  * @brief 使用一帧视觉误差更新连续 PID 对齐速度。
@@ -97,29 +95,25 @@ void OmniMove(float xVelocity, float yVelocity, float rotationVelocity,
  * @param speedRpm      PID 满输出时的最大轮速 (RPM)
  * @return true 三个误差均进入允许范围；false 仍在对齐
  */
-bool AlignToDiscContinuous(float angleErrorDeg, float visualXError,
-                           float visualYError, float dtSeconds,
-                           uint16_t speedRpm = 80);
+bool AlignToDiscContinuous(float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);
 
 // 清除连续对齐 PID 的积分/微分历史；不会自行发送停车命令。
 void ResetDiscAlignmentPid();
 
 // 通用单帧 PID：按模式使用独立 X/Y/角度死区，true 只代表这一帧进入死区。
-bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg,
-                             float visualXError, float visualYError,
-                             float dtSeconds, uint16_t speedRpm = 80);
+bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);
 
 // 非阻塞等待：仅在新帧到达时调用，同时更新 PID；连续 2 帧进入死区返回 true。
 // 调用方应在启停、断流、反馈丢帧或无效反馈时调用 ResetAlignmentWait。
-bool WaitForAlignment(VisionStartMode mode, float angleErrorDeg,
-                      float visualXError, float visualYError,
-                      float dtSeconds, uint16_t speedRpm = 80);
+bool WaitForAlignment(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);
 void ResetAlignmentWait();
 
 // @brief 机械臂移动到位.
 // 升降/伸缩使用 EMM V5 绝对位置模式，以开机当前位置清零为原点；-1 跳过该轴。
 // speed 为有限且≥1的公共速度指令，无人为上限；升降/伸缩RPM仅按16位协议饱和；夹爪基于200≈90°/s的原标定计算后，将耗时缩短为1/5。
 // 返回值表示所请求的控制命令是否全部成功下发，不代表机构已物理到位。
+// 契约：目标在机械行程内，速度为正；RPM 在写入协议时饱和。
+// 串口和参数入口负责校验；-1 跳过对应轴。
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
 
 // 读取2号转台实际多圈角度并检查线缆范围；失败时不改写 angle，也不更新目标缓存。
@@ -128,9 +122,6 @@ bool ReadArmTurretAngle(float &angle);
 // 执行已规划的精确多圈转台角度，不重新选择等效角度；转台 -1 表示实际 -1 度。
 // 其他三轴仍以 -1 跳过；速度、计时、保护和返回值含义与 MoveArm 相同。
 bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed);
-
-// 开机圈数校验失败后锁住转台动作，直到修正姿态并重新上电。
-void DisableTurretMotionUntilRestart(const char* reason);
 
 // @brief 机械臂初始化归零位
 bool InitArm_start();
@@ -164,14 +155,10 @@ constexpr uint8_t FIELD_GRID_SIZE = 5;
 constexpr uint8_t FIELD_NODE_COUNT = 25;
 constexpr size_t MAX_NODE_PATH_LENGTH = 25;
 
-bool MoveNodePath(const uint8_t *path, size_t pathLength,
-                  float speedMmS = 1200, uint8_t acceleration = 0,
-                  float finalHeading = NAN);
+bool MoveNodePath(const uint8_t *path, size_t pathLength, float speedMmS = 1200, uint8_t acceleration = 0, float finalHeading = NAN);
 
 // 可直接写 MoveNodePath({0, 1, 8, 7})，节点数量由初始化列表自动传入。
-inline bool MoveNodePath(std::initializer_list<uint8_t> path,
-                         float speedMmS = 1200,
-                         uint8_t acceleration = 0, float finalHeading = NAN) {
+inline bool MoveNodePath(std::initializer_list<uint8_t> path, float speedMmS = 1200, uint8_t acceleration = 0, float finalHeading = NAN) {
     return MoveNodePath(path.begin(), path.size(), speedMmS, acceleration, finalHeading);
 }
 

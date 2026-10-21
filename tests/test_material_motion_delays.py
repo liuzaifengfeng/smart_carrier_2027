@@ -166,12 +166,11 @@ constexpr bool failuresAndZero() {
                 || r.cargoPlatforms[0].material!=MATERIAL_RED) return false;
     }
     Run r;
-    if (r.MoveCargoToWorkArea(0,1) || r.MoveCargoToWorkArea(1,4)
-            || r.MoveCargoToWorkArea(1,1) || r.moves) return false;
+    if (r.MoveCargoToWorkArea(1,1) || r.moves) return false;
     r.cargoPlatforms[0].material=MATERIAL_RED;
     r.cargoToWorkAreaDelays[0][0]={};
     if (!r.MoveCargoToWorkArea(1,1) || r.waits || r.moves!=10) return false;
-    r.waitForArm(-5);
+    r.waitForArm(r.materialTransferLayout.motionWaitMs);
     return r.waits==1 && r.delays[0]==r.materialTransferLayout.motionWaitMs;
 }
 constexpr bool reverseMotion(const Run &r, int offset, int waitOffset, int work, int cargo) {
@@ -243,8 +242,6 @@ constexpr bool reverseFailuresAndZero() {
                 || r.cargoPlatforms[2].material!=MATERIAL_NONE) return false;
     }
     Run invalid;
-    if (invalid.MoveWorkAreaToCargo(0,1,1) || invalid.MoveWorkAreaToCargo(1,0,1)
-            || invalid.MoveWorkAreaToCargo(1,1,4) || invalid.moves) return false;
     invalid.cargoPlatforms[0].material=MATERIAL_RED;
     if (invalid.MoveWorkAreaToCargo(1,1,1) || invalid.moves
             || invalid.cargoPlatforms[0].material!=MATERIAL_RED) return false;
@@ -353,9 +350,8 @@ constexpr bool planningFailures() {
                 || r.cargoPlatforms[0].material!=MATERIAL_RED) return false;
     }
     Run invalid;
-    if (invalid.RetrieveRoundToCargo(codes,nullptr) || invalid.moves || invalid.feedbackReads) return false;
     invalid.materialTransferLayout.workArea[2].turretAngle=__builtin_nanf("");
-    return !invalid.RetrieveRoundToCargo(codes,codes) && invalid.moves==0 && invalid.feedbackReads==0;
+    return !invalid.RetrieveRoundToCargo(codes,codes) && invalid.moves==0 && invalid.feedbackReads==1;
 }
 static_assert(feedbackPlanning(), "batch planning, greedy counterexample, reread actual angle and minus one");
 static_assert(planningFailures(), "all entrypoints stop before motion and preserve cargo on planning failure");

@@ -10,8 +10,7 @@ struct DiscPositionCandidate {
 
 // 一帧是一次可抓快照；按下一件任务颜色选择，重复颜色时优先位置号较小者。
 // 返回候选下标，-1 表示无匹配。位置号与载物台编号互相独立。
-inline int SelectDiscPosition(const DiscPositionCandidate *candidates, size_t count,
-                                 const int *colors, int progress, bool taskValid) {
+inline int SelectDiscPosition(const DiscPositionCandidate *candidates, size_t count, const int *colors, int progress, bool taskValid) {
     if (!candidates || count == 0 || count > 3 || !colors || !taskValid
             || progress < 0 || progress >= 3) return -1;
     int selected = -1;
@@ -28,8 +27,7 @@ inline int SelectDiscPosition(const DiscPositionCandidate *candidates, size_t co
 }
 
 // 任务码规定抓取顺序，只匹配当前轮次下一件待抓颜色。
-constexpr bool ShouldGrabTaskColor(const int *colors, int progress,
-                                   uint8_t color, bool taskValid) {
+constexpr bool ShouldGrabTaskColor(const int *colors, int progress, uint8_t color, bool taskValid) {
     return taskValid && colors != nullptr && progress >= 0 && progress < 3
         && color >= 1 && color <= 6 && colors[progress] == color;
 }
@@ -44,10 +42,7 @@ constexpr int AdvanceDiscGrabProgress(int progress, uint8_t cargo, bool complete
         ? progress + 1 : progress;
 }
 
-constexpr DiscColorDecision EvaluateDiscColor(const int *colors, int progress,
-                                            uint8_t color, bool taskValid,
-                                            bool alignmentActive, bool ready,
-                                            bool occupied) {
+constexpr DiscColorDecision EvaluateDiscColor(const int *colors, int progress, uint8_t color, bool taskValid, bool alignmentActive, bool ready, bool occupied) {
     return !taskValid ? DiscColorDecision::NO_TASK
         : colors == nullptr ? DiscColorDecision::NOT_WAITING
         : progress < 0 || progress >= 3 ? DiscColorDecision::ROUND_COMPLETE

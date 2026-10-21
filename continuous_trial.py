@@ -399,7 +399,7 @@ class ContinuousTrialPanel(ttk.Frame):
         self.heartbeat_timer = self.after(500, self._heartbeat)
 
     def stop(self):
-        if getattr(self, "formal_running", False):
+        if self.formal_running:
             try:
                 self._send(self.build_frame("CMD", "NAV", "STOP"))
                 self.status.set("已请求正式节点导航停车，等待结果")
@@ -444,7 +444,7 @@ class ContinuousTrialPanel(ttk.Frame):
         if f[0] == "EVT" and f[2] == "ROUTE_RESULT" and len(f) == 9:
             self.formal_running = False
             self.status.set(f"正式节点导航 {f[4]} / {f[5]}；位置估算X={f[6]} Y={f[7]}，航向={f[8]}°")
-            callback = getattr(self, "result_callback", None)
+            callback = self.result_callback
             if callback:
                 callback(*(float(v) for v in f[6:9]))
             return
@@ -459,7 +459,7 @@ class ContinuousTrialPanel(ttk.Frame):
                 self.status.set(f"行程 {f[4]}/{f[5]}mm；参考 {f[6]}°，实测 {f[7]}°，误差 {f[8]}°；周期 {f[13]}ms")
             elif f[2] == "TRIAL_RESULT" and len(f) == 9:
                 self._terminal(f[4], f"{f[4]} / {f[5]}：估算 X={f[6]} Y={f[7]}，实测航向={f[8]}°")
-                callback = getattr(self, "result_callback", None)
+                callback = self.result_callback
                 if callback:
                     callback(*(float(v) for v in f[6:9]))
             return
@@ -478,8 +478,8 @@ class ContinuousTrialPanel(ttk.Frame):
             if self.phase in ("starting", "running", "stopping"):
                 try:
                     self._send(self.build_frame("CMD", "NAV", "TRIAL_STOP", self.job_id))
-                except (RuntimeError, OSError):
-                    pass
+                except (RuntimeError, OSError) as exc:
+                    reason += f"；停车请求失败：{exc}"
             self._terminal("FAILED", reason)
             return
         if f[2] == "TRIAL_STATUS" and f[3] == "OK" and len(f) == 12:
@@ -514,8 +514,9 @@ class ContinuousTrialPanel(ttk.Frame):
         if self.phase in ("starting", "running", "stopping"):
             try:
                 self._send(self.build_frame("CMD", "NAV", "TRIAL_STOP", self.job_id))
-            except (RuntimeError, OSError):
-                pass
+            except (RuntimeError, OSError) as exc:
+                self.disconnected(f"停车请求失败：{exc}")
+                return
         self.disconnected()
 
     def export_csv(self):

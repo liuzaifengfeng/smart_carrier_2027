@@ -15,5 +15,6 @@ const char *ContinuousTrialStatus(uint32_t id); // 输出状态，同时续约 1
 void ContinuousTrialCancel();
 void ContinuousTrialSetOta(bool active);
 // 正式节点导航共用控制任务。异步入口供串口使用，避免阻塞STOP/查询接收。
+// 契约：path 包含 count 个节点，2 <= count <= MAX_NODES，速度与配置已由入口校验。
 bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async=true);
 bool H30RunNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading);

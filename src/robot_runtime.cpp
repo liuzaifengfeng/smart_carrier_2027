@@ -9,7 +9,7 @@ float NODE_PATH_SPEED_MM_S = 2500.0f;        // 正式节点路径的最大平�
 float NODE_PATH_ACCEL_MM_S2 = 2000.0f;       // 正式节点路径的平移加减速度，单位mm/s²，并换算为驱动器加速度档位。
 float NODE_PATH_TURN_DEG_S = 300.0f;         // 节点路径原地转向的最大角速度，单位°/s。
 float NODE_PATH_TURN_ACCEL_DEG_S2 = 400.0f;  // 节点路径原地转向的角加减速度，单位°/s²，并换算为驱动器加速度档位。
-float NODE_PATH_HEADING_DEADBAND_DEG = 3.0f; // 停稳后独立航向修正的允许误差，单位°；误差在此范围内不再转动。
+float NODE_PATH_HEADING_DEADBAND_DEG = 1.0f; // 停稳后独立航向修正的允许误差，单位°；误差在此范围内不再转动。
 uint32_t SCAN_APPROACH_SPEED_RPM = 1500;        // 启停区接近扫码区域时的位置模式最大轮速，单位RPM。
 uint32_t SCAN_SEARCH_SPEED_RPM = 1000;          // 扫码区域往返搜索任务码时的位置模式最大轮速，单位RPM。
 bool scanPosePending=false;
@@ -133,9 +133,7 @@ AutoAlignmentState getAutoAlignmentState() {
 }
 
 // 参数提交与 PID 更新共用锁，避免一个控制周期读取到半套参数。
-void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic,
-                                VisionStartMode owner,
-                                bool onlyOwner) {
+void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic, VisionStartMode owner, bool onlyOwner) {
     if (xAlignmentMotionMutex != NULL
             && xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
         // 结束旧定位功能不能停止随后开启的另一种定位或手动连续对齐。
@@ -492,15 +490,10 @@ void readStartupServoAngle(uint8_t servoId, float &storedAngle) {
     Serial.printf("[Servo] 开机角度读取开始: ID=%u\n",
                   static_cast<unsigned>(servoId));
     float measuredAngle = 0.0f;
-    bool readOk = false;
-    for (uint8_t attempt = 0; attempt < 3 && !readOk; ++attempt) {
-        if (attempt != 0) vTaskDelay(pdMS_TO_TICKS(30));
-        readOk = servoId == 2
-            ? Servo_QueryAngleMTurn(servoId, measuredAngle, 100)
-            : Servo_QueryAngle(servoId, measuredAngle, 100);
-    }
+    const bool readOk = servoId == 2
+        ? Servo_QueryAngleMTurn(servoId, measuredAngle, 100)
+        : Servo_QueryAngle(servoId, measuredAngle, 100);
     if (!readOk || !isfinite(measuredAngle)) {
-        if (servoId == 2) DisableTurretMotionUntilRestart("INITIAL_MULTI_READ");
         Serial.printf("[Servo] 开机角度读取失败: ID=%u, 保留原值=%.1f度, 未进行归一化\n",
                       static_cast<unsigned>(servoId), storedAngle);
         return; // 读取失败时保留原值，不把失败当作测得 0 度。
@@ -515,15 +508,10 @@ void readStartupServoAngle(uint8_t servoId, float &storedAngle) {
             float wrappedAngle = fmodf(measuredAngle, 360.0f);
             if (wrappedAngle > 180.0f) wrappedAngle -= 360.0f;
             if (wrappedAngle < -180.0f) wrappedAngle += 360.0f;
-            bool singleReadOk = false;
-            for (uint8_t attempt = 0; attempt < 3 && !singleReadOk; ++attempt) {
-                if (attempt != 0) vTaskDelay(pdMS_TO_TICKS(30));
-                singleReadOk = Servo_QueryAngle(2, singleAngle, 100);
-            }
+            const bool singleReadOk = Servo_QueryAngle(2, singleAngle, 100);
             if (!singleReadOk || !isfinite(singleAngle)
                     || singleAngle < 0.0f || singleAngle > 180.0f
                     || fabsf(singleAngle - wrappedAngle) > 3.0f) {
-                DisableTurretMotionUntilRestart("SINGLE_READ_OR_MISMATCH");
                 Serial.printf("[Servo] ERR: 转台单圈校验失败：多圈=%.1f度，余角=%.1f度，单圈读取%s，单圈=%.1f度；未重置圈数\n",
                               measuredAngle, wrappedAngle, singleReadOk ? "成功" : "失败", singleAngle);
                 return;
@@ -532,7 +520,6 @@ void readStartupServoAngle(uint8_t servoId, float &storedAngle) {
             if (!Servo_ResetTurnCount(2, resetAngle) || !isfinite(resetAngle)
                     || resetAngle < 0.0f || resetAngle > 180.0f
                     || fabsf(resetAngle - singleAngle) > 3.0f) {
-                DisableTurretMotionUntilRestart("RESET_VERIFY");
                 Serial.printf("[Servo] ERR: 转台圈数重置未验证成功；重置前=%.1f度，单圈=%.1f度，回读=%.1f度\n",
                               measuredAngle, singleAngle, resetAngle);
                 return;
@@ -555,7 +542,6 @@ void readStartupServoAngle(uint8_t servoId, float &storedAngle) {
     if (needsNormalization) {
         normalizedAngle = fmodf(normalizedAngle, 360.0f);
         if (normalizedAngle < 0.0f) normalizedAngle += 360.0f;
-        if (normalizedAngle == 0.0f) normalizedAngle = 0.0f; // 消除负零。
     }
     storedAngle = normalizedAngle;
     Serial.printf("[Servo] 开机角度读取成功: ID=%u, 原始角度=%.1f度, %s, 保存角度=%.1f度（仅更新数值）\n",

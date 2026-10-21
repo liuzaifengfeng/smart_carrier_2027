@@ -170,6 +170,8 @@ class PanelProtocolTests(unittest.TestCase):
         p.send, p.log, p.status = Mock(), Mock(), Mock()
         p.build_frame, p.parse_frame = build_frame, parse_frame
         p.after, p.after_cancel = Mock(return_value="timer"), Mock()
+        p.formal_running = False
+        p.result_callback = None
         p.job_id = 42
         p.phase = "uploading"
         p.queue, p.pending = [], None

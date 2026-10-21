@@ -23,7 +23,7 @@ class ScanDirectionTests(unittest.TestCase):
         (cache/'scan_position_actual.inc').write_text(actual, encoding='utf-8')
         target = source[source.index('    const double heading = normalizeHeading(currentPose.theta)',
                                      source.index('bool MovePosition(')):]
-        target = target[:target.index('    if (waitMs >')]
+        target = target[:target.index('    if (shouldStop != nullptr')]
         (cache/'position_target_actual.inc').write_text(target, encoding='utf-8')
         exe = cache/'test.exe'
         result = subprocess.run(command+['-std=c++14', '-O1', '-I', str(cache),

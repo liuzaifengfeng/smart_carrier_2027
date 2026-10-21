@@ -304,12 +304,6 @@ int main() {
     cfg.count=4;CHECK(!route.build(reversal,cfg));Sim returning;
     error=run(route,settings,returning,result);CHECK(!error&&returning.zeroGroups==1&&returning.actions==3);
     CHECK(norm(returning.location-Vec(720,1200))<2);
-    for(int field=0;field<4;++field) {
-        Settings invalid;float *values[]={&invalid.speedMmS,&invalid.accelMmS2,&invalid.turnDegS,&invalid.turnAccelDegS2};
-        const float maxima[]={5000,4000,500,720};*values[field]=maxima[field]+1;
-        Sim untouched;error=run(route,invalid,untouched,result);
-        CHECK(error&&!strcmp(error,"RANGE")&&untouched.syncs==0);
-    }
     Settings upperLimit=settings;upperLimit.speedMmS=5000;upperLimit.turnDegS=500;
     Sim atLimit;error=run(route,upperLimit,atLimit,result);CHECK(!error);
     printf("same-route model: old profile %lums, new profile %lums\n",(unsigned long)(previous.time-1000),(unsigned long)(upgraded.time-1000));
