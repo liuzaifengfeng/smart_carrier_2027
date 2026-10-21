@@ -20,33 +20,9 @@ def positions():
 
 class PlanTests(unittest.TestCase):
     def test_actual_firmware_dispatch_and_busy_gate(self):
-        zig = ROOT / ".pio/host-test-tools/ziglang/zig.exe"
-        compiler = os.environ.get("CONTINUOUS_TEST_CXX")
-        if not compiler and not zig.is_file():
-            self.skipTest("需要主机C++编译器")
-        serial = (ROOT/"src/serial_commands.inc").read_text(encoding="utf-8")
-        helper = serial[serial.index("static bool serialTrial(const SerialFrame &frame) {"):]
-        helper = helper[:helper.index("void Task_Serial_CMD")]
-        gate = serial[serial.index("    if(ContinuousTrialActive() &&"):]
-        gate = gate[:gate.index("    if(serialTrial(frame))return;")]
-        early = serial[serial.index('    const bool motionStop='):serial.index('    if(ContinuousTrialActive() &&')]
-        cfg = serial[serial.index('    } else if (frame.starts("CFG", "GET")'):]
-        cfg = cfg[:cfg.index('    } else if (frame.is("POSE", "SET", 3)')]
-        cfg = cfg.replace("    } else if", "    if", 1)
-        cache = ROOT/".pio/native_trial_dispatch"
-        cache.mkdir(exist_ok=True)
-        (cache/"trial_dispatch_actual.inc").write_text(
-            helper+"\nstatic void trialEarlyStop(const SerialFrame &frame) {\n"+early+"\n}\n"
-            +"\nstatic void trialGate(const SerialFrame &frame) {\n"+gate+"\n++allowed;\n}\n"
-            +"\nstatic void trialCfgDispatch(const SerialFrame &frame) {\n"+cfg+"\n}\n}\n", encoding="utf-8")
-        command = ([compiler] if compiler else [str(zig), "c++"])
-        executable = cache/"dispatch_test.exe"
-        result = subprocess.run(command+["-std=c++14", "-O1", "-I", str(ROOT/"tests/native_stubs"),
-                                         "-I", str(cache), str(ROOT/"tests/trial_dispatch_native.cpp"),
-                                         "-o", str(executable)], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
-        result = subprocess.run([str(executable)], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        from native_support import run_native
+        from test_serial_motion import build_serial_motion
+        run_native(build_serial_motion(), "trial")
 
     def plan(self, nodes=(0, 1, 8), radii=(0, 120, 0), config=None):
         return TrialPlan(nodes, radii, positions(), config or TrialConfig())

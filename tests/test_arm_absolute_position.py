@@ -107,14 +107,9 @@ static_assert(rejectInvalid(), "task abort remains effective");
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_startup_zero_precedes_command_tasks(self):
-        driver = (ROOT / "src/Emm_V5.cpp").read_text(encoding="utf-8")
-        init = driver[driver.index("void Emm_V5_Init(void)"):driver.index("void Emm_V5_Reset_CurPos_To_Zero(")]
-        self.assertLess(init.index("Serial1.begin("), init.index("Emm_V5_Reset_CurPos_To_Zero(0)"))
-        self.assertLess(init.index("Emm_V5_Reset_CurPos_To_Zero(0)"), init.index("Serial1.flush()"))
-        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
-        setup = main[main.index("void setup() {"):main.index("void loop() {")]
-        self.assertLess(setup.index("Emm_V5_Init()"), setup.index("currentArm = {0, 0, 0, 0}"))
-        self.assertLess(setup.index("currentArm = {0, 0, 0, 0}"), setup.index("xTaskCreate("))
+        from native_support import run_native
+        from test_serial_motion import build_serial_motion
+        run_native(build_serial_motion(), "startup")
 
 
 if __name__ == "__main__":

@@ -68,4 +68,54 @@ inline uint8_t driverAccelerationFor(float acceleration,float pulsesPerUnit) {
     return static_cast<uint8_t>(continuous::clamp(level,1,255));
 }
 const char *run(const continuous::Route &route,const Settings &settings,IO &io,Result &result);
+
+// 与 run 共用控制算法；每次 tick 只推进一次控制/通信周期，不等待物理行程结束。
+class Runner {
+    enum Stage { IDLE, START, QUIET, SELECT, ALIGN, ZERO, PREPARE, MOVE, OUTER, OUTER_QUIET, FINISHED } stage=IDLE;
+    enum Action { ROTATION, STRAIGHT, CURVE, FINAL } action=FINAL;
+    const continuous::Route *route=nullptr;
+    const Settings *settings=nullptr;
+    IO *io=nullptr;
+    Result *output=nullptr;
+    const char *error=nullptr;
+    size_t index=0,after=0,curveBegin=0;
+    continuous::Vec offset,end,start;
+    float distance=0,targetHeading=0,baseS=0,delta=0,ppm=0,maximum=0,acceleration=0,startHeading=0;
+    double unitsPerDistance=0,tolerance=0,hardLimit=0;
+    uint32_t due=0,quietStarted=0,started=0,previous=0,deadline=0,lastReport=0,lastArrivalReport=0;
+    bool prepared=false,valid=false,rotating=false,scanExit=false,sent=false,braking=false,turningForAlignment=false;
+    uint8_t zeroId=1,attempts=0,movingWheels=0;
+    uint16_t peakMeasuredRpm=0;
+    Motor stopped[4];
+    int encoderSign[4]={};
+    int64_t origin[4]={},goals[4]={},positions[4]={};
+    uint32_t travelPulses[4]={};
+    bool directions[4]={};
+    HeadingGuard headingGuard;
+    bool quietSeen=false;
+    uint32_t residualSince=0;
+    uint8_t quietCount=0;
+    int64_t quietAnchor[4]={};
+    continuous::Tracker tracker;
+    continuous::WheelCommand applied;
+    float curveStop=0;
+    bool finalTranslation=false,terminalTurn=false;
+    const char *sample(H30Attitude &motion);
+    void fail(const char *reason);
+    void startMove(bool turnForAlignment);
+    void aligned();
+    void arrived();
+    void moveTick();
+    const char *displacement(const Motor (&states)[4]);
+public:
+    void begin(const continuous::Route &path,const Settings &config,IO &hardware,Result &result);
+    void tick();
+    bool active() const { return stage!=IDLE&&stage!=FINISHED; }
+    const char *failure() const { return error; }
+    uint32_t nextDelay() const;
+    bool lastTranslation() const { return finalTranslation&&stage==MOVE&&!rotating; }
+    float remainingDistance() const;
+    bool hasTerminalTurn() const { return terminalTurn; }
+    float progress() const {return output?output->s:0;}
+};
 }

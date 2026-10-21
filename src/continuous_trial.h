@@ -18,3 +18,12 @@ void ContinuousTrialSetOta(bool active);
 // 契约：path 包含 count 个节点，2 <= count <= MAX_NODES，速度与配置已由入口校验。
 bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async=true);
 bool H30RunNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading);
+
+// 以下入口仅由统一运动任务调用，试跑与正式路径使用同一执行任务。
+bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async);
+void ContinuousMotionBegin();
+void ContinuousMotionTick();
+void ContinuousMotionCancel();
+bool ContinuousMotionActive();
+const char *ContinuousMotionFailure();
+uint32_t ContinuousMotionNextDelay();

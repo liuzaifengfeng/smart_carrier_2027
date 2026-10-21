@@ -65,6 +65,16 @@ class ValidationTests(unittest.TestCase):
 
 
 class PanelTests(unittest.TestCase):
+    def test_force_grab_waits_for_matching_terminal_event(self):
+        self.panel.test_running = ("抓取", ("CMD", "VISION", "FORCE_GRAB", "6", "3"))
+        for frame in ("{RSP,VISION,FORCE_GRAB,ACK,6,3}",
+                      "{EVT,VISION,FORCE_GRAB,REQUESTED,6,3}",
+                      "{EVT,VISION,FORCE_GRAB,DONE,6,2}"):
+            self.panel.receive_test_result(frame)
+            self.assertIsNotNone(self.panel.test_running)
+        self.panel.receive_test_result("{EVT,VISION,FORCE_GRAB,DONE,6,3}")
+        self.assertIsNone(self.panel.test_running)
+
     def setUp(self):
         self.root = tk.Tk()
         self.root.withdraw()
@@ -291,6 +301,16 @@ class PanelTests(unittest.TestCase):
 
 
 class ActionGroupPanelTests(unittest.TestCase):
+    def test_feedback_mode_disables_ignored_motion_delay_editor(self):
+        self.read()
+        self.controller.parameters[999] = Parameter(999, "运动执行/机械臂反馈完成", "1", 0, 1, True)
+        self.choose("载物台1到工作区1")
+        name = f"{DELAY_PREFIX}载物台1到工作区1/取料下降(ms)"
+        self.panel.tree.selection_set(name)
+        self.panel.select()
+        self.assertIn("反馈模式不使用", self.panel.tree.item(name, "values")[0])
+        self.assertEqual(str(self.panel.entry["state"]), "disabled")
+
     def setUp(self):
         self.root = tk.Tk()
         self.root.withdraw()

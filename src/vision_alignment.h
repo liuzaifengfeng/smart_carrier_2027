@@ -19,8 +19,8 @@ struct VisionAlignmentDeadzone {
 };
 
 constexpr bool IsWithinAlignmentDeadzone(const VisionAlignmentDeadzone &zone, float angle, float x, float y) {
-    return fabsf(x) <= zone.visualX && fabsf(y) <= zone.visualY
-        && fabsf(angle) <= zone.angleDeg;
+    return (x<0?-x:x) <= zone.visualX && (y<0?-y:y) <= zone.visualY
+        && (angle<0?-angle:angle) <= zone.angleDeg;
 }
 
 constexpr uint8_t ALIGNMENT_REQUIRED_FRAMES = 2;

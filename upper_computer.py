@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from parameter_config import DEFAULT_CONFIG_PATH, load_config, config_edits, export_config
-from action_group_config import (DELAY_NAMES, DELAY_PREFIX, TRANSFER_GROUPS,
+from action_group_config import (action_delay_active, DELAY_NAMES, DELAY_PREFIX, TRANSFER_GROUPS,
                                 FORWARD_TRANSFER_GROUPS, REVERSE_TRANSFER_GROUPS,
                                 load_action_group_delays, save_action_group_delays)
 from continuous_trial import ContinuousTrialPanel
@@ -237,7 +237,7 @@ def parse_disc_material_response(line: str) -> tuple[str, str, int | None, int |
     if (len(fields) != 6 or not (
             (action in ("GRAB", "FORCE_GRAB") and kind == "RSP" and status == "ACK")
             or (action == "GRAB" and kind == "EVT" and status in ("REQUESTED", "DONE", "FAILED"))
-            or (action == "FORCE_GRAB" and kind == "EVT" and status == "REQUESTED")
+            or (action == "FORCE_GRAB" and kind == "EVT" and status in ("REQUESTED", "DONE", "FAILED"))
             or (action == "COLOR" and kind == "EVT" and status in ("GRAB", "SKIP")))):
         return None
     if not all(value.isascii() and value.isdigit() for value in fields[4:]):
@@ -533,6 +533,7 @@ class ParameterPanel(ttk.Frame):
         horizontal.grid(row=1, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=scroll.set, xscrollcommand=horizontal.set)
         self.tree.tag_configure("dirty", foreground="#b05b00")
+        self.tree.tag_configure("inactive", foreground="#889099")
         self.tree.bind("<<TreeviewSelect>>", self.select)
         self.tree.bind("<Double-1>", self.focus_editor)
         self.label = tk.StringVar(value="选择表格中的参数，在这里输入新值；数组编号从 1 开始。")
@@ -700,12 +701,14 @@ class ParameterPanel(ttk.Frame):
         category, command = request[1:3]
         if command in ("TRANSFER", "RETRIEVE") and fields[0] == "EVT" and fields[4:] != request[3:]:
             return  # 忽略其他载物台/工作区组合的迟到结果。
+        if command in ("FORCE_GRAB", "GRAB") and fields[0] == "EVT" and fields[4:] != request[3:]:
+            return
         complete = False
         result = ""
         if fields[:3] == ("RSP", category, command) and len(fields) >= 4 and fields[3] == "ERR":
             complete, result = True, "被固件拒绝：" + text
         elif fields[:3] == ("EVT", category, command) and len(fields) >= 4:
-            if fields[3] in ("DONE", "FAILED", "ISSUED", "REQUESTED"):
+            if fields[3] in ("DONE", "FAILED", "ISSUED"):
                 complete = True
                 result = ("固件报告失败" if fields[3] == "FAILED" else
                           "动作序列已结束，需目测确认" if fields[3] == "DONE" else
@@ -1020,6 +1023,7 @@ class ActionGroupPanel(ttk.Frame):
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.tag_configure("dirty", foreground="#b05b00")
+        self.tree.tag_configure("inactive", foreground="#889099")
         self.tree.bind("<<TreeviewSelect>>", self.select)
         self.tree.bind("<Double-1>", self.focus_editor)
         editor = ttk.Frame(self)
@@ -1053,6 +1057,7 @@ class ActionGroupPanel(ttk.Frame):
         c = self.controller
         by_name = {p.name: p for p in c.parameters.values()}
         names = self.names()
+        feedback = self.feedback_enabled()
         transfer = self.group.get() in TRANSFER_GROUPS[1:]
         reverse = self.group.get() in REVERSE_TRANSFER_GROUPS
         # 只调整显示名称；行标识、串口参数名和 C++ 保存键继续使用原名称。
@@ -1063,9 +1068,9 @@ class ActionGroupPanel(ttk.Frame):
         for name in names:
             p = by_name.get(name)
             step = name.rsplit("/", 1)[-1].removesuffix("(ms)")
-            self.tree.insert("", tk.END, iid=name, values=(labels.get(step, step),
+            self.tree.insert("", tk.END, iid=name, values=(labels.get(step, step) + ("（反馈模式不使用）" if not action_delay_active(name, feedback) else ""),
                 p.value if p and c.ready else "未读取", c.edits.get(p.index, "") if p else "",
-                self.source_values.get(name, "未知")), tags=("dirty",) if p and p.index in c.edits else ())
+                self.source_values.get(name, "未知")), tags=("inactive",) if not action_delay_active(name, feedback) else ("dirty",) if p and p.index in c.edits else ())
         snapshot = (id(c.parameters), self.group.get())
         if names:
             self.tree.selection_set(selection[0] if selection and selection[0] in names else names[0])
@@ -1089,14 +1094,31 @@ class ActionGroupPanel(ttk.Frame):
                 "“缩回后等待”和“转向前稳定”是额外等待，可设为 0。" if transfer else
                 "公共延时用于圆盘取放；正反向各9组搬运使用各自延时。"
                 "圆盘和扫码准备保持原有动作顺序。")
+        if feedback:
+            note += " 当前为反馈模式：灰色移动等待值不参与执行；夹持、释放的独立保持时间在参数页调整。稳定及缩回后显式等待仍生效。"
+        else:
+            note += " 当前为标定计时模式：保留全部原动作等待，不以指令目标冒充实际到位。"
         self.note.set(note
                       if available or not c.ready else "当前固件缺少本组延时参数，请先烧录新版固件。")
+        self.update_delay_editor()
+
+    def feedback_enabled(self):
+        return any(p.name == "运动执行/机械臂反馈完成" and float(p.value) == 1
+                   for p in self.controller.parameters.values())
+
+    def update_delay_editor(self):
+        c = self.controller
+        active = any(p.name == self.selected for p in c.parameters.values()) and action_delay_active(self.selected, self.feedback_enabled())
+        enabled = active and c.ready and not c.mode and not c.test_running
+        for widget in (self.entry, self.edit_button):
+            widget.configure(state=tk.NORMAL if enabled else tk.DISABLED)
 
     def select(self, _event=None):
         selection = self.tree.selection()
         self.selected = selection[0] if selection else None
         p = next((p for p in self.controller.parameters.values() if p.name == self.selected), None)
         self.value.set(self.controller.edits.get(p.index, p.value) if p else "")
+        self.update_delay_editor()
 
     def focus_editor(self, _event=None):
         self.select()
@@ -1105,6 +1127,9 @@ class ActionGroupPanel(ttk.Frame):
 
     def edit(self):
         c = self.controller
+        if self.selected and not action_delay_active(self.selected, self.feedback_enabled()):
+            c.status.set("该移动等待值在反馈模式中不参与执行，请调整反馈后保持时间或切回标定计时模式。")
+            return False
         if c.mode or c.test_running or not c.ready:
             return False
         selected, text = self.selected, self.value.get()
@@ -3535,13 +3560,16 @@ class UpperComputerApp:
             message = f"{action} 指令被拒绝：{reason}"
         elif action == "FORCE_GRAB" and status == "ACK":
             self.force_disc_grab_warning = ""
-            message = f"强制抓取已接令：颜色 {color} → 载物台 {cargo}，等待函数调用返回。"
+            message = f"强制抓取已接令：颜色 {color} → 载物台 {cargo}，等待作业完成事件。"
         elif action == "FORCE_GRAB" and status == "WARN":
             self.force_disc_grab_warning = f"警告：载物台 {cargo} 已记录颜色 {color} 的物料，忽略占用并继续强制抓取。"
             message = self.force_disc_grab_warning
+        elif action == "FORCE_GRAB" and status in ("DONE", "FAILED"):
+            message = (self.force_disc_grab_warning
+                       + f"强制抓取{'动作序列完成，实际效果需现场确认' if status == 'DONE' else '失败'}：颜色 {color} → 载物台 {cargo}。")
         elif action == "FORCE_GRAB":
             message = (self.force_disc_grab_warning
-                       + f"强制抓取函数已调用并返回：颜色 {color} → 载物台 {cargo}；结果请查看物料日志，实际抓取成功需确认。")
+                       + f"强制抓取已提交：颜色 {color} → 载物台 {cargo}；结果请查看物料日志及完成事件，此时尚未完成。")
         elif action == "COLOR" and status == "GRAB":
             message = f"颜色 {color} 匹配下一件任务：调用载物台 {cargo} 的抓取函数，结果请查看物料日志。"
         elif action == "COLOR" and status == "SKIP":

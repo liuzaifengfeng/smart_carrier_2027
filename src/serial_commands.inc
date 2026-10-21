@@ -4,6 +4,7 @@
 #include "h30_usb.h"
 #include "continuous_trial.h"
 #include "disc_position_grab.h"
+#include "motion_executor.h"
 static bool serialDebugMode = true;
 static bool serialTrial(const SerialFrame &frame);
 static DebugReleaseButton bootReleaseButton;
@@ -20,11 +21,23 @@ void PollDebugBootButton() {
 
 static void serialBootSetIdle(bool idle) {
     portENTER_CRITICAL(&bootReleaseMux);
-    bootReleaseButton.setIdle(serialDebugMode && idle && !ContinuousTrialActive());
+    bootReleaseButton.setIdle(serialDebugMode && idle && !ContinuousTrialActive() && !MotionExecutorActive());
     portEXIT_CRITICAL(&bootReleaseMux);
 }
 static void serialReply(const SerialFrame &frame, const char *status) {
     Serial.printf("{RSP,%s,%s,%s}\n", frame.fields[1], frame.fields[2], status);
+}
+
+static uint32_t serialPrepareMotion(const SerialFrame &frame,MotionRequest &request) {
+    snprintf(request.category,sizeof(request.category),"%s",frame.fields[1]);
+    snprintf(request.command,sizeof(request.command),"%s",frame.fields[2]);
+    const uint32_t id=SubmitMotion(request,false);
+    if(!id)serialError(frame,"BUSY");
+    return id;
+}
+static void serialMotion(const SerialFrame &frame,MotionRequest &request) {
+    const uint32_t id=serialPrepareMotion(frame,request);if(!id)return;
+    serialReply(frame,"ACK");LaunchMotion(id);
 }
 
 static void serialCfgError(const SerialFrame &frame, const char *reason) {
@@ -38,6 +51,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
     static const char *const names[][2] = {
         {"SYS", "HELLO"}, {"SYS", "RELEASE"}, {"SYS", "READY"},
         {"SYS", "START"}, {"SYS", "HELP"},
+        {"MOTION", "STATUS"},
         {"TASK", "SET"},
         {"LED", "SET"}, {"LED", "GET"}, {"LED", "FREQ"},
         {"NAV", "START_ZONE"}, {"NAV", "ROUTE"}, {"NAV", "STOP"},
@@ -91,19 +105,13 @@ static void serialRoute(const SerialFrame &frame) {
         }
         path[i] = static_cast<uint8_t>(node);
     }
-    if (serialDebugMode) {
-        Serial.printf("{RSP,NAV,ROUTE,ACK,%u}\n", static_cast<unsigned>(count));
-        float finalHeading=NAN;
-        switch(path[count-1]) {
-            case DISC_AREA_NODE: finalHeading=DISC_AREA_HEADING;break;
-            case COARSE_AREA_NODE: finalHeading=COARSE_AREA_HEADING;break;
-            case TEMP_AREA_NODE: finalHeading=TEMP_AREA_HEADING;break;
-        }
-        Serial.println("{EVT,NAV,ROUTE_RUNNING}");
-        if(!H30StartNodePath(path,count,NODE_PATH_SPEED_MM_S,finalHeading))
-            Serial.println("{EVT,NAV,ROUTE_FAILED,START}");
-        return;
+    if(serialDebugMode) {
+        MotionRequest r;r.kind=MotionKind::NODE_PATH;r.pathCount=count;r.theta=NAN;r.speed=NODE_PATH_SPEED_MM_S;r.automatic=true;
+        memcpy(r.path,path,count);const uint32_t id=SubmitMotion(r,false);
+        if(!id){serialError(frame,"BUSY");return;}
+        Serial.printf("{RSP,NAV,ROUTE,ACK,%u}\n",static_cast<unsigned>(count));LaunchMotion(id);return;
     }
+
     portENTER_CRITICAL(&nodePathMux);
     const bool accepting = nodePathState == NodePathState::WAITING;
     if (accepting) {
@@ -150,7 +158,7 @@ static void serialRelease(const SerialFrame &frame) {
 
 static void serialBootReleaseAtIdle(bool idle) {
     portENTER_CRITICAL(&bootReleaseMux);
-    bootReleaseButton.setIdle(serialDebugMode && idle && !ContinuousTrialActive());
+    bootReleaseButton.setIdle(serialDebugMode && idle && !ContinuousTrialActive() && !MotionExecutorActive());
     const bool requested = bootReleaseButton.takeRequest();
     portEXIT_CRITICAL(&bootReleaseMux);
     if (!requested) return;
@@ -160,36 +168,29 @@ static void serialBootReleaseAtIdle(bool idle) {
     if (parseSerialFrame(command, frame)) serialRelease(frame);
 }
 
-// 普通 COLOR/GRAB 共用完成路径，避免接令或失败也推进任务。
-static void serialExecuteTaskGrab(uint8_t color, uint8_t cargo) {
-    const int progress = roundProgress;
-    const RobotState grabState = currentState;
-    const bool automaticGrab = !serialDebugMode
-        && (grabState == STATE_GRAB_ROUND1 || grabState == STATE_GRAB_ROUND2);
-    if (automaticGrab) {
-        // 相机保持识别，只屏蔽主控的颜色处理，避免每件之间反复切换视觉模式。
-        firstDiscGrabReady = false;
-        discMessageResumeRequested = false;
+// 串口只提交；ACK、选择事件先于 Launch，实际完成及进度由运动任务发布。
+static uint32_t serialQueueDiscGrab(uint8_t color,uint8_t cargo,uint8_t position=0,uint8_t ack=0,size_t count=0,bool force=false) {
+    MotionRequest r;r.kind=MotionKind::DISC_GRAB;r.color=color;r.cargo=cargo;r.position=position;r.force=force;
+    r.automatic=!force&&!serialDebugMode&&(currentState==STATE_GRAB_ROUND1||currentState==STATE_GRAB_ROUND2);
+    const uint32_t id=SubmitMotion(r,false);if(!id)return 0;
+    if(r.automatic) {
+        firstDiscGrabReady=false;discMessageResumeRequested=false;
+        traceVision(VisionStartMode::DISC_MATERIAL,false);
+        if(position)requestVisionStop(VisionStartMode::DISC_MATERIAL);
     }
-    discMaterialColor = 0;
-    const bool completed = GrabDiscMaterial(color, cargo);
-    const int next = AdvanceDiscGrabProgress(progress, cargo, completed);
-    Serial.printf("{EVT,VISION,GRAB,%s,%u,%u}\n", completed ? "DONE" : "FAILED", color, cargo);
-    if (automaticGrab && !completed) {
-        // 可能已执行部分动作，禁止下一帧颜色自动重试同一次抓取。
-        requestVisionStop(VisionStartMode::DISC_MATERIAL);
-        updateDisplay("DISPLAY", "DEBUG", "DISC GRAB ERR");
-        if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
-        if (currentState == grabState) currentState = STATE_TRANSFER_FAILED;
-        return;
+    discMaterialColor=0;
+    if(ack==1)Serial.printf("{RSP,VISION,GRAB,ACK,%u,%u}\n",color,cargo);
+    else if(ack==2) {
+        Serial.printf("{RSP,VISION,DISC_POSITIONS,ACK,%u}\n",static_cast<unsigned>(count));
+        Serial.printf("{EVT,VISION,DISC_POSITIONS,SELECTED,%u,%u,%u}\n",position,color,cargo);
+    } else if(ack==3) {
+        Serial.printf("{RSP,VISION,FORCE_GRAB,ACK,%u,%u}\n",color,cargo);
+        Serial.printf("{EVT,VISION,FORCE_GRAB,REQUESTED,%u,%u}\n",color,cargo);
     }
-    // 动作执行期间若已超时切换主状态，不发布旧流程的进度。
-    if (automaticGrab && currentState != grabState) return;
-    if (next != progress) {
-        // 先关闭识别，再发布第三件完成，避免主流程已导航时仍有颜色入队。
-        if (next == 3) requestVisionStop(VisionStartMode::DISC_MATERIAL);
-        roundProgress = next;
-    }
+    LaunchMotion(id);return id;
+}
+static void serialExecuteTaskGrab(uint8_t color,uint8_t cargo) {
+    serialQueueDiscGrab(color,cargo);
 }
 
 static void serialDiscColorDecision(uint8_t color) {
@@ -257,8 +258,7 @@ static void serialDiscGrab(const SerialFrame &frame) {
         serialError(frame, "OCCUPIED"); return;
     }
     discMaterialColor = 0; // 消费颜色，下一次抓取必须有新的颜色反馈或显式颜色参数。
-    Serial.printf("{RSP,VISION,GRAB,ACK,%lu,%lu}\n", color, cargo);
-    serialExecuteTaskGrab(static_cast<uint8_t>(color), static_cast<uint8_t>(cargo));
+    if(!serialQueueDiscGrab(color,cargo,0,1))serialError(frame,"BUSY");
 }
 
 // 视觉保证本帧内全部位置此刻可抓；只选一件，不缓存未选中的候选。
@@ -301,51 +301,14 @@ static void serialDiscPositions(const SerialFrame &frame) {
     if (cargoPlatforms[cargo - 1].material != MATERIAL_NONE) {
         serialError(frame, "OCCUPIED"); return;
     }
+    traceVisionFirstFrame(VisionStartMode::DISC_MATERIAL);
     const int selected = SelectDiscPosition(candidates, count, colors, progress, currentTask.valid);
-    Serial.printf("{RSP,VISION,DISC_POSITIONS,ACK,%u}\n", static_cast<unsigned>(count));
-    if (selected < 0) {
-        Serial.printf("{EVT,VISION,DISC_POSITIONS,SKIP,%d,%u,COLOR_MISMATCH}\n",
-                      colors[progress], cargo);
-        return;
+    if(selected<0) {
+        Serial.printf("{RSP,VISION,DISC_POSITIONS,ACK,%u}\n",static_cast<unsigned>(count));
+        Serial.printf("{EVT,VISION,DISC_POSITIONS,SKIP,%d,%u,COLOR_MISMATCH}\n",colors[progress],cargo);return;
     }
-    const auto candidate = candidates[selected];
-    Serial.printf("{EVT,VISION,DISC_POSITIONS,SELECTED,%u,%u,%u}\n",
-                  candidate.position, candidate.color, cargo);
-    const RobotState grabState = state;
-    const bool automaticGrab = !serialDebugMode
-        && (grabState == STATE_GRAB_ROUND1 || grabState == STATE_GRAB_ROUND2);
-    if (automaticGrab) {
-        // 选中即结束旧位置识别会话。圆盘会在本次抓放期间旋转，因此恢复后
-        // 必须由主状态机重新开启识别，只接受新会话得到的位置快照。
-        firstDiscGrabReady = false;
-        discMessageResumeRequested = false;
-        requestVisionStop(VisionStartMode::DISC_MATERIAL);
-    }
-    discMaterialColor = 0;
-    bool completed = false;
-    switch (candidate.position) {
-        case 1: completed = GrabDiscPosition1(candidate.color, cargo); break;
-        case 2: completed = GrabDiscPosition2(candidate.color, cargo); break;
-        case 3: completed = GrabDiscPosition3(candidate.color, cargo); break;
-    }
-    const int next = AdvanceDiscGrabProgress(progress, cargo, completed);
-    Serial.printf("{EVT,VISION,DISC_POSITIONS,%s,%u,%u,%u}\n",
-                  completed ? "DONE" : "FAILED",
-                  candidate.position, candidate.color, cargo);
-    if (automaticGrab && !completed) {
-        // 夹取或放置可能已执行一部分，禁止按后续位置帧自动重试。
-        if (discMaterialActive) requestVisionStop(VisionStartMode::DISC_MATERIAL);
-        updateDisplay("DISPLAY", "DEBUG", "DISC GRAB ERR");
-        if (xHomeTimer != NULL) xTimerStop(xHomeTimer, 0);
-        if (currentState == grabState) currentState = STATE_TRANSFER_FAILED;
-        return;
-    }
-    // 超时任务可能在阻塞动作期间改变状态，此时不再发布旧抓取进度。
-    if (automaticGrab && currentState != grabState) return;
-    if (next != progress) {
-        if (next == 3 && discMaterialActive) requestVisionStop(VisionStartMode::DISC_MATERIAL);
-        roundProgress = next;
-    }
+    const auto candidate=candidates[selected];
+    if(!serialQueueDiscGrab(candidate.color,cargo,candidate.position,2,count))serialError(frame,"BUSY");
 }
 
 static void serialTransfer(const SerialFrame &frame) {
@@ -355,49 +318,35 @@ static void serialTransfer(const SerialFrame &frame) {
             || !serialUInt(frame.fields[4], workAreaCode, MATERIAL_STATION_COUNT) || workAreaCode == 0) {
         serialError(frame, "RANGE"); return;
     }
-    serialReply(frame, "ACK");
-    CargoPlatform &cargo = cargoPlatforms[cargoCode - 1];
-    const MaterialType previousMaterial = cargo.material;
-    // 与 DEMO1 相同：手动装料后允许试跑，未登记时临时按红色记录。
-    if (cargo.material == MATERIAL_NONE) cargo.material = MATERIAL_RED;
-    const bool ok = MoveCargoToWorkArea(cargoCode, workAreaCode);
-    if (!ok) cargo.material = previousMaterial;
-    Serial.printf("{EVT,ARM,TRANSFER,%s,%lu,%lu}\n", ok ? "DONE" : "FAILED",
-                  static_cast<unsigned long>(cargoCode), static_cast<unsigned long>(workAreaCode));
+    MotionRequest r;r.kind=MotionKind::TRANSFER;r.cargo=cargoCode;r.work=workAreaCode;r.debug=true;
+    serialMotion(frame,r);
 }
-
 static void serialRetrieve(const SerialFrame &frame) {
-    if (!serialDebugMode) { serialError(frame, "MODE"); return; }
-    uint32_t workAreaCode = 0, cargoCode = 0;
-    if (!serialUInt(frame.fields[3], workAreaCode, MATERIAL_STATION_COUNT) || workAreaCode == 0
-            || !serialUInt(frame.fields[4], cargoCode, MATERIAL_STATION_COUNT) || cargoCode == 0) {
-        serialError(frame, "RANGE"); return;
-    }
-    if (cargoPlatforms[cargoCode - 1].material != MATERIAL_NONE) {
-        serialError(frame, "OCCUPIED"); return;
-    }
-    serialReply(frame, "ACK");
-    // 手动试跑与 DEMO4 一致，取回物料按红色登记；成功放置后由业务函数更新记录。
-    const bool ok = MoveWorkAreaToCargo(MATERIAL_RED, workAreaCode, cargoCode);
-    Serial.printf("{EVT,ARM,RETRIEVE,%s,%lu,%lu}\n", ok ? "DONE" : "FAILED",
-                  static_cast<unsigned long>(workAreaCode), static_cast<unsigned long>(cargoCode));
+    if(!serialDebugMode){serialError(frame,"MODE");return;}
+    uint32_t work=0,cargo=0;
+    if(!serialUInt(frame.fields[3],work,MATERIAL_STATION_COUNT)||!work
+        ||!serialUInt(frame.fields[4],cargo,MATERIAL_STATION_COUNT)||!cargo){serialError(frame,"RANGE");return;}
+    if(cargoPlatforms[cargo-1].material!=MATERIAL_NONE){serialError(frame,"OCCUPIED");return;}
+    MotionRequest r;r.kind=MotionKind::RETRIEVE;r.cargo=cargo;r.work=work;r.color=MATERIAL_RED;
+    serialMotion(frame,r);
 }
 
 static void serialDispatch(const SerialFrame &frame) {
-    // 旧底盘停止按钮也取消任务，避免停车后被下一周期重新启动。
     const bool motionStop=frame.is("CHASSIS","MOVE",3)&&strcmp(frame.fields[5],"1")==0;
-    if(motionStop&&ContinuousTrialActive()) {
+    if(motionStop) {
         uint32_t direction=0,stop=0;float speed=0;
         if(!serialUInt(frame.fields[3],direction,5)||!serialFloat(frame.fields[4],speed,0,1000)
             ||!serialUInt(frame.fields[5],stop,1)){serialError(frame,"RANGE");return;}
-        ContinuousTrialCancel();
-        Serial.printf("{RSP,CHASSIS,MOVE,ACK,%u,%.3f,1}\n",static_cast<unsigned>(direction),speed);
-        return;
+        CancelMotion();Serial.printf("{RSP,CHASSIS,MOVE,ACK,%u,%.3f,1}\n",static_cast<unsigned>(direction),speed);return;
     }
-    if(ContinuousTrialActive() && !frame.is("IMU","GET",0) && !frame.is("IMU","HEADING",0)
-        && !frame.is("NAV","TRIAL_STATUS",1) && !frame.is("NAV","TRIAL_STOP",1)
-        && !frame.is("NAV","STOP",0)
-        && !frame.is("SYS","HELLO",0) && !frame.is("SYS","HELP",0)) {
+    if(MotionExecutorActive()&&!frame.is("IMU","GET",0)&&!frame.is("IMU","HEADING",0)
+        &&!frame.is("POSE","GET",0)&&!frame.starts("CFG","GET")&&!frame.is("MOTION","STATUS",1)
+        &&!frame.is("NAV","TRIAL_STATUS",1)&&!frame.is("NAV","TRIAL_STOP",1)&&!frame.is("NAV","STOP",0)
+        &&!frame.starts("NAV","ROUTE")&&!frame.is("NAV","START_ZONE",1)
+        &&!frame.is("SYS","HELLO",0)&&!frame.is("SYS","HELP",0)&&!frame.is("SYS","START",0)&&!frame.is("SYS","READY",0)
+        &&!frame.is("TASK","SET",1)&&!frame.is("VISION","ALIGN_DATA",3)
+        &&!frame.is("VISION","COLOR",1)&&!frame.starts("VISION","DISC_POSITIONS")&&!frame.starts("VISION","GRAB")
+        &&!frame.is("VISION","STOP_REQUEST",1)&&!frame.is("VISION","ALIGN_STOP",0)) {
         serialError(frame,"BUSY");return;
     }
     if(serialTrial(frame))return;
@@ -405,8 +354,14 @@ static void serialDispatch(const SerialFrame &frame) {
     // 1. 通用命令与共享业务状态。
     if (frame.is("SYS", "HELLO", 0)) {
         Serial.println("{RSP,SYS,HELLO,OK,2}");
+    } else if(frame.is("MOTION","STATUS",1)) {
+        uint32_t id=0;if(!serialUInt(frame.fields[3],id,UINT32_MAX)){serialError(frame,"RANGE");return;}
+        const auto result=GetMotionStatus(id);
+        if(!id||!result.id){serialError(frame,"ID");return;}
+        Serial.printf("{RSP,MOTION,STATUS,OK,%lu,%s,%s,%lu}\n",static_cast<unsigned long>(id),
+            MotionStateName(result.state),result.phase,static_cast<unsigned long>(result.elapsedMs));
     } else if(frame.is("NAV","STOP",0)) {
-        ContinuousTrialCancel();
+        CancelMotion();
         Serial.println("{RSP,NAV,STOP,ACK}");
     } else if (frame.is("TASK", "SET", 1)) {
         const TaskCode task = parseTaskCode(frame.fields[3]);
@@ -498,20 +453,15 @@ static void serialDispatch(const SerialFrame &frame) {
         else if (strcmp(name, "WORK_AREA_LOADED") == 0) mode = VisionStartMode::WORK_AREA_LOADED;
         else if (strcmp(name, "CORNER") == 0) mode = VisionStartMode::CORNER;
         else { serialError(frame, "RANGE"); return; }
-        // 两种运行模式都允许请求切换；ACK 仅表示接令，事件才表示主控已发出请求。
-        Serial.printf("{RSP,VISION,%s,ACK,%s}\n", frame.fields[2], name);
-        if (strcmp(frame.fields[2], "START_REQUEST") == 0) {
-            if (mode == VisionStartMode::WORK_AREA || mode == VisionStartMode::WORK_AREA_LOADED) {
-                const RobotState startingState = currentState;
-                setAlignmentEnabled(false);
-                const bool looked = InitArm_look();
-                if (!looked || taskMotionAborted || currentState != startingState) {
-                    Serial.printf("{EVT,VISION,START_FAILED,%s,ARM}\n", name);
-                    return;
-                }
-            }
-            requestVisionStart(mode);
-        } else requestVisionStop(mode);
+        const bool start=strcmp(frame.fields[2],"START_REQUEST")==0;
+        if(start&&(mode==VisionStartMode::WORK_AREA||mode==VisionStartMode::WORK_AREA_LOADED)) {
+            MotionRequest r;r.kind=MotionKind::ARM_POSE;r.observation=ArmObservation::LOOK;r.startVision=true;r.vision=static_cast<uint8_t>(mode);
+            const uint32_t id=serialPrepareMotion(frame,r);if(!id)return;
+            Serial.printf("{RSP,VISION,START_REQUEST,ACK,%s}\n",name);LaunchMotion(id);
+        } else {
+            Serial.printf("{RSP,VISION,%s,ACK,%s}\n",frame.fields[2],name);
+            if(start)requestVisionStart(mode);else requestVisionStop(mode);
+        }
     } else if (frame.is("VISION", "ALIGN_START", 0)
                || frame.is("VISION", "ALIGN_START", 1)) {
         VisionStartMode mode = VisionStartMode::NONE; // 自动期间沿用当前模式；否则旧命令使用 DISC。
@@ -533,13 +483,13 @@ static void serialDispatch(const SerialFrame &frame) {
         float value[3];
         if (!serialFloats(frame, value, low, high, 3)) {
             xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY);
-            OmniMove(0.0f, 0.0f, 0.0f, 0);
+            alignmentStopPending=true;
             ResetDiscAlignmentPid();
             ResetAlignmentWait();
             if (xAlignmentQueue) xQueueReset(xAlignmentQueue);
             ++alignmentGeneration; // 已出队的旧帧也不能延续连续计数。
             xSemaphoreGive(xAlignmentMotionMutex);
-            serialError(frame, "RANGE"); return;
+            WakeMotionExecutor();serialError(frame, "RANGE"); return;
         }
         xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY);
         VisualAlignmentFrame_t alignment = {value[0], value[1], value[2], ++alignmentFrameSequence};
@@ -554,7 +504,7 @@ static void serialDispatch(const SerialFrame &frame) {
                 lastIgnoredMs = now;
             }
         }
-        xSemaphoreGive(xAlignmentMotionMutex);
+        xSemaphoreGive(xAlignmentMotionMutex);WakeMotionExecutor();
     } else if (frame.starts("VISION", "DISC_POSITIONS")) {
         serialDiscPositions(frame);
     } else if (frame.is("VISION", "COLOR", 1)) {
@@ -571,6 +521,7 @@ static void serialDispatch(const SerialFrame &frame) {
             serialReply(frame, "OK");
             return;
         }
+        traceVisionFirstFrame(VisionStartMode::DISC_MATERIAL);
         discMaterialColor = static_cast<uint8_t>(color);
         serialReply(frame, "OK");
         serialDiscColorDecision(static_cast<uint8_t>(color));
@@ -582,19 +533,14 @@ static void serialDispatch(const SerialFrame &frame) {
                 || !serialUInt(frame.fields[4], cargo, 3) || cargo == 0) {
             serialError(frame, "RANGE"); return;
         }
-        Serial.printf("{RSP,VISION,FORCE_GRAB,ACK,%lu,%lu}\n", color, cargo);
-        // 手动强制入口不依赖相机和任务状态；先停闭环，避免与抓取中的底盘动作冲突。
-        setAlignmentEnabled(false);
-        GrabDiscMaterial(static_cast<uint8_t>(color), static_cast<uint8_t>(cargo), true);
-        // 强制入口不推进任务；REQUESTED 仅表示已调用并返回。
-        Serial.printf("{EVT,VISION,FORCE_GRAB,REQUESTED,%lu,%lu}\n", color, cargo);
+        if(!serialQueueDiscGrab(color,cargo,0,3,0,true))serialError(frame,"BUSY");
     } else if (frame.is("VISION", "CONFIRM", 0)) {
         if (serialDebugMode) { serialError(frame, "MODE"); return; }
         VisualCmd_t command = {"OK", 0, 0, 0};
         if (xVisualTaskQueue) xQueueSend(xVisualTaskQueue, &command, 0);
         serialReply(frame, "ACK");
     } else if (frame.is("VISION", "LIDAR_POSE", 0)) {
-        runLidarPoseAction(true, serialDebugMode);
+        SubmitLidarPoseAction(true,serialDebugMode);
     } else if (frame.starts("CFG", "GET") || frame.starts("CFG", "BEGIN")
                || frame.starts("CFG", "SET") || frame.starts("CFG", "COMMIT")) {
         const bool reading = frame.starts("CFG", "GET");
@@ -627,9 +573,11 @@ static void serialDispatch(const SerialFrame &frame) {
             currentPose = {values[0], values[1], values[2]};
             CalibrateH30MapHeading(currentPose.theta);
         }
+        uint32_t motionId=0;
+        if(!set){MotionRequest r;r.kind=MotionKind::GOTO;r.x=values[0];r.y=values[1];r.theta=values[2];motionId=serialPrepareMotion(frame,r);if(!motionId)return;}
         Serial.printf("{RSP,POSE,%s,ACK,%.3f,%.3f,%.3f}\n", frame.fields[2],
                       values[0], values[1], values[2]);
-        if (!set) GotoPose(values[0], values[1], values[2], true);
+        if(!set)LaunchMotion(motionId);
     } else if (frame.is("CHASSIS", "MOVE_POSITION", 4)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         const float minimum[] = {-3394.113f, -3394.113f, -360.0f, 1.0f};
@@ -638,18 +586,9 @@ static void serialDispatch(const SerialFrame &frame) {
         if (!serialFloats(frame, values, minimum, maximum, 4)) {
             serialError(frame, "RANGE"); return;
         }
-        // 关闭上电默认视觉对齐，再独占底盘运动锁，避免 PID 命令覆盖位置命令。
-        setAlignmentEnabled(false);
-        if (!xAlignmentMotionMutex
-                || xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) != pdTRUE) {
-            serialError(frame, "LOCK"); return;
-        }
-        Serial.printf("{RSP,CHASSIS,MOVE_POSITION,ACK,%.3f,%.3f,%.3f,%.3f}\n",
-                      values[0], values[1], values[2], values[3]);
-        const bool ok = MovePosition(values[0], values[1], values[2], values[3]);
-        xSemaphoreGive(xAlignmentMotionMutex);
-        Serial.println(ok ? "{EVT,CHASSIS,MOVE_POSITION,DONE,ESTIMATED}"
-                          : "{EVT,CHASSIS,MOVE_POSITION,FAILED}");
+        MotionRequest r;r.kind=MotionKind::POSITION;r.x=values[0];r.y=values[1];r.theta=values[2];r.speed=values[3];
+        const uint32_t id=serialPrepareMotion(frame,r);if(!id)return;
+        Serial.printf("{RSP,CHASSIS,MOVE_POSITION,ACK,%.3f,%.3f,%.3f,%.3f}\n",values[0],values[1],values[2],values[3]);LaunchMotion(id);
     } else if (frame.is("CHASSIS", "MOVE", 3)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         uint32_t direction = 0, stop = 0;
@@ -659,17 +598,18 @@ static void serialDispatch(const SerialFrame &frame) {
                 || !serialUInt(frame.fields[5], stop, 1)) {
             serialError(frame, "RANGE"); return;
         }
+        MotionRequest r;r.kind=MotionKind::VELOCITY;r.position=direction;r.speed=speed;r.force=stop;
+        const uint32_t id=serialPrepareMotion(frame,r);if(!id)return;
         Serial.printf("{RSP,CHASSIS,MOVE,ACK,%u,%.3f,%u}\n",
                       static_cast<unsigned>(direction), speed, static_cast<unsigned>(stop));
-        MovePose(direction, speed, stop != 0);
+        LaunchMotion(id);
     } else if (frame.is("ARM", "INIT_START", 0) || frame.is("ARM", "INIT_LOOK", 0)
             || frame.is("ARM", "INIT_LOOK2", 0)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
-        serialReply(frame, "ACK");
-        const bool ok = strcmp(frame.fields[2], "INIT_START") == 0
-            ? InitArm_start()
-            : (strcmp(frame.fields[2], "INIT_LOOK") == 0 ? InitArm_look() : InitArm_look2());
-        Serial.printf("{EVT,ARM,%s,%s}\n", frame.fields[2], ok ? "ISSUED" : "FAILED");
+        MotionRequest r;r.kind=MotionKind::ARM_POSE;
+        r.observation=strcmp(frame.fields[2],"INIT_START")==0?ArmObservation::START:
+            strcmp(frame.fields[2],"INIT_LOOK")==0?ArmObservation::LOOK:ArmObservation::LOOK2;
+        serialMotion(frame,r);
     } else if (frame.is("ARM", "MOVE1", 3) || frame.is("ARM", "MOVE2", 3)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         const bool first = strcmp(frame.fields[2], "MOVE1") == 0;
@@ -681,12 +621,12 @@ static void serialDispatch(const SerialFrame &frame) {
                     || (values[1] < 0 && values[1] != -1)))) {
             serialError(frame, "RANGE"); return;
         }
+        MotionRequest r;r.kind=MotionKind::ARM_RAW;r.speed=values[2];
+        if(first){r.high=values[0];r.length=values[1];}else{r.turret=values[0];r.pawl=values[1];}
+        const uint32_t id=serialPrepareMotion(frame,r);if(!id)return;
         Serial.printf("{RSP,ARM,%s,ACK,%.3f,%.3f,%.3f}\n", frame.fields[2],
                       values[0], values[1], values[2]);
-        const bool ok = first
-            ? MoveArm(values[0], values[1], -1, -1, values[2])
-            : MoveArm(-1, -1, values[0], values[1], values[2]);
-        Serial.printf("{EVT,ARM,%s,%s}\n", frame.fields[2], ok ? "ISSUED" : "FAILED");
+        LaunchMotion(id);
     } else if (frame.is("ARM", "SERVO", 2)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         uint32_t id = 0;
@@ -698,19 +638,16 @@ static void serialDispatch(const SerialFrame &frame) {
                                 id == 2 ? TURRET_CABLE_MAX_DEG : 135.0f)) {
             serialError(frame, "RANGE"); return;
         }
-        Serial.printf("{RSP,ARM,SERVO,ACK,%u,%.3f}\n", static_cast<unsigned>(id), angle);
-        if (id == 2) {
-            const bool ok = MoveArm(-1, -1, angle, -1, 150);
-            Serial.printf("{EVT,ARM,SERVO,%s}\n", ok ? "ISSUED" : "FAILED");
-        } else {
-            Servo_SetAngle(static_cast<uint8_t>(id), angle, 0, 0);
-        }
+        MotionRequest r;r.kind=id==2?MotionKind::ARM_RAW:MotionKind::SERVO_RAW;r.cargo=id;r.turret=angle;r.speed=150;
+        const uint32_t motionId=serialPrepareMotion(frame,r);if(!motionId)return;
+        Serial.printf("{RSP,ARM,SERVO,ACK,%u,%.3f}\n",static_cast<unsigned>(id),angle);LaunchMotion(motionId);
     } else if (frame.is("ARM", "ENABLE", 1)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         uint32_t enabled = 0;
         if (!serialUInt(frame.fields[3], enabled, 1)) { serialError(frame, "RANGE"); return; }
-        Serial.printf("{RSP,ARM,ENABLE,ACK,%u}\n", static_cast<unsigned>(enabled));
-        Emm_V5_En_Control_all(enabled);
+        MotionRequest r;r.kind=MotionKind::ENABLE;r.force=enabled;
+        const uint32_t id=serialPrepareMotion(frame,r);if(!id)return;
+        Serial.printf("{RSP,ARM,ENABLE,ACK,%u}\n",static_cast<unsigned>(enabled));LaunchMotion(id);
     } else if (frame.is("ARM", "TRANSFER", 2)) {
         serialTransfer(frame);
     } else if (frame.is("ARM", "RETRIEVE", 2)) {
@@ -718,12 +655,8 @@ static void serialDispatch(const SerialFrame &frame) {
     } else if (frame.is("ARM", "DEMO1", 0) || frame.is("ARM", "DEMO2", 0)
                || frame.is("ARM", "DEMO3", 0) || frame.is("ARM", "DEMO4", 0)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
-        serialReply(frame, "ACK");
-        const bool ok = strcmp(frame.fields[2], "DEMO1") == 0 ? DemoCargoToRoughArea()
-            : strcmp(frame.fields[2], "DEMO2") == 0 ? DemoStackCargoToWorkArea()
-            : strcmp(frame.fields[2], "DEMO3") == 0 ? DemoStackCargoToWorkArea3()
-            : DemoWorkAreaToCargo();
-        Serial.printf("{EVT,ARM,%s,%s}\n", frame.fields[2], ok ? "DONE" : "FAILED");
+        MotionRequest r;r.kind=strcmp(frame.fields[2],"DEMO4")==0?MotionKind::DEMO_RETRIEVE:MotionKind::DEMO_PLACE;
+        r.layer=strcmp(frame.fields[2],"DEMO3")==0?3:strcmp(frame.fields[2],"DEMO2")==0?2:1;serialMotion(frame,r);
     } else if (frame.count >= 3) {
         serialError(frame, serialKnownAction(frame) ? "FORMAT" : "UNKNOWN_ACTION");
     }

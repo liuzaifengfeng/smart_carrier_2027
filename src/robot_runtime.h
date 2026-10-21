@@ -56,33 +56,13 @@ constexpr float START_ZONE_HEADING = 180.0f;
 constexpr float DISC_AREA_HEADING = 90.0f;
 constexpr float COARSE_AREA_HEADING = 270.0f;
 constexpr float TEMP_AREA_HEADING = 180.0f;
-enum RobotState {
-    STATE_WAIT_START,    // 待机,等一键启动
-    STATE_READ_TASK,     // 读取任务码(二维码板 / 机载电脑)
-    STATE_SCAN_FAILED,   // 扫码重试耗尽，保持停车，不进入抓取流程
-    STATE_ROUTE_FAILED,  // 路径失败，不进入后续用户代码
-    STATE_ALIGN_FAILED,  // 自动对齐失败，停车等待处理
-    STATE_TIMEOUT_FAILED, // 总任务超时，停止并等待人工处理
-    STATE_TRANSFER_FAILED, // 搬运动作失败，保持停车等待处理
-    STATE_GRAB_ROUND1,   // 第一批: 转盘抓取 3 个物料
-    STATE_PLACE_COARSE1, // 第一批: 放到粗加工区
-    STATE_PLACE_TEMP1,   // 第一批: 放到暂存区
-    STATE_GRAB_ROUND2,   // 第二批: 转盘抓取
-    STATE_PLACE_COARSE2, // 第二批: 放到粗加工区
-    STATE_STACK_TEMP2,   // 第二批: 码垛到暂存区(叠在第一批上)
-    STATE_RETURN_HOME,   // 回启停区,上报完成统计
-    STATE_DONE
-};
+#include "robot_state.h"
 
-enum StartZone {
-    START_ZONE_UNKNOWN = 0,
-    START_ZONE_1 = 1,
-    START_ZONE_2 = 2
-};
+
 
 enum class NodePathState { IDLE, WAITING, RECEIVING, RECEIVED, RUNNING, DONE, FAILED };
 
-enum class AutoAlignmentState { IDLE, WAITING, DONE, FAILED };
+
 
 typedef struct {
     float angleDeg;
@@ -107,7 +87,14 @@ extern volatile int  roundProgress;
 extern volatile bool firstDiscGrabReady;
 extern volatile bool discMessageResumeRequested; // look3 实测到位后，排空此前旧帧再开放圆盘抓取。
 extern volatile bool enableRun;
+extern volatile bool alignmentEnabled;
+extern volatile bool discMaterialActive;
+extern uint8_t discMaterialColor;
 extern QueueHandle_t xAlignmentQueue;
+extern NodePathState nodePathState;
+extern portMUX_TYPE nodePathMux;
+extern uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH];
+extern size_t nodePathLen;
 extern SemaphoreHandle_t xAlignmentMotionMutex;
 extern QueueHandle_t xVisualTaskQueue;
 extern TimerHandle_t xHomeTimer;
@@ -117,6 +104,8 @@ bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode, float finalHeadi
 AutoAlignmentState getAutoAlignmentState();
 void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false, VisionStartMode owner = VisionStartMode::NONE, bool onlyOwner = false);
 bool runLidarPoseAction(bool fromCommand = false, bool allowRepeat = false);
+uint32_t SubmitLidarPoseAction(bool fromCommand=false,bool allowRepeat=false);
+void CompleteLidarPose(bool success,bool debug);
 bool updateDisplay(const char *commandType, const char *displayType, const char *content);
 void requestVisionStart(VisionStartMode mode);
 void requestVisionStop(VisionStartMode mode);

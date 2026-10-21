@@ -65,6 +65,10 @@ void GotoPose(float x, float y, float theta, bool isRelative);
  * @return true 命令已下发并等待结束（开环估计），false 被取消或请求无法用单段圆弧表示。
  */
 bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)() = nullptr);
+bool BeginPositionMove(float x,float y,float theta,float speed);
+void TickPositionMove();
+bool PositionMoveActive();
+void CancelPositionMove();
 // 扫码直行：用四轮编码器记录完整行程或提前停车后的实际行程。
 bool MoveScanPosition(float distance,float speed,bool (*shouldStop)() = nullptr);
 bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t searchRpm, bool (*received)());

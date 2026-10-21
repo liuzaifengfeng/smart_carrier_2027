@@ -2,6 +2,7 @@
 #include "chassis.h"
 #include "serial_frame.h"
 #include "material_transfer.h"
+#include "motion_executor.h"
 #include "generated_parameter_defaults.h"
 #include <math.h>
 #include <float.h>
@@ -157,6 +158,12 @@ void initialize() {
     registerReverseMaterialDelays();
     // 角点 PID 最后追加，保留既有参数编号。
     RegisterCornerAlignmentParameters();
+    // 只追加；0 保持原有到站展开与标定计时，实车验证后再逐项启用。
+    RegisterRuntimeFloat("运动执行/look末段提前量(mm)",MOTION_LOOK_LEAD_MM,0,FLT_MAX);
+    RegisterRuntimeFloat("运动执行/look2末段提前量(mm)",MOTION_LOOK2_LEAD_MM,0,FLT_MAX);
+    RegisterRuntimeUInt("运动执行/机械臂反馈完成",ARM_FEEDBACK_ENABLED,0,1);
+    RegisterRuntimeUInt("运动执行/反馈后夹持保持(ms)",ARM_GRIP_HOLD_MS,0,UINT32_MAX);
+    RegisterRuntimeUInt("运动执行/反馈后释放保持(ms)",ARM_RELEASE_HOLD_MS,0,UINT32_MAX);
 }
 
 bool parseUnsigned(const char *text, uint32_t &value) {

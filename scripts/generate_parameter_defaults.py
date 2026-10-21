@@ -42,6 +42,9 @@ def supported_names():
     names.update("标定/" + field for field in
                  ("X脉冲每毫米", "Y脉冲每毫米", "旋转脉冲每度",
                   "升降脉冲每毫米", "伸缩脉冲每毫米"))
+    names.update("运动执行/" + field for field in
+                 ("look末段提前量(mm)", "look2末段提前量(mm)", "机械臂反馈完成",
+                  "反馈后夹持保持(ms)", "反馈后释放保持(ms)"))
     return names
 
 

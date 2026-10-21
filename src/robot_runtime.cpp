@@ -1,6 +1,7 @@
 #include "robot_runtime.h"
 #include "alignment_start_policy.h"
 #include "h30_usb.h"
+#include "motion_executor.h"
 
 // ================= 基础配置 =================
 
@@ -80,39 +81,10 @@ static bool executeNodePathWithStatus(const uint8_t *path, size_t count, float f
  * 3. 调用者必须检查返回值，失败时不能继续用户代码。
  * 等待仍受现有总任务超时保护，不再固定等待 10 秒。
  */
-bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode, float finalHeading) {
-    portENTER_CRITICAL(&nodePathMux);
-    nodePathState = NodePathState::WAITING;
-    nodePathLen = 0;
-    portEXIT_CRITICAL(&nodePathMux);
-    Serial.println("{EVT,NAV,ROUTE_WAITING}");
-    Serial.printf("{EVT,NAV,ROUTE_REQUEST,%u,%u}\n", startNode, endNode);
-
-    uint8_t path[MAX_NODE_PATH_LENGTH];
-    size_t count = 0;
-    for (;;) {
-        portENTER_CRITICAL(&nodePathMux);
-        const bool received = nodePathState == NodePathState::RECEIVED;
-        if (received) {
-            count = nodePathLen;
-            memcpy(path, nodePathBuffer, count * sizeof(path[0]));
-            nodePathState = NodePathState::RUNNING;
-        }
-        portEXIT_CRITICAL(&nodePathMux);
-        if (received) break;
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
-
-    bool success = false;
-    if (path[0] != startNode || path[count - 1] != endNode) {
-        Serial.println("{EVT,NAV,ROUTE_FAILED,ENDPOINT}");
-    } else {
-        success = executeNodePathWithStatus(path, count, finalHeading);
-    }
-    portENTER_CRITICAL(&nodePathMux);
-    nodePathState = success ? NodePathState::DONE : NodePathState::FAILED;
-    portEXIT_CRITICAL(&nodePathMux);
-    return success;
+bool requestAndMoveNodePath(uint8_t startNode,uint8_t endNode,float finalHeading) {
+    MotionRequest request;request.kind=MotionKind::NAVIGATE;
+    request.startNode=startNode;request.endNode=endNode;request.theta=finalHeading;
+    return WaitMotion(SubmitMotion(request));
 }
 
 QueueHandle_t xAlignmentQueue = NULL;
@@ -120,9 +92,37 @@ SemaphoreHandle_t xAlignmentMotionMutex = NULL;
 uint32_t alignmentFrameSequence = 0; // 受运动锁保护，用于发现最新帧队列覆盖造成的丢帧。
 VisionStartMode alignmentOwner = VisionStartMode::NONE; // 受运动锁保护。
 volatile bool alignmentEnabled = false;
+bool alignmentStopPending=false;
 AutoAlignmentState autoAlignmentState = AutoAlignmentState::IDLE;
 uint32_t autoAlignmentStartedMs = 0;
 uint32_t alignmentGeneration = 0; // 受运动锁保护，丢弃跨启停周期的已出队帧。
+
+namespace {
+const char *visionNames[]={"DISC","DISC_MATERIAL","WORK_AREA","WORK_AREA_LOADED","CORNER"};
+bool visionSpanActive[5]={},visionFirstFrame[5]={};
+portMUX_TYPE visionTraceMux=portMUX_INITIALIZER_UNLOCKED;
+void traceVision(VisionStartMode mode,bool start) {
+    if(mode==VisionStartMode::NONE)mode=VisionStartMode::DISC;
+    const uint8_t index=static_cast<uint8_t>(mode);
+    portENTER_CRITICAL(&visionTraceMux);
+    const bool wasActive=visionSpanActive[index],wasFirst=visionFirstFrame[index];
+    visionSpanActive[index]=start;visionFirstFrame[index]=start;
+    portEXIT_CRITICAL(&visionTraceMux);
+    // 未收到首帧便结束会话时不伪造首帧耗时，统计脚本保留该未完成区间。
+    if(wasFirst)Serial.printf("{EVT,MOTION,ERROR,0,%lu,VISION_NO_FRAME_%s}\n",static_cast<unsigned long>(millis()),visionNames[index]);
+    if(wasActive)Serial.printf("{EVT,MOTION,SPAN,0,%lu,VISION_WAIT_%s,END}\n",static_cast<unsigned long>(millis()),visionNames[index]);
+    if(start) {
+        Serial.printf("{EVT,MOTION,SPAN,0,%lu,VISION_WAIT_%s,BEGIN}\n",static_cast<unsigned long>(millis()),visionNames[index]);
+        Serial.printf("{EVT,MOTION,SPAN,0,%lu,VISION_FIRST_FRAME_%s,BEGIN}\n",static_cast<unsigned long>(millis()),visionNames[index]);
+    }
+}
+void traceVisionFirstFrame(VisionStartMode mode) {
+    if(mode==VisionStartMode::NONE)mode=VisionStartMode::DISC;
+    const uint8_t index=static_cast<uint8_t>(mode);
+    portENTER_CRITICAL(&visionTraceMux);const bool pending=visionFirstFrame[index];visionFirstFrame[index]=false;portEXIT_CRITICAL(&visionTraceMux);
+    if(pending)Serial.printf("{EVT,MOTION,SPAN,0,%lu,VISION_FIRST_FRAME_%s,END}\n",static_cast<unsigned long>(millis()),visionNames[index]);
+}
+}
 
 AutoAlignmentState getAutoAlignmentState() {
     if (!xAlignmentMotionMutex) return AutoAlignmentState::FAILED;
@@ -156,20 +156,23 @@ void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic, VisionSt
                 return;
             }
         }
+        if(alignmentEnabled)traceVision(alignmentOwner,false);
+        alignmentStopPending=alignmentStopPending||alignmentEnabled||enable;
         alignmentEnabled = false;
         alignmentOwner = enable ? owner : VisionStartMode::NONE;
         ++alignmentGeneration;
         if (xAlignmentQueue != NULL) xQueueReset(xAlignmentQueue);
-        OmniMove(0.0f, 0.0f, 0.0f, 0);
         ResetDiscAlignmentPid();
         ResetAlignmentWait();
         // 手动停止仍取消业务等待；重复启动已在上方保护自动状态。
         autoAlignmentState = automatic ? AutoAlignmentState::WAITING : AutoAlignmentState::IDLE;
         autoAlignmentStartedMs = millis();
         alignmentEnabled = enable;
+        if(enable)traceVision(alignmentOwner,true);
         xSemaphoreGive(xAlignmentMotionMutex);
     }
 
+    WakeMotionExecutor();
     if (acknowledge) {
         Serial.println(enable ? "{RSP,VISION,ALIGN_START,OK}" : "{RSP,VISION,ALIGN_STOP,OK}");
     }
@@ -184,175 +187,87 @@ SemaphoreHandle_t xLidarPoseMutex = NULL;   // 防止自动流程和串口重复
 // 执行雷达扫描位姿并统一发送串口应答。
 // Release 成功后缓存结果，防止机载电脑重试导致相对位移累加。
 // Debug 手动调试可显式允许重做，不读写 Release 的完成记录。
-bool runLidarPoseAction(bool fromCommand, bool allowRepeat) {
-    static bool releasePoseCompleted = false; // 当前 Release 流程每次开机只创建一次。
-    static bool releasePoseInitialized = false;
-    // 自动流程须接续已经开始的雷达动作；串口重试仍立即返回BUSY。
-    if (xLidarPoseMutex == NULL || xSemaphoreTake(xLidarPoseMutex, fromCommand ? 0 : portMAX_DELAY) != pdTRUE) {
-        Serial.println(fromCommand ? "{RSP,VISION,LIDAR_POSE,ERR,BUSY}" : "{EVT,VISION,LIDAR_POSE_FAILED,BUSY}");
-        return false;
+namespace {
+bool releasePoseCompleted=false,releasePoseInitialized=false;
+uint32_t releasePoseId=0;
+}
+void CompleteLidarPose(bool success,bool debug){if(!debug&&success)releasePoseCompleted=true;}
+uint32_t SubmitLidarPoseAction(bool fromCommand,bool allowRepeat) {
+    if(!xLidarPoseMutex||xSemaphoreTake(xLidarPoseMutex,portMAX_DELAY)!=pdTRUE)return 0;
+    if(!allowRepeat&&releasePoseCompleted) {
+        if(fromCommand){Serial.println("{RSP,VISION,LIDAR_POSE,OK}");Serial.println("{EVT,VISION,LIDAR_POSE_DONE}");}
+        xSemaphoreGive(xLidarPoseMutex);return releasePoseId;
     }
-    if (!allowRepeat && releasePoseCompleted) {
-        if (fromCommand) Serial.println("{RSP,VISION,LIDAR_POSE,OK}");
-        Serial.println("{EVT,VISION,LIDAR_POSE_DONE}");
-        xSemaphoreGive(xLidarPoseMutex);
-        return true;
+    if(!allowRepeat&&releasePoseId&&!GetMotionStatus(releasePoseId).complete()) {
+        if(fromCommand)Serial.println("{RSP,VISION,LIDAR_POSE,ERR,BUSY}");
+        xSemaphoreGive(xLidarPoseMutex);return fromCommand?0:releasePoseId;
     }
-    // 初始化与相对运动由同一把锁串行化，避免另一任务中途覆盖MovePosition的起点。
-    if (!allowRepeat && !releasePoseInitialized) {
-        switch (currentStartZone) {
-        case START_ZONE_1:
-            currentPose = {2250, 150, START_ZONE_HEADING};
-            break;
-        case START_ZONE_2:
-            currentPose = {150, 150, START_ZONE_HEADING};
-            break;
-        default:
-            xSemaphoreGive(xLidarPoseMutex);
-            return false;
+    if(MotionExecutorActive()){if(fromCommand)Serial.println("{RSP,VISION,LIDAR_POSE,ERR,BUSY}");xSemaphoreGive(xLidarPoseMutex);return 0;}
+    if(!allowRepeat&&!releasePoseInitialized) {
+        switch(currentStartZone) {
+        case START_ZONE_1: currentPose={2250,150,START_ZONE_HEADING};break;
+        case START_ZONE_2: currentPose={150,150,START_ZONE_HEADING};break;
+        default: xSemaphoreGive(xLidarPoseMutex);return 0;
         }
-        CalibrateH30MapHeading(currentPose.theta);
-        releasePoseInitialized = true;
+        CalibrateH30MapHeading(currentPose.theta);releasePoseInitialized=true;
     }
-    Serial.println(fromCommand ? "{RSP,VISION,LIDAR_POSE,ACK}" : "{EVT,VISION,LIDAR_POSE_RUNNING}");
-    const bool ok = PrepareLidarScanPose(static_cast<uint8_t>(currentStartZone));
-    if (ok && !allowRepeat) releasePoseCompleted = true;
-    Serial.println(ok ? "{EVT,VISION,LIDAR_POSE_DONE}" : "{EVT,VISION,LIDAR_POSE_FAILED}");
-    xSemaphoreGive(xLidarPoseMutex);
-    return ok;
+    MotionRequest request;request.kind=MotionKind::LIDAR_POSE;request.zone=static_cast<uint8_t>(currentStartZone);request.debug=allowRepeat;
+    strcpy(request.category,"VISION");strcpy(request.command,"LIDAR_POSE");
+    // ACK 先于通知工作任务：提交在串口应答之后，完成事件由执行器发出。
+    if(fromCommand)Serial.println("{RSP,VISION,LIDAR_POSE,ACK}");
+    const uint32_t id=SubmitMotion(request);if(!allowRepeat)releasePoseId=id;
+    if(!fromCommand&&id)Serial.println("{EVT,VISION,LIDAR_POSE_RUNNING}");
+    xSemaphoreGive(xLidarPoseMutex);return id;
+}
+bool runLidarPoseAction(bool fromCommand,bool allowRepeat){
+    const uint32_t id=SubmitLidarPoseAction(fromCommand,allowRepeat);
+    // 成功缓存独立于最近八个作业的历史，不能因历史淘汰而重复相对移动。
+    return (!allowRepeat&&releasePoseCompleted)||WaitMotion(id);
 }
 
 // ================= 视觉闭环对齐任务 =================
-void Task_VisualAlignment(void *pvParameters) {
-    VisualAlignmentFrame_t alignment;
-    bool alignedReported = false;
-    bool feedbackActive = false;
-    uint32_t lastFeedbackMs = 0;
-    uint32_t lastLogMs = 0;
-    uint32_t previousGeneration = 0;
-    uint32_t previousFrameSequence = 0;
-
-    for (;;) {
-        xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY);
-        const uint32_t generation = alignmentGeneration;
-        if (generation != previousGeneration) {
-            feedbackActive = false;
-            alignedReported = false;
-            lastFeedbackMs = 0;
-            previousGeneration = generation;
-            previousFrameSequence = 0;
-        }
-        if (autoAlignmentState == AutoAlignmentState::WAITING
-                && millis() - autoAlignmentStartedMs >= AUTO_ALIGN_TIMEOUT_MS) {
-            OmniMove(0.0f, 0.0f, 0.0f, 0);
-            ResetDiscAlignmentPid();
-            ResetAlignmentWait();
-            alignmentEnabled = false;
-            autoAlignmentState = AutoAlignmentState::FAILED;
-            Serial.println("{EVT,VISION,ALIGN_FAILED,TIMEOUT}");
-        }
-        xSemaphoreGive(xAlignmentMotionMutex);
-        if (!alignmentEnabled) {
-            feedbackActive = false;
-            alignedReported = false;
-            lastFeedbackMs = 0;
-            vTaskDelay(pdMS_TO_TICKS(20));
-            continue;
-        }
-
-        if (xQueueReceive(
-                xAlignmentQueue, &alignment,
-                pdMS_TO_TICKS(ALIGN_FEEDBACK_TIMEOUT_MS)) != pdTRUE) {
-            if (!alignmentEnabled) {
-                continue;
-            }
-            /* 临时禁用 300 ms 断流停车/失败分支，保留 15 秒首次对齐总超时。
-             * 无新反馈时会保持最后一次轮速；恢复保护时取消本段注释。
-            if (feedbackActive
-                    && millis() - lastFeedbackMs >= ALIGN_FEEDBACK_TIMEOUT_MS) {
-                // 视觉断流时立即撤销所有速度，禁止沿最后一次命令继续运动。
-                if (xSemaphoreTake(
-                        xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
-                    if (generation != alignmentGeneration || !alignmentEnabled) {
-                        xSemaphoreGive(xAlignmentMotionMutex);
-                        continue;
-                    }
-                    OmniMove(0.0f, 0.0f, 0.0f, 0);
-                    ResetDiscAlignmentPid();
-                    ResetAlignmentWait();
-                    if (autoAlignmentState == AutoAlignmentState::WAITING) {
-                        autoAlignmentState = AutoAlignmentState::FAILED;
-                        alignmentEnabled = false;
-                    }
-                    xSemaphoreGive(xAlignmentMotionMutex);
-                }
-                Serial.println("{EVT,VISION,ALIGN_FAILED,TIMEOUT}");
-                feedbackActive = false;
-                alignedReported = false;
-                lastFeedbackMs = 0;
-            }
-            */
-            continue;
-        }
-
-        const uint32_t nowMs = millis();
-        float dtSeconds = 0.05f;
-        if (lastFeedbackMs != 0) {
-            dtSeconds = static_cast<float>(nowMs - lastFeedbackMs) / 1000.0f;
-        }
-        lastFeedbackMs = nowMs;
-        feedbackActive = true;
-
-        bool aligned = false;
-        if (xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
-            if (alignmentEnabled && generation == alignmentGeneration) {
-                // 丢帧或长时间未处理反馈时，不把前后帧累计为连续 2 帧。
-                if ((previousFrameSequence != 0
-                        && alignment.sequence != previousFrameSequence + 1)
-                        || dtSeconds >= ALIGN_FEEDBACK_TIMEOUT_MS / 1000.0f) {
-                    ResetAlignmentWait();
-                }
-                previousFrameSequence = alignment.sequence;
-                const auto mode = alignmentOwner == VisionStartMode::NONE
-                    ? VisionStartMode::DISC : alignmentOwner;
-                aligned = WaitForAlignment(mode,
-                    alignment.angleDeg, alignment.visualX, alignment.visualY,
-                    dtSeconds, ALIGN_PID_MAX_SPEED_RPM
-                );
-                if (aligned && autoAlignmentState == AutoAlignmentState::WAITING) {
-                    // 锁存连续 2 帧达标结果供业务流程读取；连续闭环保持开启，直到显式停止。
-                    autoAlignmentState = AutoAlignmentState::DONE;
-                    Serial.println("{EVT,VISION,ALIGN_DONE}");
-                    alignedReported = true;
-                }
-            }
-            xSemaphoreGive(xAlignmentMotionMutex);
-        }
-
-        if (aligned) {
-            // 已停车并完成 PID 复位；之后即使上位机停止发送也不报断流。
-            feedbackActive = false;
-            if (!alignedReported) {
-                Serial.printf(
-                    "[Align] OK: angle=%.2f deg, x=%.1f, y=%.1f\n",
-                    alignment.angleDeg, alignment.visualX, alignment.visualY
-                );
-                Serial.println("{EVT,VISION,ALIGN_DONE}");
-                alignedReported = true;
-            }
-            continue;
-        }
-        alignedReported = false;
-
-        if (nowMs - lastLogMs >= ALIGN_LOG_INTERVAL_MS) {
-            Serial.printf(
-                "[Align PID] angle=%.2f deg, x=%.1f, y=%.1f, dt=%.3f s\n",
-                alignment.angleDeg, alignment.visualX,
-                alignment.visualY, dtSeconds
-            );
-            lastLogMs = nowMs;
-        }
+void TickVisualAlignment() {
+    static bool alignedReported=false,feedbackActive=false;
+    static uint32_t lastFeedbackMs=0,lastLogMs=0,previousGeneration=0,previousFrameSequence=0;
+    if(!xAlignmentMotionMutex)return;
+    xSemaphoreTake(xAlignmentMotionMutex,portMAX_DELAY);
+    const uint32_t generation=alignmentGeneration;
+    if(alignmentStopPending){OmniMove(0,0,0,0);alignmentStopPending=false;}
+    if(generation!=previousGeneration) {
+        feedbackActive=alignedReported=false;lastFeedbackMs=0;
+        previousGeneration=generation;previousFrameSequence=0;
     }
+    if(autoAlignmentState==AutoAlignmentState::WAITING&&millis()-autoAlignmentStartedMs>=AUTO_ALIGN_TIMEOUT_MS) {
+        OmniMove(0,0,0,0);ResetDiscAlignmentPid();ResetAlignmentWait();
+        traceVision(alignmentOwner,false);alignmentEnabled=false;autoAlignmentState=AutoAlignmentState::FAILED;
+        Serial.println("{EVT,VISION,ALIGN_FAILED,TIMEOUT}");
+    }
+    if(!alignmentEnabled){feedbackActive=alignedReported=false;lastFeedbackMs=0;xSemaphoreGive(xAlignmentMotionMutex);return;}
+    VisualAlignmentFrame_t alignment;
+    // 串口/视觉接收只发布最新反馈；此处与导航在同一运动任务内下发底盘命令。
+    if(xQueueReceive(xAlignmentQueue,&alignment,0)!=pdTRUE){xSemaphoreGive(xAlignmentMotionMutex);return;}
+    const uint32_t now=millis();
+    const float dt=lastFeedbackMs?(now-lastFeedbackMs)*.001f:.05f;
+    lastFeedbackMs=now;feedbackActive=true;
+    if((previousFrameSequence&&alignment.sequence!=previousFrameSequence+1)||dt>=ALIGN_FEEDBACK_TIMEOUT_MS*.001f)ResetAlignmentWait();
+    previousFrameSequence=alignment.sequence;
+    const auto mode=alignmentOwner==VisionStartMode::NONE?VisionStartMode::DISC:alignmentOwner;
+    traceVisionFirstFrame(mode);
+    const bool aligned=WaitForAlignment(mode,alignment.angleDeg,alignment.visualX,alignment.visualY,dt,ALIGN_PID_MAX_SPEED_RPM);
+    if(aligned&&autoAlignmentState==AutoAlignmentState::WAITING)autoAlignmentState=AutoAlignmentState::DONE;
+    if(aligned&&!alignedReported)Serial.println("{EVT,VISION,ALIGN_DONE}");
+    alignedReported=aligned;
+    if(aligned)feedbackActive=false;
+    else if(now-lastLogMs>=ALIGN_LOG_INTERVAL_MS) {
+        Serial.printf("[Align] running: angle=%.2f deg, x=%.1f, y=%.1f, dt=%.3f\n",alignment.angleDeg,alignment.visualX,alignment.visualY,dt);
+        lastLogMs=now;
+    }
+    // 沿用项目当前设置：300ms 断流停车分支未启用，不扩大故障判定范围。
+    xSemaphoreGive(xAlignmentMotionMutex);
+}
+void Task_VisualAlignment(void *) {
+    // 兼容旧任务符号；正常启动不再创建第二个底盘发令任务。
+    for(;;){WakeMotionExecutor();vTaskDelay(pdMS_TO_TICKS(20));}
 }
 
 // 通过 Serial0 通知机载电脑显示。
@@ -388,6 +303,7 @@ static void requestVisionFunction(VisionStartMode mode, bool start) {
     if (mode == VisionStartMode::DISC_MATERIAL) {
         discMessageResumeRequested = false;
         discMaterialActive = start;
+        traceVision(mode,start);
         discMaterialColor = 0;
     }
     const char *name = nullptr;
@@ -426,6 +342,7 @@ void requestVisionStop(VisionStartMode mode) { requestVisionFunction(mode, false
 void vHomeTimerCallback(TimerHandle_t xTimer) {
     if (currentState != STATE_DONE) {
         taskMotionAborted = true;
+        CancelMotion();
         currentState = STATE_TIMEOUT_FAILED;
         firstDiscGrabReady = false;
         requestVisionStop(VisionStartMode::DISC_MATERIAL);

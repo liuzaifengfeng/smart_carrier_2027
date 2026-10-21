@@ -22,6 +22,16 @@ _REVERSE_DELAY_NAMES = tuple(f"{DELAY_PREFIX}{group}/{step}(ms)"
 DELAY_NAMES = _LEGACY_DELAY_NAMES + _REVERSE_DELAY_NAMES
 
 
+def action_delay_active(name, feedback=False):
+    """反馈模式仅保留显式等待；移动结束与夹持/释放保持使用执行层参数。"""
+    if not feedback:
+        return True
+    group, step = name.removeprefix(DELAY_PREFIX).rsplit("/", 1)
+    step = step.removesuffix("(ms)")
+    return step in ({"取料稳定", "放料平移", "放料稳定"}
+                    if group in TRANSFER_GROUPS[1:] else {"取料稳定", "放料稳定"})
+
+
 def _numbers(count):
     return r"\s*,\s*".join([r"([0-9]+)"] * count)
 

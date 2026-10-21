@@ -3,6 +3,7 @@
 #include "h30_usb.h"
 #include "field_geometry.h"
 #include "node_position_hardware.h"
+#include "motion_executor.h"
 
 namespace {
 using namespace continuous;
@@ -15,7 +16,7 @@ uint32_t receivedMask=0,referenceVersion=0,failedVersion=0;
 float initialHeading=0;
 bool configured=false,needsCalibration=false,consumed=false;
 bool policyReceived=false;
-TaskHandle_t worker=nullptr;
+bool initialized=false;
 SemaphoreHandle_t configurationLock=nullptr;
 struct ConfigurationGuard {
     bool held;
@@ -71,80 +72,34 @@ const char *headingSample(float &heading,uint32_t &sampleMs,H30Attitude *motion)
     if(millis()-sampleMs>100)return "IMU_STALE";
     return nullptr;
 }
-void task(void *) {
-    for(;;) {
-        ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
-        const uint32_t jobId=route.config.id;
-        const auto job=snapshot();
-        bool locked=xAlignmentMotionMutex&&xSemaphoreTake(xAlignmentMotionMutex,pdMS_TO_TICKS(100))==pdTRUE;
-        const char *failure=locked?nullptr:"LOCK";
-        if(locked)hardStop(); // 起跑前明确停止，不把默认零结构体当成已下发零轮速。
-        Tracker tracker;float actual=initialHeading;uint32_t sampleMs=0;
-        if(!failure&&!job.formal)failure=headingSample(actual,sampleMs);
-        tracker.begin(route,actual);
-        tracker.requireInertial=true;
-        tracker.commit(WheelCommand{},millis());
-        if(locked)tracker.estimated={currentPose.x,currentPose.y};
-        if(!failure&&!job.formal&&fabsf(turn(actual,route.config.startHeading))>5)failure="START_HEADING";
-        if(job.formal&&!failure) {
-            node_position::Result result;result.estimated=tracker.estimated;result.heading=actual;
-            failure=RunPositionNodeRoute(route,formalSettings,referenceVersion,stopped,result);
-            tracker.estimated=result.estimated;tracker.s=result.s;actual=result.heading;
-        }
-        uint32_t started=millis(),previousCycle=started,integratedAt=started,lastTelemetry=0;
-        uint32_t timeout=static_cast<uint32_t>((route.plannedSeconds*2+5)*1000);
-        TickType_t wake=xTaskGetTickCount();bool success=job.formal&&!failure;
-        while(!job.formal&&!failure&&!success) {
-            uint32_t now=millis();
-            if(stopped()){failure="STOPPED";break;}
-            if(taskMotionAborted){failure="ABORTED";break;}
-            if(!job.formal&&now-snapshot().heartbeatMs>1500){failure="LINK_TIMEOUT";break;}
-            if(now-started>timeout){failure="TIMEOUT";break;}
-            H30Attitude motion;
-            failure=headingSample(actual,sampleMs,&motion);if(failure)break;
-            tracker.observeMotion(motion);
-            float dt=now==started?0.04f:(now-previousCycle)/1000.0f;previousCycle=now;
-            if(dt>0.120f||dt<=0){failure="CONTROL_OVERRUN";break;}
-            tracker.integrate(route,actual,(now-integratedAt)/1000.0f);integratedAt=now;
-            failure=field::check(tracker.estimated.x,tracker.estimated.y,actual,0);
-            if(failure)break; // 仅对估算位置兜底，不能代替实际定位。
-            Output out=tracker.update(route,actual,dt,sampleMs);
-            if(out.failure){failure=out.failure;break;}
-            if(out.finished){success=true;break;}
-            failure=sendWheels(out.wheels,now);if(failure)break;
-            // 上一组指令一直持续到新同步触发生效；将组间延时计入距离。
-            uint32_t synced=millis();
-            tracker.integrate(route,actual,(synced-integratedAt)/1000.0f);integratedAt=synced;
-            tracker.commit(out.wheels,synced);
-            portENTER_CRITICAL(&trialMux);
-            status.s=tracker.s;status.x=tracker.estimated.x;status.y=tracker.estimated.y;
-            status.reference=out.reference;status.heading=actual;status.error=out.error;status.cycleMs=dt*1000;
-            for(int i=0;i<4;++i)status.rpm[i]=out.wheels.rpm[i];
-            portEXIT_CRITICAL(&trialMux);
-            if(now-lastTelemetry>=200){telemetry(snapshot());
-                Serial.printf("{EVT,NAV,%s,%lu,%s}\n",job.formal?"ROUTE_PHASE":"TRIAL_PHASE",static_cast<unsigned long>(jobId),tracker.stage);
-                lastTelemetry=now;}
-            vTaskDelayUntil(&wake,pdMS_TO_TICKS(40));
-        }
-        if(locked) {
-            hardStop();
-            tracker.integrate(route,actual,(millis()-integratedAt)/1000.0f);
-            currentPose={tracker.estimated.x,tracker.estimated.y,wrap(actual)};
-            xSemaphoreGive(xAlignmentMotionMutex);
-        }
-        if(!success){needsCalibration=true;failedVersion=referenceVersion;}
-        portENTER_CRITICAL(&trialMux);
-        status.x=tracker.estimated.x;status.y=tracker.estimated.y;status.heading=actual;
-        status.s=tracker.s;status.reason=success?"ESTIMATED":failure;
-        for(int i=0;i<4;++i)status.rpm[i]=0;
-        // 先保持运行态直到完成事件打印，避免新 BEGIN 覆盖旧任务资源。
-        portEXIT_CRITICAL(&trialMux);
-        Serial.printf("{EVT,NAV,%s,%lu,%s,%s,%.2f,%.2f,%.3f}\n",
-            job.formal?"ROUTE_RESULT":"TRIAL_RESULT",static_cast<unsigned long>(jobId),success?"DONE":"FAILED",success?"ESTIMATED":failure,
-            tracker.estimated.x,tracker.estimated.y,actual);
-        if(job.formal&&job.async)Serial.printf("{EVT,NAV,%s,%s}\n",success?"ROUTE_DONE":"ROUTE_FAILED",success?"ESTIMATED":failure);
-        portENTER_CRITICAL(&trialMux);status.state=success?DONE:FAILED;portEXIT_CRITICAL(&trialMux);
-    }
+struct Execution {
+    Tracker tracker;
+    Snapshot job;
+    node_position::Result position;
+    bool active=false,success=false;
+    const char *failure=nullptr;
+    float actual=0;
+    uint32_t sampleMs=0,started=0,previousCycle=0,integratedAt=0,lastTelemetry=0,timeout=0,due=0;
+} execution;
+void finishExecution() {
+    auto &e=execution;
+    hardStop();
+    if(e.job.formal) {
+        e.tracker.estimated=e.position.estimated;e.tracker.s=e.position.s;e.actual=e.position.heading;
+    } else e.tracker.integrate(route,e.actual,(millis()-e.integratedAt)/1000.0f);
+    currentPose={e.tracker.estimated.x,e.tracker.estimated.y,wrap(e.actual)};
+    if(!e.success){needsCalibration=true;failedVersion=referenceVersion;}
+    portENTER_CRITICAL(&trialMux);
+    status.x=e.tracker.estimated.x;status.y=e.tracker.estimated.y;status.heading=e.actual;
+    status.s=e.tracker.s;status.reason=e.success?"ESTIMATED":e.failure;
+    for(int i=0;i<4;++i)status.rpm[i]=0;
+    portEXIT_CRITICAL(&trialMux);
+    Serial.printf("{EVT,NAV,%s,%lu,%s,%s,%.2f,%.2f,%.3f}\n",
+        e.job.formal?"ROUTE_RESULT":"TRIAL_RESULT",static_cast<unsigned long>(e.job.id),e.success?"DONE":"FAILED",e.success?"ESTIMATED":e.failure,
+        e.tracker.estimated.x,e.tracker.estimated.y,e.actual);
+    if(e.job.formal&&e.job.async)Serial.printf("{EVT,NAV,%s,%s}\n",e.success?"ROUTE_DONE":"ROUTE_FAILED",e.success?"ESTIMATED":e.failure);
+    portENTER_CRITICAL(&trialMux);status.state=e.success?DONE:FAILED;portEXIT_CRITICAL(&trialMux);
+    e.active=false;
 }
 bool adjacent(uint8_t a,uint8_t b) {
     int ar=a/5,br=b/5,ac=a%5,bc=b%5;if(ar%2)ac=4-ac;if(br%2)bc=4-bc;
@@ -153,17 +108,15 @@ bool adjacent(uint8_t a,uint8_t b) {
 }
 
 bool ContinuousTrialInit() {
-    if(worker)return true;
     if(!configurationLock)configurationLock=xSemaphoreCreateMutex();
-    if(!configurationLock)return false;
-    return xTaskCreate(task,"ContinuousTrial",8192,nullptr,6,&worker)==pdPASS;
+    initialized=configurationLock!=nullptr;return initialized;
 }
 bool ContinuousTrialActive(){auto v=snapshot();return v.state==RUNNING||v.state==STOPPING;}
 const char *ContinuousTrialBegin(const continuous::Config &config) {
     ConfigurationGuard guard;if(!guard.held)return "BUSY";
     if(ContinuousTrialActive())return "BUSY";
     if(otaBusy())return "OTA";
-    if(!worker)return "INIT";
+    if(!initialized)return "INIT";
     if(config.id==0||config.id>9999999||config.count<2||config.count>continuous::MAX_NODES)return "RANGE";
     if(configured&&config.id==staged.id)return "ID_REUSED";
     staged=config;staged.policy=0;receivedMask=0;configured=true;consumed=false;policyReceived=false;
@@ -226,7 +179,12 @@ const char *ContinuousTrialPrepare(uint32_t id) {
     status.total=route.length;status.heartbeatMs=millis();
     portEXIT_CRITICAL(&trialMux);return nullptr;
 }
-void ContinuousTrialLaunch(){if(worker)xTaskNotifyGive(worker);}
+void ContinuousTrialLaunch(){
+    MotionRequest request;request.kind=MotionKind::TRIAL;
+    if(!SubmitMotion(request)) {
+        portENTER_CRITICAL(&trialMux);status.state=FAILED;status.reason="BUSY";portEXIT_CRITICAL(&trialMux);
+    }
+}
 const char *ContinuousTrialStop(uint32_t id) {
     portENTER_CRITICAL(&trialMux);
     const char *error=id!=status.id?"ID":nullptr;
@@ -238,6 +196,7 @@ void ContinuousTrialSetOta(bool active){
     portENTER_CRITICAL(&trialMux);otaActive=active;
     if(active&&(status.state==RUNNING||status.state==STOPPING)){stopRequested=true;status.state=STOPPING;}
     portEXIT_CRITICAL(&trialMux);
+    MotionExecutorSetOta(active);
 }
 const char *ContinuousTrialStatus(uint32_t id) {
     portENTER_CRITICAL(&trialMux);
@@ -249,9 +208,9 @@ const char *ContinuousTrialStatus(uint32_t id) {
     return nullptr;
 }
 
-bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async) {
+bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async) {
     ConfigurationGuard guard;if(!guard.held)return false;
-    if(!worker||otaBusy()||taskMotionAborted)return false;
+    if(!initialized||otaBusy()||taskMotionAborted)return false;
     // 预留共享规划/任务资源；上传和其他运动不能在构建过程中插入。
     portENTER_CRITICAL(&trialMux);
     if(status.state==RUNNING||status.state==STOPPING){portEXIT_CRITICAL(&trialMux);return false;}
@@ -301,8 +260,6 @@ bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float fina
     Serial.printf("[Route] Transition window: disabled; separate heading correction deadband: %.2f deg\n",formalSettings.headingDeadbandDeg);
     Serial.printf("[Route] Profile: %.1f mm/s, %.1f mm/s2, %.1f deg/s, %.1f deg/s2\n",
         formalSettings.speedMmS,formalSettings.accelMmS2,formalSettings.turnDegS,formalSettings.turnAccelDegS2);
-    Serial.printf("[Route] Profile: %.1f mm/s, %.1f mm/s2, %.1f deg/s, %.1f deg/s2\n",
-        formalSettings.speedMmS,formalSettings.accelMmS2,formalSettings.turnDegS,formalSettings.turnAccelDegS2);
     formalSettings.startOffset={};
     if(scanPosePending&&path[0]==SCAN_AREA_NODE) {
         formalSettings.startOffset=Vec(currentPose.x,currentPose.y)-nodes[0].p;
@@ -317,10 +274,70 @@ bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float fina
     status.total=route.length;status.state=RUNNING;status.heartbeatMs=millis();
     status.x=currentPose.x;status.y=currentPose.y;status.heading=heading;
     portEXIT_CRITICAL(&trialMux);
-    ContinuousTrialLaunch();return true;
+    return true;
+}
+bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async) {
+    MotionRequest r;r.kind=MotionKind::NODE_PATH;r.pathCount=count;r.speed=speedMmS;r.theta=finalHeading;
+    r.automatic=async;memcpy(r.path,path,count);return SubmitMotion(r)!=0;
 }
 bool H30RunNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading) {
-    if(!H30StartNodePath(path,count,speedMmS,finalHeading,false))return false;
-    while(ContinuousTrialActive())vTaskDelay(pdMS_TO_TICKS(10));
-    return snapshot().state==DONE;
+    MotionRequest r;r.kind=MotionKind::NODE_PATH;r.pathCount=count;r.speed=speedMmS;r.theta=finalHeading;
+    memcpy(r.path,path,count);return WaitMotion(SubmitMotion(r));
+}
+void ContinuousMotionBegin() {
+    execution=Execution{};auto &e=execution;e.job=snapshot();e.active=true;e.actual=initialHeading;
+    hardStop();
+    if(!e.job.formal)e.failure=headingSample(e.actual,e.sampleMs);
+    e.tracker.begin(route,e.actual);e.tracker.requireInertial=true;e.tracker.commit(WheelCommand{},millis());
+    e.tracker.estimated={currentPose.x,currentPose.y};
+    if(!e.failure&&!e.job.formal&&fabsf(turn(e.actual,route.config.startHeading))>5)e.failure="START_HEADING";
+    e.started=e.previousCycle=e.integratedAt=millis();e.due=e.started;
+    e.timeout=static_cast<uint32_t>((route.plannedSeconds*2+5)*1000);
+    if(e.job.formal&&!e.failure) {
+        e.position.estimated=e.tracker.estimated;e.position.heading=e.actual;
+        BeginPositionNodeRoute(route,formalSettings,referenceVersion,stopped,e.position);
+    }
+    if(e.failure)finishExecution();
+}
+void ContinuousMotionTick() {
+    auto &e=execution;if(!e.active)return;
+    if(stopped()||taskMotionAborted){e.failure=stopped()?"STOPPED":"ABORTED";finishExecution();return;}
+    if(e.job.formal) {
+        TickPositionNodeRoute();
+        portENTER_CRITICAL(&trialMux);status.s=e.position.s;status.x=e.position.estimated.x;status.y=e.position.estimated.y;status.heading=e.position.heading;portEXIT_CRITICAL(&trialMux);
+        if(!PositionNodeRunner().active()){e.failure=PositionNodeRunner().failure();e.success=!e.failure;finishExecution();}
+        return;
+    }
+    const uint32_t now=millis();if(static_cast<int32_t>(now-e.due)<0)return;
+    if(now-snapshot().heartbeatMs>1500)e.failure="LINK_TIMEOUT";
+    else if(now-e.started>e.timeout)e.failure="TIMEOUT";
+    H30Attitude motion;if(!e.failure)e.failure=headingSample(e.actual,e.sampleMs,&motion);
+    if(e.failure){finishExecution();return;}
+    e.tracker.observeMotion(motion);
+    const float dt=now==e.started?.04f:(now-e.previousCycle)*.001f;e.previousCycle=now;
+    if(dt>.120f||dt<=0){e.failure="CONTROL_OVERRUN";finishExecution();return;}
+    e.tracker.integrate(route,e.actual,(now-e.integratedAt)*.001f);e.integratedAt=now;
+    e.failure=field::check(e.tracker.estimated.x,e.tracker.estimated.y,e.actual,0);
+    if(e.failure){finishExecution();return;}
+    Output out=e.tracker.update(route,e.actual,dt,e.sampleMs);
+    if(out.failure){e.failure=out.failure;finishExecution();return;}
+    if(out.finished){e.success=true;finishExecution();return;}
+    e.failure=sendWheels(out.wheels,now);if(e.failure){finishExecution();return;}
+    const uint32_t synced=millis();e.tracker.integrate(route,e.actual,(synced-e.integratedAt)*.001f);e.integratedAt=synced;
+    e.tracker.commit(out.wheels,synced);
+    portENTER_CRITICAL(&trialMux);
+    status.s=e.tracker.s;status.x=e.tracker.estimated.x;status.y=e.tracker.estimated.y;
+    status.reference=out.reference;status.heading=e.actual;status.error=out.error;status.cycleMs=dt*1000;
+    for(int i=0;i<4;++i)status.rpm[i]=out.wheels.rpm[i];
+    portEXIT_CRITICAL(&trialMux);
+    if(now-e.lastTelemetry>=200){telemetry(snapshot());
+        Serial.printf("{EVT,NAV,TRIAL_PHASE,%lu,%s}\n",static_cast<unsigned long>(e.job.id),e.tracker.stage);e.lastTelemetry=now;}
+    e.due=now+40;
+}
+void ContinuousMotionCancel(){if(execution.active){execution.failure="STOPPED";execution.success=false;finishExecution();}}
+bool ContinuousMotionActive(){return execution.active;}
+const char *ContinuousMotionFailure(){return execution.failure;}
+uint32_t ContinuousMotionNextDelay(){
+    if(execution.job.formal)return PositionNodeRunner().active()?PositionNodeRunner().nextDelay():0;
+    const int32_t left=static_cast<int32_t>(execution.due-millis());return left>0?left:0;
 }

@@ -125,12 +125,12 @@ class DiscMaterialTests(unittest.TestCase):
         app = self.make_app()
         app.send_force_disc_grab()
         app.serial_link.send_line.assert_called_with("{CMD,VISION,FORCE_GRAB,6,3}")
-        for line, expected in (("{RSP,VISION,FORCE_GRAB,ACK,6,3}", "等待函数调用返回"),
+        for line, expected in (("{RSP,VISION,FORCE_GRAB,ACK,6,3}", "等待作业完成事件"),
                                ("{EVT,VISION,FORCE_GRAB,REQUESTED,6,3}", "结果请查看物料日志"),
                                ("{RSP,VISION,FORCE_GRAB,ERR,RANGE}", "被拒绝")):
             self.assertTrue(app._accept_disc_material_response(line))
             self.assertIn(expected, app.disc_material_status.set.call_args.args[0])
-        for line in ("{EVT,VISION,FORCE_GRAB,DONE,6,3}", "{EVT,VISION,FORCE_GRAB,REQUESTED,6,0}"):
+        for line in ("{EVT,VISION,FORCE_GRAB,DONE,6,0}", "{EVT,VISION,FORCE_GRAB,REQUESTED,6,0}"):
             self.assertIsNone(parse_disc_material_response(line))
         app.serial_link.send_line.side_effect = RuntimeError("disconnected")
         app.send_force_disc_grab()
