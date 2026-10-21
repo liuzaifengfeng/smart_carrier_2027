@@ -5,7 +5,10 @@ namespace node_position {
 constexpr bool MOTOR_STALL_CHECK_ENABLED=false; // 临时禁用所有底盘电机的固件堵转检查；恢复时改为true
 constexpr float PULSES_PER_REV=3200; // 要求底盘驱动配置为16细分，实车验收时核对
 constexpr double STRAIGHT_ARRIVAL_ENCODER_TOLERANCE=5000; // 每轮65536单位/圈坐标中的允许误差
-struct Settings {float speedMmS=2000,accelMmS2=2000,turnDegS=200,turnAccelDegS2=400,headingDeadbandDeg=3;};
+struct Settings {
+    float speedMmS=2000,accelMmS2=2000,turnDegS=200,turnAccelDegS2=400,headingDeadbandDeg=3;
+    continuous::Vec startOffset; // 扫码停车位置相对首节点的偏移，并入首段四轮位置目标。
+};
 struct Motor {uint8_t flags=0;int64_t position=0;int16_t rpm=0;}; // 位置：65536单位/圈
 struct Result {continuous::Vec estimated;float heading=0,s=0;};
 // 直行期间仅监测持续偏航；航向校正在到位、近零转速后独立执行。

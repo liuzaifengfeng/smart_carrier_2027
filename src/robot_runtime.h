@@ -42,6 +42,7 @@ extern float NODE_PATH_HEADING_DEADBAND_DEG;
 extern uint32_t SCAN_APPROACH_SPEED_RPM;
 extern uint32_t SCAN_SEARCH_SPEED_RPM;
 constexpr uint8_t SCAN_AREA_NODE = 2;
+extern bool scanPosePending;
 constexpr uint8_t DISC_AREA_NODE = 14;
 // 粗加工区中心约为 (210, 1100)，对应当前 5x5 地图的 10 号节点。
 constexpr uint8_t COARSE_AREA_NODE = 10;

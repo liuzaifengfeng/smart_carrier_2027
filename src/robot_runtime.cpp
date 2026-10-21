@@ -1,5 +1,6 @@
 #include "robot_runtime.h"
 #include "alignment_start_policy.h"
+#include "h30_usb.h"
 
 // ================= 基础配置 =================
 
@@ -11,6 +12,7 @@ float NODE_PATH_TURN_ACCEL_DEG_S2 = 400.0f;  // 节点路径原地转向的角�
 float NODE_PATH_HEADING_DEADBAND_DEG = 3.0f; // 停稳后独立航向修正的允许误差，单位°；误差在此范围内不再转动。
 uint32_t SCAN_APPROACH_SPEED_RPM = 1500;        // 启停区接近扫码区域时的位置模式最大轮速，单位RPM。
 uint32_t SCAN_SEARCH_SPEED_RPM = 1000;          // 扫码区域往返搜索任务码时的位置模式最大轮速，单位RPM。
+bool scanPosePending=false;
 
 CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 
@@ -186,7 +188,9 @@ SemaphoreHandle_t xLidarPoseMutex = NULL;   // 防止自动流程和串口重复
 // Debug 手动调试可显式允许重做，不读写 Release 的完成记录。
 bool runLidarPoseAction(bool fromCommand, bool allowRepeat) {
     static bool releasePoseCompleted = false; // 当前 Release 流程每次开机只创建一次。
-    if (xLidarPoseMutex == NULL || xSemaphoreTake(xLidarPoseMutex, 0) != pdTRUE) {
+    static bool releasePoseInitialized = false;
+    // 自动流程须接续已经开始的雷达动作；串口重试仍立即返回BUSY。
+    if (xLidarPoseMutex == NULL || xSemaphoreTake(xLidarPoseMutex, fromCommand ? 0 : portMAX_DELAY) != pdTRUE) {
         Serial.println(fromCommand ? "{RSP,VISION,LIDAR_POSE,ERR,BUSY}" : "{EVT,VISION,LIDAR_POSE_FAILED,BUSY}");
         return false;
     }
@@ -195,6 +199,22 @@ bool runLidarPoseAction(bool fromCommand, bool allowRepeat) {
         Serial.println("{EVT,VISION,LIDAR_POSE_DONE}");
         xSemaphoreGive(xLidarPoseMutex);
         return true;
+    }
+    // 初始化与相对运动由同一把锁串行化，避免另一任务中途覆盖MovePosition的起点。
+    if (!allowRepeat && !releasePoseInitialized) {
+        switch (currentStartZone) {
+        case START_ZONE_1:
+            currentPose = {2250, 150, START_ZONE_HEADING};
+            break;
+        case START_ZONE_2:
+            currentPose = {150, 150, START_ZONE_HEADING};
+            break;
+        default:
+            xSemaphoreGive(xLidarPoseMutex);
+            return false;
+        }
+        CalibrateH30MapHeading(currentPose.theta);
+        releasePoseInitialized = true;
     }
     Serial.println(fromCommand ? "{RSP,VISION,LIDAR_POSE,ACK}" : "{EVT,VISION,LIDAR_POSE_RUNNING}");
     const bool ok = PrepareLidarScanPose(static_cast<uint8_t>(currentStartZone));

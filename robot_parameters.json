@@ -410,7 +410,7 @@
           "integer": false
         },
         "PID/CORNER/视觉X/Kd": {
-          "value": 0.0,
+          "value": 0.0001,
           "description": "CORNER角点对齐专用：微分增益，乘以误差变化率。误差单位沿用视觉端输出，不能默认视为毫米。",
           "minimum": 0.0,
           "maximum": 100.0,
@@ -602,57 +602,57 @@
       "description": "节点导航轮速与平移加速度、扫码轮速及旧接口等待参数。",
       "parameters": {
         "底盘/停车稳定时间(ms)": {
-          "value": 100,
+          "value": 10,
           "description": "旧位置运动接口使用的固定等待时间；H30节点导航按惯性安静判定接续，不使用此项。",
           "minimum": 0.0,
           "maximum": 10000.0,
           "integer": true
         },
         "底盘/节点导航速度(mm/s)": {
-          "value": 2500.0,
+          "value": 3000.0,
           "description": "正式节点路径平移速度上限，毫米每秒；底层按Y脉冲/mm和3200脉冲/圈换算RPM。下一条完整路径启动生效。旧400RPM不得直接继承。",
           "minimum": 10.0,
           "maximum": 5000.0,
           "integer": false
         },
         "底盘/节点导航平移加速度(mm/s²)": {
-          "value": 1500.0,
+          "value": 2000.0,
           "description": "正式节点导航平移加速/减速规划上限，单位mm/s²，不是EMM位置模式加速度档位；下一条完整路径启动时生效。独立试跑使用自己的加速度。",
           "minimum": 1.0,
           "maximum": 4000.0,
           "integer": false
         },
         "底盘/节点导航转向速度(°/s)": {
-          "value": 300.0,
+          "value": 500.0,
           "description": "正式节点原地转向角速度上限；小角度修正仍使用减速曲线。下一条完整路径启动生效。",
           "minimum": 10.0,
           "maximum": 500.0,
           "integer": false
         },
         "底盘/节点导航转向加速度(°/s²)": {
-          "value": 400.0,
+          "value": 500.0,
           "description": "正式节点原地转向的软件角加速度上限；与平移加速度独立。下一条完整路径启动生效。",
           "minimum": 30.0,
           "maximum": 720.0,
           "integer": false
         },
         "底盘/扫码接近轮速(RPM)": {
-          "value": 60,
+          "value": 2000,
           "description": "开局从启停区接近扫码区域时的最大轮速。",
           "minimum": 1.0,
           "maximum": 5000.0,
           "integer": true
         },
         "底盘/扫码往返轮速(RPM)": {
-          "value": 30,
+          "value": 1000,
           "description": "开局在扫码区域往返寻找任务码时的最大轮速。",
           "minimum": 1.0,
           "maximum": 5000.0,
           "integer": true
         },
         "底盘/节点导航独立纠偏死区(°)": {
-          "value": 3,
-          "description": "停稳后独立角度修正的死区；范围内不单独转动，运行中仍从0.4度偏差开始辅助纠偏。下一条完整路径启动时生效。",
+          "value": 1,
+          "description": "停稳后独立角度修正的死区；范围内不单独转动。",
           "minimum": 1,
           "maximum": 8,
           "integer": false

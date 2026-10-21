@@ -279,7 +279,7 @@ bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float fina
     formalSettings.headingDeadbandDeg=NODE_PATH_HEADING_DEADBAND_DEG;
     if(!isfinite(formalSettings.turnDegS)||formalSettings.turnDegS<10||formalSettings.turnDegS>500
         ||!isfinite(formalSettings.turnAccelDegS2)||formalSettings.turnAccelDegS2<30||formalSettings.turnAccelDegS2>720
-        ||!isfinite(formalSettings.headingDeadbandDeg)||formalSettings.headingDeadbandDeg<1||formalSettings.headingDeadbandDeg>8)error="RANGE";
+        ||!isfinite(formalSettings.headingDeadbandDeg)||formalSettings.headingDeadbandDeg<0||formalSettings.headingDeadbandDeg>8)error="RANGE";
     float end=heading;
     for(size_t i=0;i<count&&!error;++i) {
         float x=0,y=0;
@@ -306,8 +306,15 @@ bool H30StartNodePath(const uint8_t *path,size_t count,float speedMmS,float fina
         formalSettings.speedMmS,formalSettings.accelMmS2,formalSettings.turnDegS,formalSettings.turnAccelDegS2);
     Serial.printf("[Route] Profile: %.1f mm/s, %.1f mm/s2, %.1f deg/s, %.1f deg/s2\n",
         formalSettings.speedMmS,formalSettings.accelMmS2,formalSettings.turnDegS,formalSettings.turnAccelDegS2);
-    // 沿用MoveNodePath首节点的显式位置假设，不重新标定/覆盖H30航向参考。
-    currentPose.x=nodes[0].p.x;currentPose.y=nodes[0].p.y;
+    formalSettings.startOffset={};
+    if(scanPosePending&&path[0]==SCAN_AREA_NODE) {
+        formalSettings.startOffset=Vec(currentPose.x,currentPose.y)-nodes[0].p;
+        scanPosePending=false;
+        Serial.printf("[Route] Scan start offset=(%.1f, %.1f) mm\n",
+                      formalSettings.startOffset.x,formalSettings.startOffset.y);
+    } else {
+        currentPose.x=nodes[0].p.x;currentPose.y=nodes[0].p.y;
+    }
     setAlignmentEnabled(false);
     portENTER_CRITICAL(&trialMux);
     status.total=route.length;status.state=RUNNING;status.heartbeatMs=millis();

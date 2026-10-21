@@ -110,3 +110,15 @@ const char *RunPositionNodeRoute(const continuous::Route &route,const node_posit
     uint32_t version,bool (*cancelled)(),node_position::Result &result) {
     Hardware io(version,cancelled);return node_position::run(route,settings,io,result);
 }
+bool ReadChassisEncoderPositions(int64_t (&positions)[4]) {
+    Hardware io(0,nullptr);
+    for(uint8_t id=1;id<=4;++id) {
+        const char *error=io.readPosition(id,positions[id-1]);
+        if(error){Serial.printf("[Scan] Encoder read failed: %s\n",error);return false;}
+    }
+    return true;
+}
+const char *RunContinuousScan(const ScanMotionSettings &settings,bool (*received)(),float &forwardTravel) {
+    Hardware io(0,nullptr);
+    return RunScanMotion(settings,io,received,forwardTravel);
+}

@@ -5,6 +5,8 @@
 #include "node_route_heading.h"
 #include "robot_runtime.h"
 #include "continuous_trial.h"
+#include "node_position_hardware.h"
+#include "position_move_timing.h"
 volatile bool taskMotionAborted = false;
 #include <float.h>
 
@@ -833,20 +835,21 @@ bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)
     if (maximumPulses == 0) return true; // 小于脉冲分辨率，不虚增理想位姿。
 
     const uint16_t maximumRpm = static_cast<uint16_t>(lroundf(speed));
+    constexpr uint8_t positionAcceleration=180;
     double waitMs = 0.0;
     for (size_t i = 0; i < 4; ++i) {
         // 各轮按行程比例分配转速；整数 RPM 会带来少量完成时间差。
         wheelRpm[i] = pulses[i] == 0 ? 0 : static_cast<uint16_t>(fmax(
             1.0, floor(static_cast<double>(pulses[i]) * maximumRpm / maximumPulses + 0.5)));
         if (wheelRpm[i] != 0) {
-            waitMs = fmax(waitMs, static_cast<double>(pulses[i]) * 60000.0
-                          / (MOTOR_PULSES_PER_REVOLUTION * wheelRpm[i]));
+            waitMs = fmax(waitMs, PositionMoveDurationMs(pulses[i],wheelRpm[i],positionAcceleration));
         }
     }
     waitMs = ceil(waitMs * MOTOR_MOTION_TIME_MARGIN) + ROUTE_SETTLE_TIME_MS;
     const double heading = normalizeHeading(currentPose.theta) * PI / 180.0;
-    const double targetX = currentPose.x + x * cos(heading) - y * sin(heading);
-    const double targetY = currentPose.y + x * sin(heading) + y * cos(heading);
+    // 与导航/扫码统一：theta=0时车头(+Y)朝地图+X，车身+X朝地图-Y。
+    const double targetX = currentPose.x + x * sin(heading) + y * cos(heading);
+    const double targetY = currentPose.y - x * cos(heading) + y * sin(heading);
     if (waitMs > UINT32_MAX || !isfinite(targetX) || !isfinite(targetY)
             || fabs(targetX) > FLT_MAX || fabs(targetY) > FLT_MAX) {
         Serial.println("[MovePosition] ERR: duration or target pose overflow");
@@ -855,12 +858,12 @@ bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)
 
     if (shouldStop != nullptr && shouldStop()) return false;
     for (uint8_t motor = 1; motor <= 4; ++motor) {
-        // acc=0 直接启动，避免相同加速度档位破坏不同轮速的行程比例。
+        // 耗时计算与实际下发使用同一加速度档位。
         if (pulses[motor - 1] == 0) {
             // 合成后不需转动的轮子同步停车，避免发送零转速位置命令。
             Emm_V5_Stop_Now(motor, true);
         } else {
-            Emm_V5_Pos_Control(motor, wheelPulses[motor - 1] >= 0.0 ? 1 : 0, wheelRpm[motor - 1], 180, pulses[motor - 1], false, true);
+            Emm_V5_Pos_Control(motor, wheelPulses[motor - 1] >= 0.0 ? 1 : 0, wheelRpm[motor - 1], positionAcceleration, pulses[motor - 1], false, true);
         }
         vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
     }
@@ -886,6 +889,37 @@ bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)
                                         + normalizeHeading(theta));
     Serial.println("[MovePosition] Commands sent and estimated wait elapsed; arrival not verified");
     return true;
+}
+
+bool MoveScanPosition(float distance,float speed,bool (*shouldStop)()) {
+    int64_t before[4],after[4];
+    if(!ReadChassisEncoderPositions(before))return false;
+    const RobotPose start=currentPose;
+    const bool completed=MovePosition(0,distance,0,speed,shouldStop);
+    if(!ReadChassisEncoderPositions(after))return false;
+    // 四轮反馈为65536单位/圈；取行程绝对值兼容各驱动器的编码器方向。
+    double travel=0;
+    for(size_t i=0;i<4;++i)travel+=fabs(static_cast<double>(after[i]-before[i]))/4;
+    const float forward=copysignf(travel*3200.0/65536.0/Y_PULSE,distance);
+    const auto delta=continuous::bodyToWorld({0,forward},start.theta);
+    currentPose={start.x+delta.x,start.y+delta.y,start.theta};
+    Serial.printf("[Scan] Travel=%.1f mm, pose=(%.1f, %.1f, %.1f)\n",
+                  forward,currentPose.x,currentPose.y,currentPose.theta);
+    return completed;
+}
+
+bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t searchRpm,
+                      bool (*received)()) {
+    const RobotPose start=currentPose;
+    float forward=0;
+    const ScanMotionSettings settings={approach,search,Y_PULSE,approachRpm,searchRpm};
+    const char *error=RunContinuousScan(settings,received,forward);
+    const auto delta=continuous::bodyToWorld({0,forward},start.theta);
+    currentPose={start.x+delta.x,start.y+delta.y,start.theta};
+    Serial.printf("[Scan] Continuous travel=%.1f mm, pose=(%.1f, %.1f, %.1f)\n",
+                  forward,currentPose.x,currentPose.y,currentPose.theta);
+    if(error)Serial.printf("[Scan] %s\n",error);
+    return error==nullptr;
 }
 
 void ResetDiscAlignmentPid() {

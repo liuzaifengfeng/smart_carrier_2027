@@ -15,6 +15,8 @@ static float initialHeading=0,THETA_PULSE=51.8f,X_PULSE=13.3f,Y_PULSE=13.6f;
 static float NODE_PATH_ACCEL_MM_S2=425.5f;
 static float NODE_PATH_TURN_DEG_S=150,NODE_PATH_TURN_ACCEL_DEG_S2=360;
 static float NODE_PATH_HEADING_DEADBAND_DEG=3;
+static bool scanPosePending=false;
+constexpr uint8_t SCAN_AREA_NODE=2;
 static int worker=1,trialMux=0,launches=0;static const char *sensorError=nullptr;
 struct ConfigurationGuard{bool held=!busy;};
 struct Logger{template<class... T>void printf(const char*,T...) {}} Serial;
@@ -72,5 +74,15 @@ int main(){
     CHECK(!H30StartNodePath(path,5,5001,180));
     CHECK(H30StartNodePath(path,5,5000,180));CHECK(launches==5&&route.config.accel==4000);
     CHECK(formalSettings.speedMmS==5000&&formalSettings.turnDegS==500&&formalSettings.turnAccelDegS2==720);
+    status.state=DONE;scanPosePending=true;currentPose={1350,150,180};
+    uint8_t scannedPath[]={2,1,0,9,10,19,20,21,22};
+    CHECK(H30StartNodePath(scannedPath,9,300,180));
+    CHECK(!scanPosePending&&currentPose.x==1350&&currentPose.y==150);
+    CHECK(formalSettings.startOffset.x==150&&formalSettings.startOffset.y==-90);
+    CHECK(route.segments[0].start.x==1200&&route.segments[0].start.y==240);
+    status.state=DONE;
+    CHECK(H30StartNodePath(scannedPath,9,300,180));
+    CHECK(formalSettings.startOffset.x==0&&formalSettings.startOffset.y==0);
+    CHECK(currentPose.x==1200&&currentPose.y==240);
     puts("actual formal adapter safety and shared controller OK");return 0;
 }

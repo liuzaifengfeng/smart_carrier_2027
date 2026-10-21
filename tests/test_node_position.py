@@ -16,15 +16,18 @@ class PositionTests(unittest.TestCase):
         exe = ROOT/'.pio/node_position_test.exe'
         result = subprocess.run(command+['-std=c++14', '-O1', str(ROOT/'tests/node_position_native.cpp'),
             str(ROOT/'src/node_position_control.cpp'), str(ROOT/'src/continuous_route.cpp'),
-            str(ROOT/'src/hybrid_route.cpp'), '-o', str(exe)], capture_output=True, text=True)
+            str(ROOT/'src/hybrid_route.cpp'), str(ROOT/'src/scan_motion_control.cpp'),
+            '-o', str(exe)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         result = subprocess.run([str(exe)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_scanning_stays_on_existing_position_api(self):
+    def test_scanning_continuous_entry_and_position_retries(self):
         main = (ROOT/'src/main.cpp').read_text(encoding='utf-8')
-        self.assertIn('MovePosition(0, scanDirection * SCAN_APPROACH_MM, 0, SCAN_APPROACH_SPEED_RPM)', main)
-        self.assertIn('MovePosition(0, distance, 0, SCAN_SEARCH_SPEED_RPM, pollTaskCode)', main)
+        self.assertIn('MoveScanApproach(scanDirection * SCAN_APPROACH_MM,', main)
+        self.assertIn('MoveScanPosition(distance, SCAN_SEARCH_SPEED_RPM, pollTaskCode)', main)
+        chassis = (ROOT/'src/chassis.cpp').read_text(encoding='utf-8')
+        self.assertIn('MovePosition(0,distance,0,speed,shouldStop)', chassis)
         source = (ROOT/'src/node_position_hardware.cpp').read_text(encoding='utf-8')
         self.assertIn('Emm_V5_Vel_Control(', source)  # 仅外圈连续移动块使用速度模式
         engine = (ROOT/'src/node_position_control.cpp').read_text(encoding='utf-8')

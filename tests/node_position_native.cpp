@@ -1,5 +1,6 @@
 #include "../src/node_position_control.h"
 #include "../src/emm_feedback.h"
+#include "../src/scan_motion_control.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,7 @@ struct Sim : IO {
     int actions=0,updates=0,syncs=0,halts=0,zeroGroups=0;float heading=0;Vec location={310,1200};
     uint32_t arrivalAt=0,maxGap=0;bool wasMoving=false,newAction=false;
     int encoderPolarity[4]={1,1,1,1};
+    bool startupKick=false,kickInjected=false;
     bool velocityMode=false;int16_t velocityRpm[4]={};int velocityUpdates=0,curveReports=0;
     uint32_t now()override{return time;}
     bool cancelled()override{return cancel||(cancelAt&&time>=cancelAt);}
@@ -60,6 +62,10 @@ struct Sim : IO {
         if(residualTest&&done&&pending[i]!=0&&!residualInjected){residualInjected=true;residualActive=true;}
         if(done&&pending[i]!=0&&residualActive)m.position+=(actual[i]>=0?1:-1)*(hardOverrun?12000:residualEncoderUnits);
         m.position*=encoderPolarity[i];
+        if(startupKick&&!kickInjected&&actions==1&&id==1&&m.position!=0) {
+            m.position=m.position>=0?-200:200;
+            kickInjected=true;
+        }
         if(done&&pending[i]!=0&&!doneAt[i])doneAt[i]=time;
         bool flagReady=done&&(!flagDelayMs||time-doneAt[i]>=flagDelayMs);
         m.flags=1|((flagReady||falseArrived)?2:0);m.rpm=(done||falseArrived)?0:rpm[i];
@@ -122,7 +128,35 @@ struct Sim : IO {
     }
     void motorDiagnostic(uint8_t,const char*,double,const Motor&)override{++diagnostics;}
 };
+struct ScanSim : Sim {
+    Vec start;float entryRpm=0,fastRpm=0,stopAt=100000;
+    bool crossed=false,zeroWhileMoving=false;
+    const char *velocity(const WheelCommand &command)override {
+        CHECK(time<120000); // 测试控制循环必须有限完成。
+        float distance=norm(location-start),speed=abs(command.rpm[0]);
+        if(distance>=700&&!crossed){entryRpm=speed;crossed=true;}
+        if(distance<600)fastRpm=fmaxf(fastRpm,speed);
+        if(!speed&&velocityUpdates)zeroWhileMoving=true;
+        return Sim::velocity(command);
+    }
+};
+static ScanSim *scanCar=nullptr;
+static bool scanReceived(){return norm(scanCar->location-scanCar->start)>=scanCar->stopAt;}
 int main() {
+    for(float direction:{1.0f,-1.0f}) {
+        ScanSim car;car.location=car.start={1200,275};car.heading=180;scanCar=&car;
+        ScanMotionSettings scan={direction*700,direction*400,13.6f,2000,60};
+        float traveled=0;
+        CHECK(!RunScanMotion(scan,car,scanReceived,traveled));
+        CHECK(car.crossed&&car.fastRpm>100&&car.entryRpm>0&&car.entryRpm<=80);
+        CHECK(!car.zeroWhileMoving&&car.halts==1&&car.updates==0);
+        CHECK(fabsf(traveled-direction*1100)<2);
+        CHECK(norm(car.location-Vec(1200-direction*1100,275))<2);
+        ScanSim early;early.location=early.start={1200,275};early.heading=180;
+        early.stopAt=850;scanCar=&early;
+        CHECK(!RunScanMotion(scan,early,scanReceived,traveled));
+        CHECK(early.halts==1&&!early.zeroWhileMoving&&fabsf(fabsf(traveled)-850)<3);
+    }
     HeadingGuard guard;
     CHECK(!guard.update(12,1000,false,false));CHECK(!guard.update(12,2000,false,false));
     CHECK(!guard.update(18,2100,false,false));CHECK(!guard.update(18,2899,false,false));
@@ -351,5 +385,46 @@ int main() {
     CHECK(norm(cornerCar.location-Vec(1200,2020))<3&&fabsf(turn(cornerCar.heading,180))<=3);
     cornerCfg.startHeading=270.4f;CHECK(!corner.build(upperLeft,cornerCfg));
     CHECK(corner.segments[0].h1==270&&corner.segments[corner.segmentCount-1].h0==180);
+    // 扫码后的双轴偏移并入首段四轮目标，不增加回节点2的动作。
+    Node scanNodes[]={{{1200,240},0},{{720,240},0},{{310,240},0},{{310,720},0},{{310,1200},0}};
+    Config scanCfg;scanCfg.policy=2;scanCfg.count=5;scanCfg.startHeading=180;scanCfg.endHeading=90;
+    Route scanRoute;CHECK(!scanRoute.build(scanNodes,scanCfg));
+    Sim centered;centered.location={1200,240};centered.heading=180;
+    Settings scanSettings=newProfile;
+    CHECK(!run(scanRoute,scanSettings,centered,result));
+    for(float x:{400.0f,950.0f,1350.0f}) {
+        Sim scanned;scanned.location={x,150};scanned.heading=180;
+        scanSettings.startOffset={x-1200,-90};
+        error=run(scanRoute,scanSettings,scanned,result);
+        if(error)fprintf(stderr,"scan x=%.1f: %s, pose=(%.2f,%.2f), heading=%.3f\n",x,error,scanned.location.x,scanned.location.y,scanned.heading);
+        CHECK(!error);
+        CHECK(scanned.actions==centered.actions&&scanned.velocityUpdates==0);
+        CHECK(norm(scanned.location-Vec(310,1200))<3);
+        CHECK(norm(result.estimated-Vec(310,1200))<3);
+    }
+    // 首段需要转向时，先保持扫码朝向平移到后续路口，避免在场边原地转动。
+    Node upNodes[]={{{310,240},0},{{310,720},0},{{310,1200},0},{{720,1200},0}};
+    scanCfg.count=4;scanCfg.endHeading=0;CHECK(!scanRoute.build(upNodes,scanCfg));
+    Sim upCar;upCar.location={360,150};upCar.heading=180;
+    scanSettings.startOffset={50,-90};
+    CHECK(!run(scanRoute,scanSettings,upCar,result));
+    CHECK(norm(upCar.location-Vec(720,1200))<3);
+    // 日志回归：雷达准备后的Y应为275，而不是50；原边界检查保持启用。
+    scanCfg.count=5;scanCfg.endHeading=90;CHECK(!scanRoute.build(scanNodes,scanCfg));
+    Sim logged;logged.location={1172.8f,275};logged.heading=179.934f;
+    scanSettings.startOffset={-27.2f,35};
+    error=run(scanRoute,scanSettings,logged,result);CHECK(!error);
+    CHECK(norm(logged.location-Vec(310,1200))<3);
+    Node toDisc[]={{{1200,240},0},{{1680,240},0},{{2090,240},0},{{2090,720},0},{{2090,1200},0}};
+    CHECK(!scanRoute.build(toDisc,scanCfg));
+    Sim discCar;discCar.location={1172.8f,275};discCar.heading=179.934f;
+    CHECK(!run(scanRoute,scanSettings,discCar,result));
+    CHECK(norm(discCar.location-Vec(2090,1200))<3);
+    // 起步第一笔微小反向反馈不能永久锁错方向，首段和后续转向/直行均须完成。
+    Sim kicked;kicked.location={1052.87f,275};kicked.heading=179.842f;kicked.startupKick=true;
+    scanSettings.startOffset={-147.13f,35};
+    error=run(scanRoute,scanSettings,kicked,result);
+    if(error)fprintf(stderr,"startup kick: %s\n",error);
+    CHECK(!error&&kicked.kickInjected&&norm(kicked.location-Vec(2090,1200))<3);
     puts("fixed position targets, feedback gating, units, merging and faults OK");return 0;
 }

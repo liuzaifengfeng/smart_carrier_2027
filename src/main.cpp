@@ -56,21 +56,16 @@ void Task_MainStateMachine(void *pvParameters) {
             switch (homeStartZone) {
             case START_ZONE_1:
                 updateDisplay("DISPLAY", "DEBUG", "start_zone: 1");
-                // 右侧启停区车头朝左，即世界坐标 -X 方向。
-                currentPose = {2250, 150, START_ZONE_HEADING};
                 break;
             case START_ZONE_2:
                 updateDisplay("DISPLAY", "DEBUG", "start_zone: 2");
-                // 左侧启停区车头也朝左；向右扫码使用后退，航向仍为180°。
-                currentPose = {150, 150, START_ZONE_HEADING};
                 break;
 
             default:
                 updateDisplay("DISPLAY", "DEBUG", "ERR:start_zone: unknown");
                 break;
             }
-            // 已按实际摆车方向建立地图位姿；仅此处同步，不使用运动推算值反复校准。
-            CalibrateH30MapHeading(currentPose.theta);
+            // 开局位姿由雷达共用入口持锁初始化，自动/串口入口不会相互覆盖。
             // Release 开局自动执行一次。动作未标定或执行失败时返回 ERR，
             // 仍停留在开局等待阶段，便于通过串口修正后再次手动调用。
             runLidarPoseAction();
@@ -110,15 +105,17 @@ void Task_MainStateMachine(void *pvParameters) {
             if (!taskReceived) {
                 if (scanStartZone != START_ZONE_1 && scanStartZone != START_ZONE_2) {
                     Serial.println("[SCANNER] ERR: invalid start zone");
-                } else if (!MovePosition(0, scanDirection * SCAN_APPROACH_MM, 0, SCAN_APPROACH_SPEED_RPM)) {
-                    Serial.println("[SCANNER] ERR: approach failed");
+                } else if (!MoveScanApproach(scanDirection * SCAN_APPROACH_MM,
+                                            scanDirection * SCAN_RANGE_MM,
+                                            SCAN_APPROACH_SPEED_RPM, SCAN_SEARCH_SPEED_RPM, pollTaskCode)) {
+                    Serial.println("[SCANNER] ERR: approach/first scan failed");
                 } else {
-                    // 首次沿接近方向扫描 400 mm；失败后在同一区域反向重试三遍。
-                    for (uint8_t attempt = 0; attempt <= SCAN_MAX_RETRIES; ++attempt) {
+                    // 接近与首次扫码连续执行；失败后在同一区域反向重试三遍。
+                    for (uint8_t attempt = 1; attempt <= SCAN_MAX_RETRIES; ++attempt) {
                         if (pollTaskCode()) break;
                         const float distance = scanDirection * ((attempt % 2 == 0) ? SCAN_RANGE_MM : -SCAN_RANGE_MM);
                         Serial.printf("[SCANNER] scan %u/%u, distance=%.0f mm\n", static_cast<unsigned>(attempt), static_cast<unsigned>(SCAN_MAX_RETRIES), distance);
-                        const bool completed = MovePosition(0, distance, 0, SCAN_SEARCH_SPEED_RPM, pollTaskCode);
+                        const bool completed = MoveScanPosition(distance, SCAN_SEARCH_SPEED_RPM, pollTaskCode);
                         if (pollTaskCode()) break;
                         if (!completed) {
                             Serial.println("[SCANNER] ERR: position move failed");
@@ -145,6 +142,7 @@ void Task_MainStateMachine(void *pvParameters) {
                      currentTask.round2_pos[0], currentTask.round2_pos[1], currentTask.round2_pos[2]);
             updateDisplay("DISPLAY", "TASK_CODE", taskCodeText);
             updateDisplay("DISPLAY", "DEBUG", "TASK OK");
+            scanPosePending=true; // 首段导航沿用扫码停车位置，偏移并入后续路程。
             xQueueReset(xVisualTaskQueue); // 清残留信号
             currentState = STATE_GRAB_ROUND1;
             break;
@@ -805,8 +803,7 @@ void setup() {
     const bool ledPwmReady = LedPwm_Init();
     Serial.begin(115200);
     if (!ApplyCompiledParameterDefaults()) {
-        Serial.println("[CFG] Startup stopped: invalid compiled defaults");
-        for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
+        Serial.println("[CFG] ERR: compiled defaults not applied; continuing startup");
     }
     if (!ledPwmReady) Serial.println("[LED] PWM initialization failed");
     Serial.printf("version: %s\n", VERSION);

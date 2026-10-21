@@ -152,7 +152,7 @@ void initialize() {
     RegisterRuntimeFloat("底盘/节点导航平移加速度(mm/s²)", NODE_PATH_ACCEL_MM_S2, 1, 4000);
     RegisterRuntimeFloat("底盘/节点导航转向速度(°/s)", NODE_PATH_TURN_DEG_S, 10, 500);
     RegisterRuntimeFloat("底盘/节点导航转向加速度(°/s²)", NODE_PATH_TURN_ACCEL_DEG_S2, 30, 720);
-    RegisterRuntimeFloat("底盘/节点导航独立纠偏死区(°)", NODE_PATH_HEADING_DEADBAND_DEG, 1, 8);
+    RegisterRuntimeFloat("底盘/节点导航独立纠偏死区(°)", NODE_PATH_HEADING_DEADBAND_DEG, 0, 8);
     // 反向九组最后追加，保留公共、正向、辅助及底盘参数的既有编号。
     registerReverseMaterialDelays();
     // 角点 PID 最后追加，保留既有参数编号。

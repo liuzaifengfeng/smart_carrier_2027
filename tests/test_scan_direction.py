@@ -9,6 +9,29 @@ from upper_computer import Pose, START_POSES
 
 
 class ScanDirectionTests(unittest.TestCase):
+    def test_actual_encoder_pose_after_early_stop(self):
+        root = Path(__file__).resolve().parents[1]
+        zig = root/'.pio/host-test-tools/ziglang/zig.exe'
+        compiler = os.environ.get('CONTINUOUS_TEST_CXX')
+        if not compiler and not zig.is_file():
+            self.skipTest('需要主机C++编译器')
+        command = [compiler] if compiler else [str(zig), 'c++']
+        cache = root/'.pio/native_scan_position'
+        cache.mkdir(exist_ok=True)
+        source = (root/'src/chassis.cpp').read_text(encoding='utf-8')
+        actual = source[source.index('bool MoveScanPosition('):source.index('bool MoveScanApproach(')]
+        (cache/'scan_position_actual.inc').write_text(actual, encoding='utf-8')
+        target = source[source.index('    const double heading = normalizeHeading(currentPose.theta)',
+                                     source.index('bool MovePosition(')):]
+        target = target[:target.index('    if (waitMs >')]
+        (cache/'position_target_actual.inc').write_text(target, encoding='utf-8')
+        exe = cache/'test.exe'
+        result = subprocess.run(command+['-std=c++14', '-O1', '-I', str(cache),
+            str(root/'tests/scan_position_native.cpp'), '-o', str(exe)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = subprocess.run([str(exe)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_start_heading_and_scan_to_left_boundary_turn(self):
         root = Path(__file__).resolve().parents[1]
         compiler = Path(os.environ.get("PLATFORMIO_CORE_DIR", Path.home() / ".platformio")) / (
@@ -17,10 +40,14 @@ class ScanDirectionTests(unittest.TestCase):
         main = (root / "src/main.cpp").read_text(encoding="utf-8")
         header = (root / "src/robot_runtime.h").read_text(encoding="utf-8")
         serial = (root / "src/serial_commands.inc").read_text(encoding="utf-8")
+        runtime = (root / "src/robot_runtime.cpp").read_text(encoding="utf-8")
         heading = next(line for line in header.splitlines()
                        if line.startswith("constexpr float START_ZONE_HEADING ="))
-        start = main[main.index("            switch (homeStartZone) {"):]
-        start = start[:start.index("            // Release 开局自动执行一次。")]
+        start = runtime[runtime.index("        switch (currentStartZone) {"):]
+        start = start[:start.index("        CalibrateH30MapHeading")]
+        start = start.replace('currentStartZone', 'homeStartZone').replace('return false;', 'return {};')
+        self.assertNotIn('currentPose =', main[main.index('        case STATE_WAIT_START:'):
+                                               main.index('        case STATE_READ_TASK:')])
         zone_branch = serial.index('frame.is("NAV", "START_ZONE", 1)')
         debug = serial[serial.index("        if (serialDebugMode) {", zone_branch):]
         debug = debug[:debug.index('        Serial.printf("{RSP,NAV,START_ZONE')]
@@ -30,6 +57,8 @@ enum StartZone { START_ZONE_UNKNOWN, START_ZONE_1, START_ZONE_2 };
 struct RobotPose { float x, y, theta; };
 constexpr void updateDisplay(const char *, const char *, const char *) {}
 constexpr void CalibrateH30MapHeading(float) {}
+constexpr void xSemaphoreGive(int) {}
+constexpr int xLidarPoseMutex=1;
 constexpr RobotPose automatic(StartZone homeStartZone) {
     RobotPose currentPose{};
 ''' + start + r'''
@@ -103,13 +132,18 @@ struct Run {
         if (receiveAfter >= 0 && count >= receiveAfter) taskReceived = true;
         return taskReceived;
     }
-    constexpr bool MovePosition(float x, float y, float theta, float speed,
+    constexpr bool MoveScanPosition(float y, float speed,
                                 bool callback = false) {
-        if (count >= 5 || x != 0 || theta != 0) return false;
+        if (count >= 5) return false;
         distances[count] = y;
         speeds[count++] = speed;
         if (callback && pollTaskCode()) return false;
         return !(count == 1 ? failApproach : failScan);
+    }
+    constexpr bool MoveScanApproach(float approach,float search,float fast,float slow,bool callback) {
+        if(!MoveScanPosition(approach,fast))return false;
+        const bool completed=MoveScanPosition(search,slow,callback);
+        return completed||taskReceived;
     }
     constexpr void execute() {
 '''
@@ -121,7 +155,7 @@ struct Run {
 };
 constexpr bool check(StartZone zone, float sign) {
     Run r{zone}; r.execute();
-    if (r.count != 5 || r.taskReceived || r.distances[0] != sign * 900
+    if (r.count != 5 || r.taskReceived || r.distances[0] != sign * 700
             || r.speeds[0] != 60) return false;
     for (int i = 1; i < 5; ++i) {
         if (r.distances[i] != sign * (i % 2 ? 400 : -400)

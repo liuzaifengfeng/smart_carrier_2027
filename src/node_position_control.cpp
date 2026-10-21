@@ -26,7 +26,7 @@ const char *sample(IO &io,H30Attitude &m,float &heading) {
 }
 struct Context {
     bool prepared=false,valid=false;Motor stopped[4];
-    int encoderSign[4]={}; // 首次有限动作学习各轮反馈符号与指令坐标的对应关系
+    int encoderSign[4]={}; // 首个有效动作到位后学习反馈符号，不用起步微小位移定方向
 };
 // 仅用于异常静止残差的500ms故障判定；正常起步和接续不等待稳定窗口。
 class MotorQuiet {
@@ -67,11 +67,20 @@ const char *quiet(IO &io,Result &result,Context &context) {
 }
 // 每个动作只发送一次带加速度的有限位置目标，由驱动板执行加减速。
 const char *move(IO &io,const Settings &settings,const Config &cfg,Result &result,
-                 Vec end,float distance,float targetHeading,bool rotating,Context &context) {
+                 Vec end,float distance,float targetHeading,bool rotating,Context &context,bool scanExit=false) {
     H30Attitude m;const char *error=sample(io,m,result.heading);if(error)return error;
     float delta=rotating?turn(result.heading,targetHeading):distance;
     float ppm=rotating?cfg.rotationPpd:cfg.forwardPpm;
     uint32_t pulses=static_cast<uint32_t>(lroundf(fabsf(delta)*ppm));
+    Vec body=scanExit?worldToBody(end-result.estimated,targetHeading):Vec{};
+    const float px=body.x*cfg.lateralPpm,py=body.y*cfg.forwardPpm;
+    const float scanPulses[4]={-px+py,-px-py,px+py,px-py};
+    uint32_t travelPulses[4];
+    uint8_t movingWheels=0;
+    for(int i=0;i<4;++i) {
+        travelPulses[i]=scanExit?static_cast<uint32_t>(lroundf(fabsf(scanPulses[i]))):pulses;
+        if(travelPulses[i])++movingWheels;
+    }
     if(!pulses)return nullptr;
     if(!context.valid) {
         error=quiet(io,result,context);if(error)return error;
@@ -90,8 +99,9 @@ const char *move(IO &io,const Settings &settings,const Config &cfg,Result &resul
     for(int i=0;i<4;++i) {
         origin[i]=context.stopped[i].position;
         directions[i]=rotating?delta>=0:((distance>=0)==(i%2==0));
+        if(scanExit)directions[i]=scanPulses[i]>=0;
         int sign=context.encoderSign[i]?context.encoderSign[i]:1;
-        goals[i]=llround(static_cast<double>(origin[i])*sign*PULSES_PER_REV/65536)+(directions[i]?int64_t(pulses):-int64_t(pulses));
+        goals[i]=llround(static_cast<double>(origin[i])*sign*PULSES_PER_REV/65536)+(directions[i]?int64_t(travelPulses[i]):-int64_t(travelPulses[i]));
         if(llabs(goals[i])>UINT32_MAX)return "MOTOR_TARGET_RANGE";
     }
     context.valid=false;io.beginAction();
@@ -106,7 +116,6 @@ const char *move(IO &io,const Settings &settings,const Config &cfg,Result &resul
     HeadingGuard headingGuard;
     uint16_t peakMeasuredRpm=0;
     MotorQuiet residualQuiet;float startHeading=result.heading;
-    const double goal=static_cast<double>(pulses)*65536/PULSES_PER_REV;
     const double unitsPerDistance=ppm*65536/PULSES_PER_REV;
     const double tolerance=rotating?unitsPerDistance*.25:STRAIGHT_ARRIVAL_ENCODER_TOLERANCE;
     // 越界保护必须在允许到位误差之外，避免合格的正向残差先触发超限。
@@ -122,10 +131,9 @@ const char *move(IO &io,const Settings &settings,const Config &cfg,Result &resul
         for(uint8_t id=1;id<=4;++id) {
             // 第一轮直接使用起步/上一动作到位反馈，发令后恢复实时完整查询。
             Motor state=context.stopped[id-1];
+            const double goal=static_cast<double>(travelPulses[id-1])*65536/PULSES_PER_REV;
             if(sent){error=io.read(id,state);if(error)return error;}
             int64_t rawDelta=state.position-origin[id-1];
-            if(sent&&!context.encoderSign[id-1]&&llabs(rawDelta)>128)
-                context.encoderSign[id-1]=(rawDelta>=0?1:-1)*(directions[id-1]?1:-1);
             int sign=context.encoderSign[id-1]?context.encoderSign[id-1]:1;
             double absoluteGoal=static_cast<double>(goals[id-1])*sign*65536/PULSES_PER_REV;
             error=health(io,id,state,absoluteGoal);if(error)return error;
@@ -136,7 +144,6 @@ const char *move(IO &io,const Settings &settings,const Config &cfg,Result &resul
                 io.motorDiagnostic(id,"MOTOR_POSITION_OVERRUN",absoluteGoal,state);
                 return "MOTOR_POSITION_OVERRUN";
             }
-            if(current < -hardLimit)return "MOTOR_DIRECTION_ERROR";
             measuredRpm=static_cast<uint16_t>(fmaxf(measuredRpm,abs(state.rpm)));
             if(abs(state.rpm)>3)allIdle=false;
             // 接续以每轮实际位置和转速为准，不等待驱动器更严格的到位标志。
@@ -144,7 +151,7 @@ const char *move(IO &io,const Settings &settings,const Config &cfg,Result &resul
             // 直行按整数编码器单位比较，消除脉冲目标换算产生的不足1单位舍入差。
             const double arrivalResidual=rotating?residual:static_cast<double>(llround(residual));
             if(arrivalResidual>tolerance||abs(state.rpm)>3)arrived=false;
-            progress+=fmax(0,fmin(1,current/goal))/4;
+            if(goal>0)progress+=fmax(0,fmin(1,current/goal))/movingWheels;
         }
         // 轮询后更新航向，仅用于偏航保护及停止后的校角，不在直行中差动调速。
         error=sample(io,m,result.heading);if(error)return error;
@@ -163,7 +170,12 @@ const char *move(IO &io,const Settings &settings,const Config &cfg,Result &resul
         }
         // 四轮各自进入位置容差且近零转速即接续，不附加稳定窗口或到位标志等待。
         if(arrived) {
-            for(int i=0;i<4;++i)context.stopped[i]=measured[i];
+            for(int i=0;i<4;++i) {
+                const int64_t rawDelta=measured[i].position-origin[i];
+                if(!context.encoderSign[i]&&travelPulses[i]&&rawDelta)
+                    context.encoderSign[i]=(rawDelta>=0?1:-1)*(directions[i]?1:-1);
+                context.stopped[i]=measured[i];
+            }
             io.timing(rotating?"TURN_ARRIVED":"STRAIGHT_ARRIVED");
             context.valid=true;return nullptr;
         }
@@ -182,7 +194,9 @@ const char *move(IO &io,const Settings &settings,const Config &cfg,Result &resul
         if(!sent) {
             const uint16_t rpm=rpmFor(maximum,ppm);
             for(uint8_t id=1;id<=4;++id) {
-                error=io.target(id,goals[id-1]>=0,rpm,driverAcceleration,
+                float wheelPpm=scanExit?travelPulses[id-1]/amount:ppm;
+                error=io.target(id,goals[id-1]>=0,scanExit?rpmFor(maximum,wheelPpm):rpm,
+                                scanExit?driverAccelerationFor(acceleration,wheelPpm):driverAcceleration,
                                 static_cast<uint32_t>(llabs(goals[id-1])));if(error)return error;
             }
             if(io.cancelled())return "STOPPED";
@@ -287,8 +301,9 @@ const char *run(const Route &route,const Settings &settings,IO &io,Result &resul
         ||!isfinite(settings.accelMmS2)||settings.accelMmS2<1||settings.accelMmS2>4000
         ||!isfinite(settings.turnDegS)||settings.turnDegS<10||settings.turnDegS>500
         ||!isfinite(settings.turnAccelDegS2)||settings.turnAccelDegS2<30||settings.turnAccelDegS2>720
-        ||!isfinite(settings.headingDeadbandDeg)||settings.headingDeadbandDeg<1||settings.headingDeadbandDeg>8)return "RANGE";
-    result.estimated=route.segments[0].start;
+        ||!isfinite(settings.headingDeadbandDeg)||settings.headingDeadbandDeg<0||settings.headingDeadbandDeg>8)return "RANGE";
+    Vec offset=settings.startOffset;
+    result.estimated=route.segments[0].start+offset;
     Context context;io.halt();const char *error=quiet(io,result,context);if(error){io.halt();return error;}
     for(size_t i=0;i<route.segmentCount;++i) {
         const Segment &phase=route.segments[i];
@@ -304,7 +319,11 @@ const char *run(const Route &route,const Settings &settings,IO &io,Result &resul
                 i=end-1;continue;
             }
         }
-        if(phase.kind==ROTATE)error=align(io,settings,route.config,result,phase.h1,context);
+        if(phase.kind==ROTATE) {
+            // 扫码首段保持当前朝向合成平移，到后续路口后再执行原路线转向。
+            if(norm(offset)>0)continue;
+            error=align(io,settings,route.config,result,phase.h1,context);
+        }
         else {
             // 同向共线节点不各停一次；合并成同一有限脉冲目标。
             Vec end=phase.end;float length=phase.length;
@@ -314,10 +333,15 @@ const char *run(const Route &route,const Settings &settings,IO &io,Result &resul
                     ||dot(end-phase.start,next.end-next.start)<=0)break;
                 end=next.end;length+=next.length;++i;
             }
-            error=align(io,settings,route.config,result,phase.h0,context);
+            const bool scanExit=norm(offset)>0;
+            if(!scanExit)error=align(io,settings,route.config,result,phase.h0,context);
             Vec direction=(end-phase.start)*(1/length);
             float sign=dot(direction,Vec(cosf(phase.h0*PI_F/180),sinf(phase.h0*PI_F/180)))>=0?1:-1;
-            if(!error)error=move(io,settings,route.config,result,end,sign*length,phase.h0,false,context);
+            // 不先回首节点：首段四轮独立加减脉冲，直接从扫码位置平移到后续路口。
+            if(scanExit)length=norm(end-result.estimated);
+            if(!error)error=move(io,settings,route.config,result,end,sign*length,
+                                scanExit?result.heading:phase.h0,false,context,scanExit);
+            offset={};
             // 到位后直接使用下一动作的目标航向校角；不要先修旧航向再转弯。
             // 下一段直行前的align、ROTATE或最终align仍只在停车后执行。
         }
