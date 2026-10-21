@@ -1207,6 +1207,16 @@ def node_grid_position(node: int) -> tuple[int, int]:
     return row, column if row % 2 == 0 else FIELD_GRID_SIZE - 1 - column
 
 
+def field_node_at(x: float, y: float) -> tuple[int, float, float] | None:
+    """返回包含指定场地坐标的节点圆形区域及其中心值。"""
+    radius_squared = FIELD_NODE_RADIUS_MM ** 2
+    for node in FIELD_NODES:
+        _, center_x, center_y = node
+        if (x - center_x) ** 2 + (y - center_y) ** 2 <= radius_squared:
+            return node
+    return None
+
+
 # 项目坐标 X 向右、Y 向上；与固件节点中心坐标一致。
 FIELD_NODES = tuple(
     (node, 240.0 + 480.0 * node_grid_position(node)[1],
@@ -2153,13 +2163,14 @@ class FieldCanvas(tk.Canvas):
         )
 
     def _draw_hover_overlay(self) -> None:
-        """绘制贯穿场地边界的鼠标十字准线与当前位置标签。"""
+        """绘制鼠标十字准线、当前位置及悬停节点的中心值。"""
         self.delete("hover_overlay")
         if self.hover_canvas is None:
             return
 
         cursor_x, cursor_y = self.hover_canvas
         world_x, world_y = self.canvas_to_world(cursor_x, cursor_y)
+        hovered_node = field_node_at(world_x, world_y)
         field_right = self.field_left + FIELD_SIZE_MM * self.scale
         field_bottom = self.field_top + FIELD_SIZE_MM * self.scale
         crosshair_color = "#d9342b"
@@ -2199,10 +2210,17 @@ class FieldCanvas(tk.Canvas):
             if place_above
             else "nw"
         )
+        label = f"X {world_x:.0f} mm   Y {world_y:.0f} mm"
+        if hovered_node is not None:
+            number, center_x, center_y = hovered_node
+            label += (
+                f"\n节点 {number} 中心："
+                f"X {center_x:g} mm   Y {center_y:g} mm"
+            )
         text_item = self.create_text(
             text_x,
             text_y,
-            text=f"X {world_x:.0f} mm   Y {world_y:.0f} mm",
+            text=label,
             anchor=anchor,
             fill="#17232d",
             font=("Microsoft YaHei UI", 9, "bold"),
