@@ -9,16 +9,35 @@ uint32_t frequencyHz = LED_PWM_FREQUENCY_HZ;
 constexpr uint32_t maxDuty = (1UL << LED_PWM_RESOLUTION_BITS) - 1;
 SemaphoreHandle_t pwmMutex = nullptr;
 bool faultBlink = false;
-bool faultLightOn = false;
-uint32_t lastToggleMs = 0;
+uint8_t faultEffectBrightness = 0;
+uint32_t faultEffectStartMs = 0;
 class PwmLock {
 public:
     PwmLock() { if (pwmMutex) xSemaphoreTake(pwmMutex, portMAX_DELAY); }
     ~PwmLock() { if (pwmMutex) xSemaphoreGive(pwmMutex); }
 };
 void applyBrightness() {
-    const uint32_t percent = faultBlink ? (faultLightOn ? 100 : 0) : brightness;
+    const uint32_t percent = faultBlink ? faultEffectBrightness : brightness;
     ledcWrite(LED_PWM_CHANNEL, (percent * maxDuty + 50) / 100);
+}
+
+uint8_t faultPatternBrightness(uint32_t elapsedMs) {
+    const uint32_t phase = elapsedMs % LED_FAULT_EFFECT_PERIOD_MS;
+
+    // 三次高亮爆闪，最后一次刻意拉长，形成明显的故障冲击感。
+    if (phase < 80) return 100;
+    if (phase < 140) return 0;
+    if (phase < 220) return 100;
+    if (phase < 280) return 0;
+    if (phase < 440) return 100;
+    if (phase < 620) return 0;
+
+    // 暗场后从 10% 快速蓄亮到 100%，随后骤灭并进入下一轮。
+    if (phase < 1040) {
+        const uint32_t ramp = phase - 620;
+        return static_cast<uint8_t>(10 + ramp * 90 / 400);
+    }
+    return 0;
 }
 }
 
@@ -91,16 +110,15 @@ void LedPwm_UpdateFaultBlink(bool fault) {
     if (fault) {
         if (!faultBlink) {
             faultBlink = true;
-            faultLightOn = true;
-            lastToggleMs = now;
-            applyBrightness();
-        } else if (static_cast<uint32_t>(now - lastToggleMs) >= LED_FAULT_BLINK_INTERVAL_MS) {
-            faultLightOn = !faultLightOn;
-            lastToggleMs = now;
-            applyBrightness();
+            faultEffectStartMs = now;
         }
+        const uint8_t nextBrightness = faultPatternBrightness(now - faultEffectStartMs);
+        if (nextBrightness == faultEffectBrightness) return;
+        faultEffectBrightness = nextBrightness;
+        applyBrightness();
     } else if (faultBlink) {
         faultBlink = false;
+        faultEffectBrightness = 0;
         applyBrightness();
     }
 }

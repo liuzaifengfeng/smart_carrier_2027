@@ -644,7 +644,7 @@
           "integer": true
         },
         "底盘/扫码往返轮速(RPM)": {
-          "value": 500,
+          "value": 300,
           "description": "开局在扫码区域往返寻找任务码时的最大轮速。",
           "minimum": 1.0,
           "maximum": 5000.0,
