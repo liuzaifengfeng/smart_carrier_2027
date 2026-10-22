@@ -24,6 +24,9 @@ struct Sim : IO {
     int startupQueries=0;bool targetSent=false;
     uint32_t latencyMs=0;
     uint32_t flagDelayMs=0,rpmTailMs=0,doneAt[4]={};
+    uint32_t rpmTailByWheel[4]={};
+    int fullReads=0,speedReads=0,comparisons=0,waitingComparisons=0,passedComparisons=0;
+    uint32_t comparisonWaitMs=0;
     int sentMarks=0,arrivalMarks=0,waitReports=0;
     int recoveries=0,diagnostics=0;
     int actions=0,updates=0,syncs=0,halts=0,zeroGroups=0;float heading=0;Vec location={310,1200};
@@ -57,6 +60,7 @@ struct Sim : IO {
         return nullptr;
     }
     const char *read(uint8_t id,Motor &m)override {
+        ++fullReads;
         if(!targetSent)startupQueries+=3;
         int i=id-1;wait(1+3*latencyMs);bool done=fabs(goal[i]-actual[i])<.001;
         m.position=llround(actual[i]*65536/PULSES_PER_REV);
@@ -70,10 +74,19 @@ struct Sim : IO {
         if(done&&pending[i]!=0&&!doneAt[i])doneAt[i]=time;
         bool flagReady=done&&(!flagDelayMs||time-doneAt[i]>=flagDelayMs);
         m.flags=1|((flagReady||falseArrived)?2:0);m.rpm=(done||falseArrived)?0:rpm[i];
-        if(done&&pending[i]!=0&&time-doneAt[i]<rpmTailMs)m.rpm=6;
+        if(done&&pending[i]!=0&&time-doneAt[i]<rpmTailMs+rpmTailByWheel[i])m.rpm=6;
         if(stall&&actions>0&&id==stallMotor)m.flags=stallFlags;
         if(neverStops){m.rpm=6;m.position+=time*10;}
         if(rippleAt&&time>=rippleAt&&!rippleInjected&&actions==0){m.rpm=6;rippleInjected=true;}
+        return nullptr;
+    }
+    const char *readSpeed(uint8_t id,int16_t &value)override {
+        ++speedReads;wait(1+latencyMs);
+        const int i=id-1;const bool done=fabs(goal[i]-actual[i])<.001;
+        if(done&&pending[i]!=0&&!doneAt[i])doneAt[i]=time;
+        value=(done||falseArrived)?0:rpm[i];
+        if(done&&pending[i]!=0&&time-doneAt[i]<rpmTailMs+rpmTailByWheel[i])value=6;
+        if(neverStops)value=6;
         return nullptr;
     }
     const char *readPosition(uint8_t id,int64_t &position)override {
@@ -121,6 +134,13 @@ struct Sim : IO {
     void arrivalDiagnostic(float,const Motor (&m)[4])override {
         for(int i=0;i<4;++i)CHECK(abs(m[i].rpm)<=3);
         ++waitReports;
+    }
+    void arrivalComparison(uint8_t representative,uint32_t,uint32_t waitMs,bool arrived,bool,
+        const float (&)[4],const Motor (&states)[4])override {
+        CHECK(representative>=1&&representative<=4);++comparisons;
+        if(arrived){++passedComparisons;for(const auto &m:states)CHECK(abs(m.rpm)<=3);}
+        else ++waitingComparisons;
+        comparisonWaitMs=waitMs;
     }
     void halt()override {velocityMode=false;for(int i=0;i<4;++i){goal[i]=actual[i];pending[i]=0;rpm[i]=0;}++halts;}
     void report(const char *stage,const Result&,float)override{

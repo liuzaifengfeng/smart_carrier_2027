@@ -198,16 +198,19 @@ void recordScanTravel(const RobotPose &start,float distance) {
     currentPose={start.x+d.x,start.y+d.y,start.theta};
 }
 /**
- * @brief 推进扫码作业：START收臂、接近600mm并搜索400mm，必要时往返重试；底盘连续行程交给ScanMotionRunner，数据由pollTaskCode读取。
+ * @brief 推进扫码作业：仅启用开局雷达时先START收回，否则直接接近600mm并搜索400mm；数据由pollTaskCode读取。
  */
 void scanTick() {
     const float direction=job.request.zone==1?1:-1;
     if(stage==0) {
-        MotionRequest r;r.kind=MotionKind::ARM_POSE;r.observation=ArmObservation::START;
-        if(!beginArm(r))return;stage=1;return;
+        if(STARTUP_LIDAR_SCAN_ENABLED) {
+            MotionRequest r;r.kind=MotionKind::ARM_POSE;r.observation=ArmObservation::START;
+            if(!beginArm(r))return;stage=1;return;
+        }
+        stage=1; // 未展开雷达姿态，无需重复收回，直接进入扫码行程。
     }
     if(stage==1) {
-        if(!tickArm()||!running)return;
+        if(STARTUP_LIDAR_SCAN_ENABLED&&(!tickArm()||!running))return;
         if(pollTaskCode()){finish(MotionState::DONE);return;}
         scanStart=currentPose;
         ScanMotionSettings cfg{direction*600,direction*400,Y_PULSE,static_cast<uint16_t>(SCAN_APPROACH_SPEED_RPM),static_cast<uint16_t>(SCAN_SEARCH_SPEED_RPM)};

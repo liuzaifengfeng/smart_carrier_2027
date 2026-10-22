@@ -59,6 +59,14 @@ public:
         }
         return nullptr;
     }
+    /** @brief 单独发送0x35转速查询，一次请求/应答，不附带状态和位置读取。 */
+    const char *readSpeed(uint8_t id,int16_t &rpm)override {
+        MotorBusGuard transaction;
+        if(cancelled())return "STOPPED";
+        drain();uint8_t cmd[]={id,0x35,0x6B};Serial1.write(cmd,3);Serial1.flush();
+        EmmReply out;const char *error=reply(id,0x35,out);
+        if(!error)rpm=EmmFeedbackParser::rpm(out);return error;
+    }
     const char *readPosition(uint8_t id,int64_t &position)override {
         MotorBusGuard transaction;
         if(cancelled())return "STOPPED";
@@ -117,6 +125,14 @@ public:
         Serial.printf("{EVT,NAV,ROUTE_WAIT,%lu,%.3f,%u,%d,%u,%d,%u,%d,%u,%d}\n",
             static_cast<unsigned long>(millis()),residual,
             m[0].flags,m[0].rpm,m[1].flags,m[1].rpm,m[2].flags,m[2].rpm,m[3].flags,m[3].rpm);
+    }
+    /** @brief 记录停转后完整检查耗时、额外等待及四轮转速/有符号位置残差；各轮依次采样。 */
+    void arrivalComparison(uint8_t representative,uint32_t readMs,uint32_t waitMs,
+        bool arrived,bool rotating,const float (&residual)[4],const node_position::Motor (&m)[4])override {
+        Serial.printf("{EVT,NAV,ROUTE_CHECK,%lu,%lu,%u,%lu,%lu,%s,%s,%d,%.3f,%d,%.3f,%d,%.3f,%d,%.3f}\n",
+            static_cast<unsigned long>(CurrentMotionId()),static_cast<unsigned long>(millis()),representative,
+            static_cast<unsigned long>(readMs),static_cast<unsigned long>(waitMs),arrived?"PASS":"WAIT",rotating?"deg":"mm",
+            m[0].rpm,residual[0],m[1].rpm,residual[1],m[2].rpm,residual[2],m[3].rpm,residual[3]);
     }
 };
 Hardware routeHardware(0,nullptr);

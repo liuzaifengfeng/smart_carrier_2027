@@ -154,6 +154,7 @@ public:
      * @brief 记录正式开始时间、输出 RUN_START，并启动比赛总计时器。
      */
     void runStart()override {
+        enableRun=true; // 自动START与串口START共用运行许可，保持取消和状态查询语义一致。
         startedAt=millis();Serial.printf("{EVT,MOTION,RUN_START,0,%lu}\n",static_cast<unsigned long>(startedAt));
         if(xHomeTimer)xTimerStart(xHomeTimer,0);
     }
@@ -239,7 +240,7 @@ void setup() {
     if(!ContinuousTrialInit())Serial.println("[Trial] initialization failed");
     if(!MotionExecutorInit())Serial.println("[Motion] task initialization failed");
 
-    vTaskDelay(pdMS_TO_TICKS(3000));
+    vTaskDelay(pdMS_TO_TICKS(500));
     // 上电固定进入 Debug；串口SYS RELEASE或空闲时按BOOT0切换到正式模式。
     {
         Serial.println("Debug mode");

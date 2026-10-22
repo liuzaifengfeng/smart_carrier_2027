@@ -2,6 +2,11 @@
 #include "motion_types.h"
 #include "motion_sequence.h"
 
+// 开局雷达机械臂动作开关：false只保留按启停区斜移，随后直接扫码。
+// false还会在斜移成功完成后自动START；true恢复雷达姿态、扫码前收回及等待外部START。
+// 开机START初始化不受影响。
+constexpr bool STARTUP_LIDAR_SCAN_ENABLED=false;
+
 // 只构建动作，不发令、不等待；角度规划所需的实测回读在运动任务内进行。
 /**
  * @brief 将动作请求展开为机械臂步骤序列；不下发运动命令、不等待动作结束，转台路径规划会回读实际角度。

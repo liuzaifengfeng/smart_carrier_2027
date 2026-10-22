@@ -23,6 +23,9 @@ class MotionExecutorTests(unittest.TestCase):
     def test_two_complete_rounds_and_both_start_zones(self):
         run_native(self.binary, "rounds")
 
+    def test_failed_startup_shift_does_not_auto_start(self):
+        run_native(self.binary, "startup")
+
     def test_failed_actions_do_not_advance_business(self):
         run_native(self.binary, "failures")
 

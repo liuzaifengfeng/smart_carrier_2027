@@ -60,4 +60,28 @@ void scanTick() {
         assert(car.crossed&&!car.zeroWhileMoving&&car.fastRpm>100);
     }
 }
-int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else nodeTick();}
+void representativePolling() {
+    Config cfg;cfg.policy=2;cfg.count=2;cfg.startHeading=cfg.endHeading=0;
+    Node nodes[]={{{310,1200},0},{{1200,1200},0}};
+    Route path;assert(!path.build(nodes,cfg));Settings settings;settings.speedMmS=200;
+    Sim car;car.latencyMs=3;Result result;Runner runner;runner.begin(path,settings,car,result);
+    bool speedOnly=false;
+    while(runner.active()) {
+        const int full=car.fullReads,speeds=car.speedReads;
+        runner.tick();
+        if(car.speedReads>speeds&&car.fullReads==full)speedOnly=true;
+        car.wait(1);
+    }
+    assert(!runner.failure()&&speedOnly&&car.speedReads>car.fullReads*5);
+    assert(car.passedComparisons==1&&car.waitingComparisons==0&&norm(result.estimated-Vec(1200,1200))<1);
+    // 代表轮停转后，4号轮仍有6RPM尾速：必须打印WAIT，等四轮都停转才打印PASS并接续。
+    Sim lagged;lagged.rpmTailByWheel[3]=300;Result delayed;Runner waitAll;waitAll.begin(path,settings,lagged,delayed);
+    while(waitAll.active()){waitAll.tick();lagged.wait(1);}
+    assert(!waitAll.failure()&&lagged.waitingComparisons>0&&lagged.passedComparisons==1);
+    assert(lagged.comparisonWaitMs>=250&&lagged.time>car.time);
+    // 即使代表轮尚未起步时读到0，也不能在四轮实际行程未完成前宣布到位。
+    Sim initialZero;initialZero.falseArrived=true;Result unfinished;Runner verify;verify.begin(path,settings,initialZero,unfinished);
+    for(int i=0;i<30&&verify.active();++i){verify.tick();initialZero.wait(1);}
+    assert(verify.active()&&initialZero.passedComparisons==0);
+}
+int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"representative"))representativePolling();else nodeTick();}

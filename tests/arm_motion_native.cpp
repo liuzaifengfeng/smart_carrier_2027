@@ -83,6 +83,15 @@ void discs() {
     }
 }
 void poses() {
+    // 临时关闭雷达时，两启停区均只执行原斜移；恢复开关后保留原雷达姿态序列。
+    for(uint8_t zone:{1,2}) {
+        MotionRequest r;r.kind=MotionKind::LIDAR_POSE;r.zone=zone;
+        motion::Program p;assert(!BuildArmProgram(r,p));
+        assert(p.steps[0].kind==motion::StepKind::POSITION&&p.steps[0].high==125);
+        assert(p.steps[0].length==(zone==1?100:-100)&&p.steps[0].turret==0&&p.steps[0].speed==200);
+        if(!STARTUP_LIDAR_SCAN_ENABLED)assert(p.count==1);
+        else assert(p.count==(zone==1?4:3)&&!strcmp(p.steps[1].name,"LIDAR_LIFT"));
+    }
     for(auto pose:{ArmObservation::START,ArmObservation::LOOK,ArmObservation::LOOK2,ArmObservation::LOOK3}) {
         MotionRequest r;r.kind=MotionKind::ARM_POSE;r.observation=pose;
         motion::Program p;assert(!BuildArmProgram(r,p));

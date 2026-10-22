@@ -59,6 +59,8 @@ struct IO {
      * @brief 读取单个电机的状态标志、编码器位置和RPM；成功返回 nullptr。
      */
     virtual const char *read(uint8_t id,Motor &state)=0;
+    /** @brief 仅查询一个电机的转速(RPM)，供位置动作运行中的单轮轮询使用。 */
+    virtual const char *readSpeed(uint8_t id,int16_t &rpm)=0;
     /**
      * @brief 读取指定电机编码器位置，单位65536/圈；成功返回 nullptr。
      */
@@ -102,6 +104,9 @@ struct IO {
      * @brief 输出四轮到位残差及实际状态，供定位到位耗时问题。
      */
     virtual void arrivalDiagnostic(float,const Motor (&)[4]){}
+    /** @brief 输出代表轮停转后的四轮实测对比；残差单位为直行mm或转向deg，时间单位ms。 */
+    virtual void arrivalComparison(uint8_t representative,uint32_t readMs,uint32_t waitMs,
+        bool arrived,bool rotating,const float (&residual)[4],const Motor (&states)[4])=0;
     /**
      * @brief 输出指定电机的目标、实际反馈及失败原因。
      */
@@ -148,6 +153,11 @@ class Runner {
     bool prepared=false,valid=false,rotating=false,scanExit=false,sent=false,braking=false,turningForAlignment=false;
     uint8_t zeroId=1,attempts=0,movingWheels=0;
     uint16_t peakMeasuredRpm=0;
+    uint8_t representative=1;
+    int16_t previousRepresentativeRpm=0;
+    double representativePulses=0;
+    uint32_t representativeSampleAt=0,representativeStopAt=0,lastComparison=0;
+    bool representativeMoved=false,representativeStopped=false,comparisonReported=false;
     Motor stopped[4];
     int encoderSign[4]={};
     int64_t origin[4]={},goals[4]={},positions[4]={};
@@ -186,6 +196,8 @@ class Runner {
      * @brief 处理当前四轮位置动作的一次反馈、偏航及到位检查。
      */
     void moveTick();
+    /** @brief 按估算或最终回读进度更新位置、编码器航向及既有偏航检查；不作为到位判据。 */
+    const char *updateProgress(float progress,const H30Attitude &sample,bool idle);
     /**
      * @brief 根据四轮反馈更新本次动作行程和到位残差；成功返回 nullptr。
      */
@@ -220,7 +232,7 @@ public:
      */
     bool observationApproach() const { return active()&&stage!=START&&stage!=QUIET&&index>=observationIndex; }
     /**
-     * @brief 返回当前平移动作剩余距离(mm)，依据位置反馈估计。
+     * @brief 返回当前平移动作剩余距离(mm)；运行中由代表轮转速估算，结束时由四轮位置校准。
      */
     float remainingDistance() const;
     /**

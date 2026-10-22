@@ -164,6 +164,7 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
     }
     case MotionKind::LIDAR_POSE:
         position(p,125,r.zone==1?100:-100,0,200);
+        if(!STARTUP_LIDAR_SCAN_ENABLED)break; // 临时跳过雷达机械臂姿态，保留底盘斜移及其位姿更新。
         if(r.zone==1) {
             arm(p,"LIDAR_LIFT",170,100,-1,-1,200);arm(p,"LIDAR_TURN",-1,-1,45,-1,200,materialAuxiliaryDelays.lidarZone1TurnMs);
             arm(p,"LIDAR_LOWER",0,100,-1,-1,200,materialAuxiliaryDelays.lidarZone1LiftMs);

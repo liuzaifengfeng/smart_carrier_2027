@@ -2,6 +2,7 @@
 #include "robot_state.h"
 #include "motion_job.h"
 #include "vision_alignment.h"
+#include "arm_motion.h"
 #include <string.h>
 
 struct CompetitionMap {
@@ -234,6 +235,17 @@ public:
             break;
         case Phase::START_PREPARE_LIDAR:
             if(!ticket.id)ticket.id=io.lidar(); // 提交一次扫码准备姿态动作，保存作业编号。
+            if(!STARTUP_LIDAR_SCAN_ENABLED) {
+                if(!ticket.id)break; // 尚未提交斜移，继续等待提交成功。
+                const auto preparation=io.status(ticket.id);
+                if(!preparation.complete())break;
+                if(preparation.state!=MotionState::DONE){io.fail(STATE_TRANSFER_FAILED);break;}
+                ticket.clear();
+                io.display("AUTO START");
+                io.runStart(); // 跳过雷达时，斜移成功完成即开始正式计时。
+                next(STATE_READ_TASK); // 直接扫码，不再等待外部START。
+                break;
+            }
             if(!ticket.id||io.status(ticket.id).complete()) {
                 ticket.clear();
                 phase=Phase::START_WAIT_PERMISSION;

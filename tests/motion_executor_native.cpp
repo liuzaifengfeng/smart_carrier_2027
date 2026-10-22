@@ -90,7 +90,7 @@ struct Runtime : CompetitionIO {
     void materialStart()override{assert(!pending);assert(requests.back().observation==ArmObservation::LOOK3);material=true;++materialStarts;}
     void materialStop()override{material=false;}
     void taskReady()override{taskPublished=true;}
-    void runStart()override{++starts;}
+    void runStart()override{++starts;runPermission=true;}
     void runDone()override{finished=true;}
     void fail(RobotState reason)override{current=reason;}
     void display(const char *)override{}
@@ -101,13 +101,17 @@ void polling() {
     flow.tick();for(int i=0;i<30;++i)flow.tick();assert(r.requests.size()==1&&r.current==STATE_WAIT_START);
     r.complete();flow.tick();for(int i=0;i<30;++i)flow.tick();assert(r.requests.size()==1);
     r.startZone=1;flow.tick();flow.tick();assert(r.requests.size()==2);for(int i=0;i<30;++i)flow.tick();assert(r.requests.size()==2);
-    r.complete();flow.tick();for(int i=0;i<30;++i)flow.tick();assert(r.starts==0);
-    r.runPermission=true;flow.tick();flow.tick();assert(r.current==STATE_READ_TASK&&r.starts==1);
+    r.complete();flow.tick();
+    if(STARTUP_LIDAR_SCAN_ENABLED) {
+        for(int i=0;i<30;++i)flow.tick();assert(r.starts==0);
+        r.runPermission=true;flow.tick();
+    } else assert(r.current==STATE_READ_TASK&&r.starts==1&&r.runPermission);
+    flow.tick();assert(r.current==STATE_READ_TASK&&r.starts==1);
     r.jobs.at(r.pending).state=MotionState::RUNNING;for(int i=0;i<30;++i)flow.tick();assert(r.current==STATE_READ_TASK&&!r.taskPublished);
     r.complete();flow.tick();assert(r.current==STATE_GRAB_ROUND1&&r.taskPublished);
 }
 void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVision=false,bool cancel=false) {
-    Runtime r;r.startZone=zone;r.runPermission=true;CompetitionFlow flow(r,CompetitionMap{});
+    Runtime r;r.startZone=zone;r.runPermission=STARTUP_LIDAR_SCAN_ENABLED;CompetitionFlow flow(r,CompetitionMap{});
     bool failureInjected=false;int discGrabs=0,recognitions=0,delay=0;
     for(int tick=0;tick<1500&&!r.finished;++tick) {
         r.time+=10;
@@ -154,12 +158,23 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
     }
     assert(paths==7&&places==4&&retrieves==2);
 }
+void failedStartupDoesNotStart() {
+    if(STARTUP_LIDAR_SCAN_ENABLED)return;
+    for(uint8_t zone:{1,2}) {
+        Runtime r;r.startZone=zone;CompetitionFlow flow(r,CompetitionMap{});
+        flow.tick();r.complete();flow.tick();flow.tick();flow.tick();
+        assert(r.requests.back().kind==MotionKind::LIDAR_POSE&&r.starts==0);
+        r.complete(false);flow.tick();
+        assert(r.current==STATE_TRANSFER_FAILED&&r.starts==0&&!r.runPermission);
+    }
+}
 int main(int argc,char **argv) {
     assert(argc==2);
     if(!strcmp(argv[1],"sequence"))sequence();
     else if(!strcmp(argv[1],"join"))join();
     else if(!strcmp(argv[1],"launch"))launch();
     else if(!strcmp(argv[1],"polling"))polling();
+    else if(!strcmp(argv[1],"startup"))failedStartupDoesNotStart();
     else if(!strcmp(argv[1],"rounds")){fullFlow(1);fullFlow(2);}
     else if(!strcmp(argv[1],"failures")) {
         for(auto kind:{MotionKind::ARM_POSE,MotionKind::SCAN_TASK,MotionKind::NAVIGATE,MotionKind::PLACE_ROUND,

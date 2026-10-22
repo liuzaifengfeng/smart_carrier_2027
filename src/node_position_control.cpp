@@ -47,7 +47,7 @@ uint32_t Runner::nextDelay() const {
     const int32_t left=static_cast<int32_t>(due-io->now());return left>0?left:0;
 }
 /**
- * @brief 返回当前平移动作剩余距离(mm)，依据位置反馈估计。
+ * @brief 返回当前平移动作剩余距离(mm)；运行中由代表轮转速估算，结束时由四轮位置校准。
  */
 float Runner::remainingDistance() const {
     return fmaxf(0,fabsf(distance)-(output->s-baseS));
@@ -95,8 +95,21 @@ void Runner::arrived() {
     if(turningForAlignment){stage=ALIGN;return;}
     offset={};index=after;stage=SELECT;
 }
+const char *Runner::updateProgress(float progress,const H30Attitude &m,bool idle) {
+    if(rotating&&(m.fields&7)!=7)output->heading=wrap(startHeading+delta*progress);
+    const float headingError=turn(output->heading,targetHeading);
+    if(!rotating&&headingGuard.update(headingError,m.receivedAtMs,braking,idle,(m.fields&7)==7)) {
+        io->report("HEADING_ERROR",*output,targetHeading);return "HEADING_ERROR";
+    }
+    if(!rotating) {
+        output->estimated=start+(end-start)*progress;
+        output->s=baseS+fabsf(delta)*progress;
+        return field::check(output->estimated.x,output->estimated.y,output->heading,0);
+    }
+    return nullptr;
+}
 /**
- * @brief 处理当前四轮位置动作的一次反馈、偏航及到位检查。
+ * @brief 运动中只读代表轮转速；近零时回读四轮，保留原位置/转速到位条件并输出对比。
  */
 void Runner::moveTick() {
     const uint32_t cycleAt=io->now();
@@ -104,7 +117,29 @@ void Runner::moveTick() {
     const float dt=(cycleAt-previous)*.001f;previous=cycleAt;
     if(dt>.5f){fail("CONTROL_OVERRUN");return;}
     H30Attitude m;const char *failure=sample(m);if(failure){fail(failure);return;}
+    if(sent) {
+        int16_t rpm=0;
+        failure=io->readSpeed(representative,rpm);if(failure){fail(failure);return;}
+        const uint32_t now=io->now();
+        representativePulses+=(abs(previousRepresentativeRpm)+abs(rpm))*.5
+            *PULSES_PER_REV*(now-representativeSampleAt)/60000.0;
+        previousRepresentativeRpm=rpm;representativeSampleAt=now;
+        if(abs(rpm)>3)representativeMoved=true;
+        if(peakMeasuredRpm>abs(rpm)+3)braking=true;
+        peakMeasuredRpm=static_cast<uint16_t>(fmaxf(peakMeasuredRpm,abs(rpm)));
+        if(abs(rpm)>3) {
+            // 中途位置仅用于进度估计；最终是否到位仍由下面四轮实测决定。
+            const float progress=static_cast<float>(fmin(1,representativePulses/travelPulses[representative-1]));
+            failure=updateProgress(progress,m,false);if(failure){fail(failure);return;}
+            if(now-lastReport>=200){io->report(rotating?"POSITION_TURN":"POSITION_STRAIGHT",*output,targetHeading);lastReport=now;}
+            due=io->now()+(braking?1:20);return;
+        }
+        if(representativeMoved&&!representativeStopped){representativeStopped=true;representativeStopAt=now;}
+        // 起步时也可能读到0：只触发完整检查，不据此直接接续下一动作。
+    }
+    const uint32_t checkStarted=io->now();
     bool arrivedNow=sent,allIdle=true;double progress=0,maxResidual=0;Motor measured[4];
+    float residuals[4];
     uint16_t measuredRpm=0;
     for(uint8_t id=1;id<=4;++id) {
         Motor state=stopped[id-1];
@@ -118,6 +153,7 @@ void Runner::moveTick() {
         const double current=encoderSign[id-1]?static_cast<double>(rawDelta)*sign*(directions[id-1]?1:-1):
             static_cast<double>(llabs(rawDelta));
         const double residual=fabs(current-goal);maxResidual=fmax(maxResidual,residual);
+        residuals[id-1]=static_cast<float>((current-goal)/unitsPerDistance);
         if(current>goal+hardLimit){io->motorDiagnostic(id,"MOTOR_POSITION_OVERRUN",absoluteGoal,state);fail("MOTOR_POSITION_OVERRUN");return;}
         measuredRpm=static_cast<uint16_t>(fmaxf(measuredRpm,abs(state.rpm)));
         if(abs(state.rpm)>3)allIdle=false;
@@ -125,20 +161,20 @@ void Runner::moveTick() {
         if(arrivalResidual>tolerance||abs(state.rpm)>3)arrivedNow=false;
         if(goal>0)progress+=fmax(0,fmin(1,current/goal))/movingWheels;
     }
+    const uint32_t readMs=io->now()-checkStarted;
+    if(sent) {
+        representativePulses=fabs(static_cast<double>(measured[representative-1].position-origin[representative-1]))*PULSES_PER_REV/65536;
+        representativeSampleAt=io->now();previousRepresentativeRpm=measured[representative-1].rpm;
+        if((representativeMoved||arrivedNow)&&(arrivedNow||!comparisonReported||io->now()-lastComparison>=200)) {
+            const uint32_t waitMs=representativeStopped?io->now()-representativeStopAt:readMs;
+            io->arrivalComparison(representative,readMs,waitMs,arrivedNow,rotating,residuals,measured);
+            comparisonReported=true;lastComparison=io->now();
+        }
+    }
     failure=sample(m);if(failure){fail(failure);return;}
-    if(rotating&&(m.fields&7)!=7)output->heading=wrap(startHeading+delta*static_cast<float>(progress));
     if(sent&&peakMeasuredRpm>measuredRpm+3)braking=true;
     peakMeasuredRpm=static_cast<uint16_t>(fmaxf(peakMeasuredRpm,measuredRpm));
-    const float headingError=turn(output->heading,targetHeading);
-    if(!rotating&&headingGuard.update(headingError,m.receivedAtMs,braking,allIdle,(m.fields&7)==7)) {
-        io->report("HEADING_ERROR",*output,targetHeading);fail("HEADING_ERROR");return;
-    }
-    if(!rotating) {
-        output->estimated=start+(end-start)*static_cast<float>(progress);
-        output->s=baseS+fabsf(delta)*progress;
-        failure=field::check(output->estimated.x,output->estimated.y,output->heading,0);
-        if(failure){fail(failure);return;}
-    }
+    failure=updateProgress(static_cast<float>(progress),m,allIdle);if(failure){fail(failure);return;}
     if(arrivedNow) {
         for(int i=0;i<4;++i) {
             const int64_t rawDelta=measured[i].position-origin[i];
@@ -174,7 +210,7 @@ void Runner::moveTick() {
         }
         if(io->cancelled()){fail("STOPPED");return;}
         failure=io->sync();if(failure){fail(failure);return;}
-        sent=true;io->timing(rotating?"TURN_SENT":"STRAIGHT_SENT");
+        sent=true;representativeSampleAt=io->now();io->timing(rotating?"TURN_SENT":"STRAIGHT_SENT");
     }
     if(io->now()-lastReport>=200){io->report(rotating?"POSITION_TURN":"POSITION_STRAIGHT",*output,targetHeading);lastReport=io->now();}
     due=io->now()+(allIdle||maxResidual<=unitsPerDistance*(rotating?2.0:10.0)?1:20);
@@ -284,6 +320,10 @@ void Runner::tick() {
         started=previous=io->now();lastReport=lastArrivalReport=0;
         deadline=static_cast<uint32_t>((fabsf(delta)/maximum+maximum/acceleration+5)*3000);
         sent=braking=quietSeen=false;quietCount=0;peakMeasuredRpm=0;headingGuard=HeadingGuard{};startHeading=output->heading;
+        representative=1;
+        for(uint8_t id=2;id<=4;++id)if(travelPulses[id-1]>travelPulses[representative-1])representative=id;
+        representativePulses=0;previousRepresentativeRpm=0;
+        representativeMoved=representativeStopped=comparisonReported=false;
         unitsPerDistance=ppm*65536/PULSES_PER_REV;tolerance=rotating?unitsPerDistance*.25:STRAIGHT_ARRIVAL_ENCODER_TOLERANCE;
         hardLimit=rotating?unitsPerDistance*3:fmax(unitsPerDistance*10,2*STRAIGHT_ARRIVAL_ENCODER_TOLERANCE);
         stage=MOVE;break;
