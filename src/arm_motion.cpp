@@ -148,17 +148,20 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
                     const float length=r.position==2?0:150,angle=r.position==1?71:r.position==2?90:102;
                     arm(p,"DISC_APPROACH",120,length,angle,80,armSpeed,r.position==3?200:300);
                     arm(p,"DISC_DESCEND",80,length,angle,80,armSpeed,300);
-                    arm(p,"DISC_GRIP",80,length,angle,-8,armSpeed,200,false,ARM_GRIP_HOLD_MS);
-                    arm(p,"DISC_LIFT",170,length,angle,-8,armSpeed,300);
-                } else if(r.position==4||r.kind==MotionKind::LOAD_ROUND)pick(p,materialTransferLayout.disc,commonMaterialDelays,false,false,nullptr);
+                    arm(p,"DISC_GRIP",80,length,angle,-8,armSpeed,commonMaterialDelays.pickGripMs,false,ARM_GRIP_HOLD_MS);
+                    arm(p,"DISC_LIFT",materialTransferLayout.approachHeight,0,-1,-1,armSpeed,commonMaterialDelays.pickLiftMs);
+                } else if(r.position==4||r.kind==MotionKind::LOAD_ROUND)pick(p,materialTransferLayout.disc,commonMaterialDelays,false,true,nullptr);
                 else {
                     const auto &d=materialMotionSteps.discApproach;
                     arm(p,"DISC_APPROACH",d.high,d.length,d.turretAngle,materialMotionSteps.discOpenAngle,materialMotionSteps.discApproachSpeed,materialAuxiliaryDelays.discApproachMs);
-                    arm(p,"DISC_GRIP",d.high,d.length,d.turretAngle,materialTransferLayout.clawClosedAngle,materialMotionSteps.discGripSpeed,materialAuxiliaryDelays.discGripMs,false,ARM_GRIP_HOLD_MS);
-                    arm(p,"DISC_LIFT",materialMotionSteps.discLiftHeight,-1,-1,-1,materialMotionSteps.discLiftSpeed,materialAuxiliaryDelays.discLiftMs);
+                    arm(p,"DISC_GRIP",d.high,d.length,d.turretAngle,materialTransferLayout.clawClosedAngle,materialMotionSteps.discGripSpeed,commonMaterialDelays.pickGripMs,false,ARM_GRIP_HOLD_MS);
+                    arm(p,"DISC_LIFT",materialTransferLayout.approachHeight,0,-1,-1,materialMotionSteps.discLiftSpeed,commonMaterialDelays.pickLiftMs);
                 }
+            } else {
+                arm(p,"DISC_LIFT",materialTransferLayout.approachHeight,0,-1,-1,materialMotionSteps.discLiftSpeed,commonMaterialDelays.pickLiftMs);
             }
-            place(p,destination,destination.high,commonMaterialDelays,false,nullptr);commit(p,cargo,color);
+            // 圆盘抓后与工作区取回一样：抬升缩回，再转向，同时伸出下降；共用公共延时表。
+            place(p,destination,destination.high,commonMaterialDelays,true,nullptr);commit(p,cargo,color);
         }
         break;
     }
