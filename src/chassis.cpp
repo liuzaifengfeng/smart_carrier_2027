@@ -32,11 +32,11 @@ struct NodePosition {
 // 从底向上、从左到右：0~4、9~5、10~14、19~15、20~24。
 // 沿用项目 X 向右、Y 向上；中心间距 480 mm。
 NodePosition NODE_POSITIONS[FIELD_NODE_COUNT] = {
-    {310.0f, 240.0f}, {720.0f, 240.0f}, {1200.0f, 240.0f}, {1680.0f, 240.0f}, {2050.0f, 240.0f},
-    {2050.0f, 720.0f}, {1680.0f, 720.0f}, {1200.0f, 720.0f}, {720.0f, 720.0f}, {310.0f, 720.0f},
-    {310.0f, 1200.0f}, {720.0f, 1200.0f}, {1200.0f, 1200.0f}, {1680.0f, 1200.0f}, {2050.0f, 1200.0f},
-    {2050.0f, 1680.0f}, {1680.0f, 1680.0f}, {1200.0f, 1680.0f}, {720.0f, 1680.0f}, {310.0f, 1680.0f},
-    {310.0f, 2020.0f}, {720.0f, 2020.0f}, {1200.0f, 2020.0f}, {1680.0f, 2020.0f}, {2050.0f, 2020.0f},
+    {320.0f, 240.0f}, {720.0f, 240.0f}, {1200.0f, 240.0f}, {1680.0f, 240.0f}, {2050.0f, 240.0f},
+    {2050.0f, 720.0f}, {1680.0f, 720.0f}, {1200.0f, 720.0f}, {720.0f, 720.0f}, {320.0f, 720.0f},
+    {320.0f, 1200.0f}, {720.0f, 1200.0f}, {1200.0f, 1200.0f}, {1680.0f, 1200.0f}, {2050.0f, 1200.0f},
+    {2050.0f, 1680.0f}, {1680.0f, 1680.0f}, {1200.0f, 1680.0f}, {720.0f, 1680.0f}, {320.0f, 1680.0f},
+    {320.0f, 2020.0f}, {720.0f, 2020.0f}, {1200.0f, 2020.0f}, {1680.0f, 2020.0f}, {2050.0f, 2020.0f},
 };
 
 constexpr uint32_t MOTOR_PULSES_PER_REVOLUTION = 3200; // 16 细分时，电机转一圈的脉冲数
@@ -424,13 +424,12 @@ bool ReadArmTurretAngle(float &angle) {
  */
 static bool MoveArmInternal(float high, float length, float turret_angle, float pawl_angle, float speed, bool absoluteTurret) {
     if (taskMotionAborted) return false;
-    // 舵机动作时间统一缩短为原标定值的 1/5。
-    // 2号转台按实际转角计时：180度用100ms，最短40ms。
-    constexpr float TURRET_REFERENCE_ANGLE_DEG = 180.0f;   // 计算转台动作时间所采用的基准转角
-    constexpr uint32_t TURRET_REFERENCE_TIME_MS = 100;     // 转过基准角度所需的标定时间（毫秒）
-    constexpr uint32_t TURRET_MIN_TIME_MS = 40;            // 转台单次动作允许的最短时间（毫秒）
-    constexpr uint16_t TURRET_ACCEL_TIME_MS = 20;          // 转台加速阶段的持续时间（毫秒）
-    constexpr uint16_t TURRET_DECEL_TIME_MS = 20;          // 转台减速阶段的持续时间（毫秒）
+    // 2号转台：延长加减速，按梯形曲线面积计算总时间；180°为1020ms、90°为660ms。
+    // 这里只设置舵机指令曲线，不增加动作组等待；夹爪仍使用下方原有参数。
+    constexpr float TURRET_ANGULAR_SPEED_DEG_S = 250.0f; // 指令曲线峰值角速度(deg/s)
+    constexpr uint16_t TURRET_ACCEL_TIME_MS = 300;       // 加速时间(ms)
+    constexpr uint16_t TURRET_DECEL_TIME_MS = 300;       // 减速时间(ms)
+    constexpr uint32_t TURRET_MIN_TIME_MS = TURRET_ACCEL_TIME_MS + TURRET_DECEL_TIME_MS + 1;
     // 夹爪原标定为 speed=200 对应约90°/s；时间缩短至1/5后等效为450°/s。
     // 实际指令耗时按回读角度到最近等效目标的行程计算，不再使用与角度无关的线性映射。
     constexpr float GRIPPER_REFERENCE_COMMAND_SPEED = 200.0f; // 夹爪角速度标定时采用的指令速度
@@ -460,8 +459,9 @@ static bool MoveArmInternal(float high, float length, float turret_angle, float 
             }
         }
         // bestDistance 来自实测多圈角度与最终安全目标的差，不使用上次目标缓存。
-        const float scaledIntervalMs = bestDistance * TURRET_REFERENCE_TIME_MS
-            / TURRET_REFERENCE_ANGLE_DEG;
+        // 行程=峰值速度×[总时间-(加速时间+减速时间)/2]。
+        const float scaledIntervalMs = bestDistance * 1000.0f / TURRET_ANGULAR_SPEED_DEG_S
+            + (TURRET_ACCEL_TIME_MS + TURRET_DECEL_TIME_MS) * 0.5f;
         if (scaledIntervalMs > TURRET_MIN_TIME_MS) {
             turretIntervalMs = static_cast<uint32_t>(scaledIntervalMs + 0.5f);
         }
