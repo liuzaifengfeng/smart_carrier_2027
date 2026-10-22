@@ -29,6 +29,9 @@ struct ArmPose {
 
 extern RobotPose currentPose;   // 主控维护的"理想位姿"
 // 只读访问已生效的地图配置，供独立试跑规划使用。
+/**
+ * @brief 按节点编号读取当前地图X/Y坐标(mm)，成功时写入x和y并返回true。
+ */
 bool ChassisGetNodePosition(uint8_t node,float &x,float &y);
 extern ArmPose currentArm;     // 升降/伸缩为最近下发的绝对目标，非驱动器实测位置。
 
@@ -43,6 +46,9 @@ extern float LENGTH_PULSE; // 伸缩机械臂 每毫米脉冲
 // ================= 运动原语(麦克纳姆轮, 通用) =================
 
 // @brief 速度模式移动. direction 0=前进 1=后退 2=左移 3=右移 4=左转 5=右转, speed=RPM, stop=true停止
+/**
+ * @brief 按方向发送底盘速度命令；direction为前后左右及原地转向，speed单位RPM，stop=true停车。
+ */
 void MovePose(int direction, float speed, bool stop);
 
 // @brief 位置模式移动到位.
@@ -50,6 +56,9 @@ void MovePose(int direction, float speed, bool stop);
 // @param y 目标 Y 位移 (mm)
 // @param theta 目标航向 (0-360, 度)
 // @param isRelative 1相对移动 / 0绝对移动(需定位)
+/**
+ * @brief 使用旧位姿接口执行相对或绝对目标移动；x/y单位mm，theta单位deg。
+ */
 void GotoPose(float x, float y, float theta, bool isRelative);
 
 /**
@@ -65,12 +74,31 @@ void GotoPose(float x, float y, float theta, bool isRelative);
  * @return true 命令已下发并等待结束（开环估计），false 被取消或请求无法用单段圆弧表示。
  */
 bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)() = nullptr);
+/**
+ * @brief 初始化四轮同步相对位置动作，不等待估算行程结束；由TickPositionMove推进。
+ * @return true 准备成功，false 请求无法执行。
+ */
 bool BeginPositionMove(float x,float y,float theta,float speed);
+/**
+ * @brief 检查相对位置动作的估算时间并推进结束处理，不代表实测到位。
+ */
 void TickPositionMove();
+/**
+ * @brief 判断相对位置动作是否仍处于等待结束的运行状态。
+ */
 bool PositionMoveActive();
+/**
+ * @brief 停止当前相对位置移动并清除运行状态。
+ */
 void CancelPositionMove();
 // 扫码直行：用四轮编码器记录完整行程或提前停车后的实际行程。
+/**
+ * @brief 同步执行扫码往返直行，用编码器记录完整或提前停车后的行程；distance单位mm，speed单位RPM。
+ */
 bool MoveScanPosition(float distance,float speed,bool (*shouldStop)() = nullptr);
+/**
+ * @brief 同步执行接近后降速扫码，距离单位mm，速度单位RPM；收到任务码回调为true时停车。
+ */
 bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t searchRpm, bool (*received)());
 
 /**
@@ -121,17 +149,39 @@ void ResetAlignmentWait();
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed);
 
 // 读取2号转台实际多圈角度并检查线缆范围；失败时不改写 angle，也不更新目标缓存。
+/**
+ * @brief 读取2号转台实际多圈角度(deg)，同时沿用现有线缆范围检查；成功写入angle并返回true。
+ */
 bool ReadArmTurretAngle(float &angle);
 
 // 执行已规划的精确多圈转台角度，不重新选择等效角度；转台 -1 表示实际 -1 度。
 // 其他三轴仍以 -1 跳过；速度、计时、保护和返回值含义与 MoveArm 相同。
+/**
+ * @brief 按已规划的多圈绝对转台目标发令，不再选择最近等效角；其他轴的-1仍表示跳过。
+ * @return true 指令下发成功，不表示实测到位。
+ */
 bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed);
 
 // @brief 机械臂初始化归零位
+/**
+ * @brief 同步提交并等待START收臂姿态，供旧调试入口调用。
+ */
 bool InitArm_start();
+/**
+ * @brief 同步提交并等待工位视觉前LOOK姿态，供旧调试入口调用。
+ */
 bool InitArm_look();
+/**
+ * @brief 同步提交并等待圆盘整体对齐前LOOK2姿态。
+ */
 bool InitArm_look2();
+/**
+ * @brief 同步提交并等待圆盘单件识别前LOOK3姿态及转台实测就绪。
+ */
 bool InitArm_look3();
+/**
+ * @brief 同步提交并等待返家角点视觉前LOOK4姿态。
+ */
 bool InitArm_look4();
 
 /**

@@ -6,6 +6,21 @@
 
 `Task_MainStateMachine` 每 10 ms 调用一次 `CompetitionFlow::tick()`。业务阶段只提交一次作业并轮询同一编号，收到 DONE 才推进；圆盘物料登记和进度由真实动作末端提交。ACK、目标位姿和下发成功不能代替完成。
 
+### 主状态机从哪里读
+
+直接阅读 `src/competition_flow.h` 中标有“主状态机”的 `tick()`：所有正常业务阶段集中在一个 `switch(phase)` 中，按执行顺序排列，不再使用数字 `step` 或跳转到不同业务函数寻找步骤。
+
+| 阶段名 | 业务顺序 |
+| --- | --- |
+| `START_*`、`SCAN_TASK` | 收臂 → 确认起始区 → 准备扫码姿态 → 等待启动 → 扫码 |
+| `DISC_*` | 导航并提前 LOOK2 → 对齐 → LOOK3 → 取三件（前两件抓完重新 LOOK3） |
+| `COARSE_NAVIGATE/ALIGN/PLACE` | 导航并提前 LOOK → 对齐 → 放三件 |
+| `COARSE_WAIT_RETRIEVE/RETRIEVE` | 保留原间隔 → 在粗加工区取回三件 |
+| `TEMP_*` | 导航并提前 LOOK → 对齐 → 第一轮放料 / 第二轮叠放 |
+| `HOME_*` | 路径前收臂 → 导航并提前 LOOK4 → 观察准备 → 角点对齐 → 归位 |
+
+第一轮暂存放料完成后回到第二轮圆盘取料，第二轮叠放完成后返家。`secondRound` 只选择本轮任务、视觉模式和层高。对外 `RobotState` 编号及 PHASE 日志名称、边界保持原样；因此粗加工区取回仍计入 `PLACE_TEMP1` / `STACK_TEMP2` 大状态，内部已单独命名。每次 tick 仍只处理一个阶段，保留原动作提交、轮询与等待时机。
+
 `MotionExecutor` 是唯一运动工作任务，交替推进底盘 Runner、机械臂 Sequence 和视觉闭环。串口、视觉输入只解析、提交及发布反馈。启动时的硬件初始化和原有紧急超时停车保留。试跑也通过该执行器，不能与正式路线争用电机。
 
 | 接口/类型 | 含义 |

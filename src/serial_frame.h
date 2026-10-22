@@ -13,16 +13,26 @@ struct SerialFrame {
     char *fields[SERIAL_MAX_FIELDS];
     size_t count = 0;
 
+    /**
+     * @brief 判断串口帧类别、动作名及参数个数是否全部匹配。
+     */
     bool is(const char *category, const char *action, size_t arguments) const {
         return count == arguments + 3 && strcmp(fields[1], category) == 0
             && strcmp(fields[2], action) == 0;
     }
+    /**
+     * @brief 判断串口帧类别和动作名是否匹配，不检查参数个数。
+     */
     bool starts(const char *category, const char *action) const {
         return count >= 3 && strcmp(fields[1], category) == 0
             && strcmp(fields[2], action) == 0;
     }
 };
 
+/**
+ * @brief 原地拆分串口帧并填写字段指针；frame字段依赖line缓冲区存活。
+ * @return true 帧格式正确，false 解析失败。
+ */
 inline bool parseSerialFrame(char *line, SerialFrame &frame) {
     frame.count = 0;
     if (!line || line[0] != '{') return false;
@@ -44,6 +54,9 @@ inline bool parseSerialFrame(char *line, SerialFrame &frame) {
     return frame.count >= 3 && strcmp(frame.fields[0], "CMD") == 0;
 }
 
+/**
+ * @brief 解析有限浮点参数并按入口范围判断，成功时写入value；返回是否有效。
+ */
 inline bool serialFloat(const char *text, float &value, float minimum, float maximum) {
     if (!text || !*text) return false;
     // 只接受十进制（可带科学计数法）；strtof 自身也会接受十六进制，故先查语法。
@@ -70,6 +83,9 @@ inline bool serialFloat(const char *text, float &value, float minimum, float max
         && value >= minimum && value <= maximum;
 }
 
+/**
+ * @brief 解析无符号整数参数并检查maximum，成功时写入value；返回是否有效。
+ */
 inline bool serialUInt(const char *text, uint32_t &value, uint32_t maximum) {
     if (!text || !*text) return false;
     uint32_t result = 0;
@@ -83,6 +99,9 @@ inline bool serialUInt(const char *text, uint32_t &value, uint32_t maximum) {
     return true;
 }
 
+/**
+ * @brief 按收到的类别与动作发送ERR协议应答，reason为错误原因。
+ */
 inline void serialError(const SerialFrame &frame, const char *reason) {
     Serial.printf("{RSP,%s,%s,ERR,%s}\n", frame.fields[1], frame.fields[2], reason);
 }

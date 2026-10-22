@@ -115,6 +115,9 @@ static void wifi_task(void *pvParameters) {
     }
 }
 
+/**
+ * @brief 初始化WiFi、mDNS及OTA后台任务；ssid、password为网络凭据，hostname为设备名称。
+ */
 void init_ota_service(const char* ssid, const char* password, const char* hostname) {
     wifi_ssid = ssid;
     wifi_password = password;

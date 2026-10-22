@@ -4,8 +4,18 @@
 #include "node_position_hardware.h"
 
 using namespace motion;
+/**
+ * @brief 读取系统毫秒计时。
+ */
 uint32_t MotionHardware::now(){return millis();}
+/**
+ * @brief 检查总任务及当前作业的取消状态。
+ */
 bool MotionHardware::cancelled(){return taskMotionAborted||(cancel&&cancel());}
+/**
+ * @brief 按步骤类型调用 MoveArm、BeginPositionMove 等硬件入口；发令后立即返回。
+ * @return nullptr 成功，否则返回执行错误。
+ */
 const char *MotionHardware::issue(const Step &s) {
     if(cancelled())return "STOPPED";
     switch(s.kind) {
@@ -23,10 +33,17 @@ const char *MotionHardware::issue(const Step &s) {
     }
     return nullptr;
 }
+/**
+ * @brief 判断当前步骤是否使用反馈完成；POSITION、TURRET_READY 或显式开启的机械臂反馈模式使用反馈。
+ */
 bool MotionHardware::feedback(const Step &s) {
     return s.kind==StepKind::POSITION||s.kind==StepKind::TURRET_READY||
         (s.kind==StepKind::ARM&&ARM_FEEDBACK_ENABLED);
 }
+/**
+ * @brief 检查位置移动、转台或机械臂实测到位条件，并通过 done 返回本次结果。
+ * @return nullptr 查询正常，否则返回错误原因。
+ */
 const char *MotionHardware::ready(const Step &s,bool &done) {
     done=false;if(cancelled())return "STOPPED";
     if(s.kind==StepKind::POSITION){TickPositionMove();done=!PositionMoveActive();return nullptr;}
@@ -53,6 +70,9 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
     }
     done=true;return nullptr;
 }
+/**
+ * @brief 输出当前作业的 STEP 开始/结束日志，index 为步骤下标。
+ */
 void MotionHardware::event(size_t index,const Step &step,bool begin) {
     Serial.printf("{EVT,MOTION,STEP,%lu,%lu,%u,%s,%s}\n",static_cast<unsigned long>(job),
         static_cast<unsigned long>(millis()),static_cast<unsigned>(index),step.name,begin?"BEGIN":"END");

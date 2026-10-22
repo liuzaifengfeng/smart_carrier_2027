@@ -124,6 +124,9 @@ void traceVisionFirstFrame(VisionStartMode mode) {
 }
 }
 
+/**
+ * @brief 读取自动对齐状态，供主流程决定是否进入取放料阶段。
+ */
 AutoAlignmentState getAutoAlignmentState() {
     if (!xAlignmentMotionMutex) return AutoAlignmentState::FAILED;
     xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY);
@@ -133,6 +136,14 @@ AutoAlignmentState getAutoAlignmentState() {
 }
 
 // 参数提交与 PID 更新共用锁，避免一个控制周期读取到半套参数。
+/**
+ * @brief 开启或关闭底盘视觉对齐，并维护当前模式、完成判定和显示应答。
+ * @param enable true 开启，false 关闭。
+ * @param acknowledge 是否输出控制应答。
+ * @param automatic 是否属于自动比赛对齐。
+ * @param owner 拥有该次对齐的视觉模式。
+ * @param onlyOwner 是否仅允许匹配拥有者关闭。
+ */
 void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic, VisionStartMode owner, bool onlyOwner) {
     if (xAlignmentMotionMutex != NULL
             && xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
@@ -191,7 +202,16 @@ namespace {
 bool releasePoseCompleted=false,releasePoseInitialized=false;
 uint32_t releasePoseId=0;
 }
+/**
+ * @brief 处理扫码准备作业结束，仅在正式模式成功时登记准备已完成。
+ */
 void CompleteLidarPose(bool success,bool debug){if(!debug&&success)releasePoseCompleted=true;}
+/**
+ * @brief 按起始区提交扫码准备姿态，正式模式复用已完成标志避免重复动作。
+ * @param fromCommand true 表示串口显式请求。
+ * @param allowRepeat 是否允许重复执行已完成的正式准备动作。
+ * @return 非零作业编号；0 表示未提交或无需重复。
+ */
 uint32_t SubmitLidarPoseAction(bool fromCommand,bool allowRepeat) {
     if(!xLidarPoseMutex||xSemaphoreTake(xLidarPoseMutex,portMAX_DELAY)!=pdTRUE)return 0;
     if(!allowRepeat&&releasePoseCompleted) {
@@ -219,6 +239,10 @@ uint32_t SubmitLidarPoseAction(bool fromCommand,bool allowRepeat) {
     if(!fromCommand&&id)Serial.println("{EVT,VISION,LIDAR_POSE_RUNNING}");
     xSemaphoreGive(xLidarPoseMutex);return id;
 }
+/**
+ * @brief 同步兼容入口：提交起始区扫码姿态并等待结果。
+ * @return true 作业成功，false 未提交或执行失败。
+ */
 bool runLidarPoseAction(bool fromCommand,bool allowRepeat){
     const uint32_t id=SubmitLidarPoseAction(fromCommand,allowRepeat);
     // 成功缓存独立于最近八个作业的历史，不能因历史淘汰而重复相对移动。
@@ -226,6 +250,9 @@ bool runLidarPoseAction(bool fromCommand,bool allowRepeat){
 }
 
 // ================= 视觉闭环对齐任务 =================
+/**
+ * @brief 处理最新视觉反馈并推进一次底盘对齐闭环；由统一运动任务调用。
+ */
 void TickVisualAlignment() {
     static bool alignedReported=false,feedbackActive=false;
     static uint32_t lastFeedbackMs=0,lastLogMs=0,previousGeneration=0,previousFrameSequence=0;
@@ -265,6 +292,9 @@ void TickVisualAlignment() {
     // 沿用项目当前设置：300ms 断流停车分支未启用，不扩大故障判定范围。
     xSemaphoreGive(xAlignmentMotionMutex);
 }
+/**
+ * @brief 接收视觉反馈并发布最新数据；实际闭环发令由运动任务推进。
+ */
 void Task_VisualAlignment(void *) {
     // 兼容旧任务符号；正常启动不再创建第二个底盘发令任务。
     for(;;){WakeMotionExecutor();vTaskDelay(pdMS_TO_TICKS(20));}
@@ -272,6 +302,9 @@ void Task_VisualAlignment(void *) {
 
 // 通过 Serial0 通知机载电脑显示。
 // 参数顺序：1. 命令类型 DISPLAY；2. 显示类型 TASK_CODE/DEBUG；3. 正文。
+/**
+ * @brief 封装并发送上位机显示事件；返回是否发送成功。
+ */
 bool updateDisplay(const char *commandType, const char *displayType, const char *content) {
     if (commandType == nullptr || strcmp(commandType, "DISPLAY") != 0
             || displayType == nullptr
@@ -333,12 +366,21 @@ static void requestVisionFunction(VisionStartMode mode, bool start) {
     if (name) Serial.printf("{EVT,VISION,%s,%s}\n", start ? "START_REQUEST" : "STOP_REQUEST", name);
 }
 
+/**
+ * @brief 发送开启指定视觉模式的请求，并按模式设置对齐或物料识别状态。
+ */
 void requestVisionStart(VisionStartMode mode) { requestVisionFunction(mode, true); }
 
 // 定位功能同时结束其底盘闭环；事件不表示相机已经停止。
+/**
+ * @brief 发送停止指定视觉模式的请求，并结束对应本地控制状态。
+ */
 void requestVisionStop(VisionStartMode mode) { requestVisionFunction(mode, false); }
 
 // 总超时可能发生在任意路段或搬运中，位置和持料状态未知，停机等待人工处理。
+/**
+ * @brief 比赛总计时器超时回调，执行既有停止、失败状态及主任务暂停处理。
+ */
 void vHomeTimerCallback(TimerHandle_t xTimer) {
     if (currentState != STATE_DONE) {
         taskMotionAborted = true;
@@ -371,6 +413,13 @@ void vHomeTimerCallback(TimerHandle_t xTimer) {
 // @param len       缓冲区长度
 // @param timeoutMs 阻塞超时(ms), 0=非阻塞
 // @return true 拿到一帧扫码字符串
+/**
+ * @brief 从扫码枪消息队列取出一帧字符串。
+ * @param out 输出任务码缓冲区。
+ * @param len 缓冲区容量，包含结束符。
+ * @param timeoutMs 等待毫秒数，0 表示立即查询。
+ * @return true 取得数据，false 没有数据或参数无效。
+ */
 bool waitScannerCode(char *out, uint32_t len, uint32_t timeoutMs) {
     if (Scanner_WaitCode(out, len, timeoutMs)) {
         Serial.printf("[SCANNER] recv: %s\n", out);
@@ -403,6 +452,9 @@ static void sendPoseQueryReply() {
 #include "serial_commands.inc"
 
 // 开机读取一个舵机的角度，并同步到主控维护的机械臂位姿。
+/**
+ * @brief 启动时读取转台或夹爪实际角度，成功时写入 storedAngle；不发运动指令。
+ */
 void readStartupServoAngle(uint8_t servoId, float &storedAngle) {
     Serial.printf("[Servo] 开机角度读取开始: ID=%u\n",
                   static_cast<unsigned>(servoId));

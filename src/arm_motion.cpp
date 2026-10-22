@@ -7,17 +7,37 @@
 
 using namespace motion;
 namespace {
+/**
+ * @brief 向Program追加一个机械臂位姿步骤；只记录目标、速度和等待时间，不发令。
+ * @param planned true 表示转台使用已规划的精确多圈目标。
+ * @param hold 反馈完成后的夹持或释放保持时间(ms)。
+ */
 void arm(Program &p,const char *name,float h,float l,float t,float claw,float speed,uint32_t wait=0,bool planned=false,uint32_t hold=0) {
     Step s;s.kind=StepKind::ARM;s.name=name;s.high=h;s.length=l;s.turret=t;s.pawl=claw;s.speed=speed;s.waitMs=wait;s.planned=planned;s.holdMs=hold;p.append(s);
 }
+/**
+ * @brief 向Program追加纯等待步骤，ms为等待毫秒数，不操作机构。
+ */
 void wait(Program &p,const char *name,uint32_t ms){Step s;s.name=name;s.waitMs=ms;p.append(s);}
+/**
+ * @brief 追加载物台物料登记步骤；执行到这里才更新指定cargo的颜色。
+ */
 void commit(Program &p,uint8_t cargo,uint8_t color){Step s;s.kind=StepKind::COMMIT;s.name="CARGO_COMMIT";s.cargo=cargo;s.color=color;p.append(s);}
+/**
+ * @brief 追加底盘相对位置动作，x/y为mm、theta为转角deg、speed为最大RPM。
+ */
 void position(Program &p,float x,float y,float theta,float speed){Step s;s.kind=StepKind::POSITION;s.name="POSITION";s.high=x;s.length=y;s.turret=theta;s.speed=speed;p.append(s);}
+/**
+ * @brief 构建到工位上方的平移、稳定和转向步骤；angle可指定规划后的多圈转台角。
+ */
 void above(Program &p,const MaterialStationPose &pose,float claw,const MaterialApproachDelays &d,const float *angle) {
     arm(p,"APPROACH_TRANSLATE",materialTransferLayout.approachHeight,pose.length,-1,claw,materialMotionSteps.approachTranslateSpeed,d.translateMs);
     wait(p,"APPROACH_SETTLE",d.settleMs);
     arm(p,"APPROACH_ROTATE",materialTransferLayout.approachHeight,pose.length,angle?*angle:pose.turretAngle,claw,materialMotionSteps.approachRotateSpeed,d.rotateMs,angle);
 }
+/**
+ * @brief 构建到位、下降、夹紧、抬升及可选缩回的取料序列；retract和together选择缩回衔接方式。
+ */
 void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelays &d,bool retract,bool together,const float *angle) {
     above(p,pose,materialTransferLayout.clawOpenAngle,d.pickAbove,angle);
     arm(p,"PICK_DESCEND",pose.high,-1,-1,materialTransferLayout.clawOpenAngle,materialMotionSteps.pickDescendSpeed,d.pickDescendMs);
@@ -25,6 +45,9 @@ void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelay
     arm(p,"PICK_LIFT",materialTransferLayout.approachHeight,together?0:-1,-1,-1,materialMotionSteps.pickLiftSpeed,d.pickLiftMs);
     if(retract&&!together)arm(p,"PICK_RETRACT",-1,0,-1,-1,materialMotionSteps.pickLiftSpeed);
 }
+/**
+ * @brief 构建放料转向、下降、松爪及抬升序列；height为实际层高，retracted表示小臂已缩回。
+ */
 void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle) {
     if(retracted) {
         wait(p,"PLACE_TRANSLATE_WAIT",d.placeAbove.translateMs);wait(p,"PLACE_SETTLE",d.placeAbove.settleMs);
@@ -34,10 +57,16 @@ void place(Program &p,const MaterialStationPose &pose,float height,const Materia
     arm(p,"PLACE_RELEASE",-1,-1,-1,materialTransferLayout.clawOpenAngle,materialMotionSteps.placeReleaseSpeed,d.placeReleaseMs,false,ARM_RELEASE_HOLD_MS);
     arm(p,"PLACE_LIFT",materialTransferLayout.approachHeight,-1,-1,-1,materialMotionSteps.placeLiftSpeed,d.placeLiftMs);
 }
+/**
+ * @brief 回读转台实际角度并规划整组多圈转向目标，减少累计转角；成功返回true。
+ */
 bool plan(const float *targets,size_t count,TurretPathPlan &result) {
     float actual=0;if(!ReadArmTurretAngle(actual))return false;
     return PlanTurretPath(actual,targets,count,TURRET_CABLE_MIN_DEG,TURRET_CABLE_MAX_DEG,result);
 }
+/**
+ * @brief 构建单件或整组三件的正向放料/反向取回序列，选择对应动作组延时并追加物料登记；成功返回nullptr。
+ */
 const char *transfer(const MotionRequest &r,Program &p) {
     const bool retrieve=r.kind==MotionKind::RETRIEVE_ROUND||r.kind==MotionKind::RETRIEVE||r.kind==MotionKind::DEMO_RETRIEVE;
     const bool single=r.kind==MotionKind::TRANSFER||r.kind==MotionKind::RETRIEVE;
@@ -65,6 +94,9 @@ const char *transfer(const MotionRequest &r,Program &p) {
     }
     return nullptr;
 }
+/**
+ * @brief 构建START或LOOK系列姿态；视觉观察抬升按记录目标高度差计算等待，不把目标缓存当实测。
+ */
 void observation(Program &p,ArmObservation pose,uint8_t zone) {
     // 仅观察姿态按记录的指令高度估算：170 mm 对应 1500 ms。
     const uint32_t liftWait=static_cast<uint32_t>(lroundf(fabsf(170.0f-currentArm.high)*1500.0f/170.0f));
@@ -86,6 +118,12 @@ void observation(Program &p,ArmObservation pose,uint8_t zone) {
     }
 }
 }
+/**
+ * @brief 将动作请求展开为机械臂步骤序列；不下发运动命令、不等待动作结束，转台路径规划会回读实际角度。
+ * @param r 抓放料、观察姿态或原始控制请求。
+ * @param p 输出步骤序列，后续由 motion::Sequence 和 MotionHardware 执行。
+ * @return nullptr 构建成功，否则返回错误原因字符串。
+ */
 const char *BuildArmProgram(const MotionRequest &r,Program &p) {
     p.count=0;
     if((r.kind==MotionKind::LIDAR_POSE||r.kind==MotionKind::HOME_OBSERVE||

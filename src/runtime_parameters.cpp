@@ -186,13 +186,23 @@ void reply(const char *action, uint32_t id, const char *status, const char *deta
 }
 } // namespace
 
+/**
+ * @brief 将浮点参数引用注册到运行时参数表，供串口读取和修改；name为上位机显示名称。
+ */
 void RegisterRuntimeFloat(const char *name, float &value, float minimum, float maximum) {
     add(name, &value, minimum, maximum, false);
 }
+/**
+ * @brief 将无符号整型参数引用注册到运行时参数表，保留名称及可写范围信息。
+ */
 void RegisterRuntimeUInt(const char *name, uint32_t &value, float minimum, float maximum) {
     add(name, &value, minimum, maximum, true);
 }
 
+/**
+ * @brief 应用由robot_parameters.json生成并编译进固件的默认值。
+ * @return true 所有默认值应用成功，false 存在参数应用错误。
+ */
 bool ApplyCompiledParameterDefaults() {
     initialize();
     if (registrationFailed) {
@@ -228,6 +238,10 @@ bool ApplyCompiledParameterDefaults() {
     return true;
 }
 
+/**
+ * @brief 处理CFG参数读取、写入等串口动作；由串口层提供已解析字段和可写状态。
+ * @return true 已处理对应请求，false 请求无法处理。
+ */
 bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writable) {
     initialize();
     const char *action = size > 0 ? fields[0] : "FRAME";

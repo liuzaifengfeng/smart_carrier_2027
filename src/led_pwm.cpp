@@ -22,6 +22,9 @@ void applyBrightness() {
 }
 }
 
+/**
+ * @brief 初始化灯光PWM通道，默认关闭输出；返回硬件配置是否成功。
+ */
 bool LedPwm_Init() {
     // setup() 在其他任务启动前初始化互斥锁。
     if (!pwmMutex) pwmMutex = xSemaphoreCreateMutex();
@@ -44,8 +47,14 @@ bool LedPwm_Init() {
     return true;
 }
 
+/**
+ * @brief 判断灯光PWM是否初始化成功。
+ */
 bool LedPwm_IsReady() { PwmLock lock; return ready; }
 
+/**
+ * @brief 设置灯光亮度百分比，不保存到Flash；返回是否应用成功。
+ */
 bool LedPwm_SetBrightness(uint32_t percent) {
     PwmLock lock;
     if (!ready || percent > 100) return false;
@@ -55,8 +64,14 @@ bool LedPwm_SetBrightness(uint32_t percent) {
     return true;
 }
 
+/**
+ * @brief 读取设定亮度百分比，不等于故障闪烁期间的瞬时实际输出。
+ */
 uint8_t LedPwm_GetBrightness() { PwmLock lock; return brightness; }
 
+/**
+ * @brief 设置PWM频率Hz；返回是否成功应用。
+ */
 bool LedPwm_SetFrequency(uint32_t hz) {
     PwmLock lock;
     if (!ready || hz < LED_PWM_MIN_FREQUENCY_HZ || hz > LED_PWM_MAX_FREQUENCY_HZ)
@@ -82,8 +97,14 @@ bool LedPwm_SetFrequency(uint32_t hz) {
 }
 
 // Arduino 2.x 的 ledcReadFreq 在占空比为 0 时返回 0，故保存配置接口的回读值。
+/**
+ * @brief 读取当前配置的PWM频率Hz。
+ */
 uint32_t LedPwm_GetFrequency() { PwmLock lock; return ready ? frequencyHz : 0; }
 
+/**
+ * @brief 周期更新故障闪烁；fault=true时覆盖实际输出，故障解除后恢复设定亮度。
+ */
 void LedPwm_UpdateFaultBlink(bool fault) {
     PwmLock lock;
     if (!ready) return;

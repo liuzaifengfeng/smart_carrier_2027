@@ -31,8 +31,14 @@ struct MotionStatus {
     bool chassisDone=false,armStarted=false,armReady=false;
     bool lastTranslation=false,terminalTurn=false;
     float remainingMm=0,progress=0;
+    /**
+     * @brief 判断作业是否进入 DONE、FAILED 或 CANCELLED 终态；终态不一定表示成功。
+     */
     bool complete() const {return state==MotionState::DONE||state==MotionState::FAILED||state==MotionState::CANCELLED;}
 };
+/**
+ * @brief 将运动状态转换为日志使用的固定英文名称。
+ */
 inline const char *MotionStateName(MotionState state) {
     static const char *names[]={"QUEUED","RUNNING","DONE","FAILED","CANCELLED"};
     return names[static_cast<uint8_t>(state)];

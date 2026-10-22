@@ -6,11 +6,17 @@
 #include "disc_position_grab.h"
 #include "motion_executor.h"
 static bool serialDebugMode = true;
+/**
+ * @brief 处理连续路径试跑配置、准备、启动、状态和停止指令；返回是否已匹配处理。
+ */
 static bool serialTrial(const SerialFrame &frame);
 static DebugReleaseButton bootReleaseButton;
 static portMUX_TYPE bootReleaseMux = portMUX_INITIALIZER_UNLOCKED;
 
 // loop独立采样，串口任务执行阻塞动作时也能识别并忽略按键。
+/**
+ * @brief 采样板载BOOT按钮并记录Release请求，实际切换由空闲串口任务处理。
+ */
 void PollDebugBootButton() {
     const bool pressed = digitalRead(BOOT0_PIN) == LOW;
     const uint32_t nowMs = millis();
@@ -19,15 +25,24 @@ void PollDebugBootButton() {
     portEXIT_CRITICAL(&bootReleaseMux);
 }
 
+/**
+ * @brief 更新按钮Release可用状态；只有调试空闲且试跑、运动执行器均空闲时允许触发。
+ */
 static void serialBootSetIdle(bool idle) {
     portENTER_CRITICAL(&bootReleaseMux);
     bootReleaseButton.setIdle(serialDebugMode && idle && !ContinuousTrialActive() && !MotionExecutorActive());
     portEXIT_CRITICAL(&bootReleaseMux);
 }
+/**
+ * @brief 按原请求类别和动作发送指定状态的RSP串口应答。
+ */
 static void serialReply(const SerialFrame &frame, const char *status) {
     Serial.printf("{RSP,%s,%s,%s}\n", frame.fields[1], frame.fields[2], status);
 }
 
+/**
+ * @brief 复制串口应答上下文并暂存运动作业，等待ACK后放行；返回作业编号，0表示未提交。
+ */
 static uint32_t serialPrepareMotion(const SerialFrame &frame,MotionRequest &request) {
     snprintf(request.category,sizeof(request.category),"%s",frame.fields[1]);
     snprintf(request.command,sizeof(request.command),"%s",frame.fields[2]);
@@ -35,11 +50,17 @@ static uint32_t serialPrepareMotion(const SerialFrame &frame,MotionRequest &requ
     if(!id)serialError(frame,"BUSY");
     return id;
 }
+/**
+ * @brief 准备运动作业，先发ACK，再通过LaunchMotion允许工作任务执行。
+ */
 static void serialMotion(const SerialFrame &frame,MotionRequest &request) {
     const uint32_t id=serialPrepareMotion(frame,request);if(!id)return;
     serialReply(frame,"ACK");LaunchMotion(id);
 }
 
+/**
+ * @brief 发送参数配置请求的错误应答，reason为错误原因。
+ */
 static void serialCfgError(const SerialFrame &frame, const char *reason) {
     uint32_t id = 0;
     if (frame.count > 3) serialUInt(frame.fields[3], id, UINT32_MAX);
@@ -47,6 +68,9 @@ static void serialCfgError(const SerialFrame &frame, const char *reason) {
                   static_cast<unsigned long>(id), reason);
 }
 
+/**
+ * @brief 检查帧中的类别和动作名是否属于已支持的串口指令。
+ */
 static bool serialKnownAction(const SerialFrame &frame) {
     static const char *const names[][2] = {
         {"SYS", "HELLO"}, {"SYS", "RELEASE"}, {"SYS", "READY"},
@@ -82,6 +106,9 @@ static bool serialKnownAction(const SerialFrame &frame) {
     return false;
 }
 
+/**
+ * @brief 按各字段范围解析一组浮点参数；失败时输出相应协议错误并返回false。
+ */
 static bool serialFloats(const SerialFrame &frame, float *values, const float *minimum, const float *maximum, size_t count) {
     if (frame.count != count + 3) return false;
     for (size_t i = 0; i < count; ++i) {
@@ -90,6 +117,9 @@ static bool serialFloats(const SerialFrame &frame, float *values, const float *m
     return true;
 }
 
+/**
+ * @brief 处理节点路径串口请求，区分自动路径回传与调试路径执行。
+ */
 static void serialRoute(const SerialFrame &frame) {
     const size_t count = frame.count - 3;
     if (count < 2 || count > MAX_NODE_PATH_LENGTH) {
@@ -131,6 +161,9 @@ static void serialRoute(const SerialFrame &frame) {
     portEXIT_CRITICAL(&nodePathMux);
 }
 
+/**
+ * @brief 处理进入正式运行模式，重置比赛准备状态并启动或恢复主状态机任务。
+ */
 static void serialRelease(const SerialFrame &frame) {
     if (!serialDebugMode) { serialError(frame, "MODE"); return; }
     if (discMaterialActive) requestVisionStop(VisionStartMode::DISC_MATERIAL);
@@ -156,6 +189,9 @@ static void serialRelease(const SerialFrame &frame) {
     serialReply(frame, "OK");
 }
 
+/**
+ * @brief 在串口空闲时消费板载按钮的Release请求，复用正式模式切换入口。
+ */
 static void serialBootReleaseAtIdle(bool idle) {
     portENTER_CRITICAL(&bootReleaseMux);
     bootReleaseButton.setIdle(serialDebugMode && idle && !ContinuousTrialActive() && !MotionExecutorActive());
@@ -169,6 +205,9 @@ static void serialBootReleaseAtIdle(bool idle) {
 }
 
 // 串口只提交；ACK、选择事件先于 Launch，实际完成及进度由运动任务发布。
+/**
+ * @brief 构造并提交圆盘抓放请求，附颜色、载物台、位置及视觉应答上下文；返回作业编号。
+ */
 static uint32_t serialQueueDiscGrab(uint8_t color,uint8_t cargo,uint8_t position=0,uint8_t ack=0,size_t count=0,bool force=false) {
     MotionRequest r;r.kind=MotionKind::DISC_GRAB;r.color=color;r.cargo=cargo;r.position=position;r.force=force;
     r.automatic=!force&&!serialDebugMode&&(currentState==STATE_GRAB_ROUND1||currentState==STATE_GRAB_ROUND2);
@@ -189,10 +228,16 @@ static uint32_t serialQueueDiscGrab(uint8_t color,uint8_t cargo,uint8_t position
     }
     LaunchMotion(id);return id;
 }
+/**
+ * @brief 按任务颜色和目标载物台提交自动圆盘抓放作业。
+ */
 static void serialExecuteTaskGrab(uint8_t color,uint8_t cargo) {
     serialQueueDiscGrab(color,cargo);
 }
 
+/**
+ * @brief 按当前任务进度评估识别颜色，满足条件后触发抓取，否则发送拒绝原因。
+ */
 static void serialDiscColorDecision(uint8_t color) {
     const RobotState state = currentState;
     const int progress = roundProgress;
@@ -227,6 +272,9 @@ static void serialDiscColorDecision(uint8_t color) {
 }
 
 // 显式 GRAB 与 COLOR 共用任务进度和完成事件。
+/**
+ * @brief 处理串口单件抓取、强制抓取等圆盘指令，并提交对应运动作业。
+ */
 static void serialDiscGrab(const SerialFrame &frame) {
     uint32_t color = discMaterialColor;
     uint32_t cargo = 0;
@@ -262,6 +310,9 @@ static void serialDiscGrab(const SerialFrame &frame) {
 }
 
 // 视觉保证本帧内全部位置此刻可抓；只选一件，不缓存未选中的候选。
+/**
+ * @brief 解析一帧圆盘候选位置和颜色，选出下一件任务目标并提交抓取。
+ */
 static void serialDiscPositions(const SerialFrame &frame) {
     if (frame.count < 5 || frame.count > 9 || (frame.count - 3) % 2 != 0) {
         serialError(frame, "FORMAT"); return;
@@ -311,6 +362,9 @@ static void serialDiscPositions(const SerialFrame &frame) {
     if(!serialQueueDiscGrab(candidate.color,cargo,candidate.position,2,count))serialError(frame,"BUSY");
 }
 
+/**
+ * @brief 处理载物台到工位的单件放料指令，解析编号后提交TRANSFER作业。
+ */
 static void serialTransfer(const SerialFrame &frame) {
     if (!serialDebugMode) { serialError(frame, "MODE"); return; }
     uint32_t cargoCode = 0, workAreaCode = 0;
@@ -321,6 +375,9 @@ static void serialTransfer(const SerialFrame &frame) {
     MotionRequest r;r.kind=MotionKind::TRANSFER;r.cargo=cargoCode;r.work=workAreaCode;r.debug=true;
     serialMotion(frame,r);
 }
+/**
+ * @brief 处理工位到载物台的单件取回指令，解析编号后提交RETRIEVE作业。
+ */
 static void serialRetrieve(const SerialFrame &frame) {
     if(!serialDebugMode){serialError(frame,"MODE");return;}
     uint32_t work=0,cargo=0;
@@ -331,6 +388,9 @@ static void serialRetrieve(const SerialFrame &frame) {
     serialMotion(frame,r);
 }
 
+/**
+ * @brief 串口业务总分发入口：按类别和动作处理系统、视觉、底盘、机械臂及参数请求。
+ */
 static void serialDispatch(const SerialFrame &frame) {
     const bool motionStop=frame.is("CHASSIS","MOVE",3)&&strcmp(frame.fields[5],"1")==0;
     if(motionStop) {
@@ -662,6 +722,9 @@ static void serialDispatch(const SerialFrame &frame) {
     }
 }
 
+/**
+ * @brief 处理连续路径试跑配置、准备、启动、状态和停止指令；返回是否已匹配处理。
+ */
 static bool serialTrial(const SerialFrame &frame) {
     if(strcmp(frame.fields[1],"NAV")!=0||strncmp(frame.fields[2],"TRIAL_",6)!=0)return false;
     uint32_t id=0;
@@ -712,6 +775,9 @@ static bool serialTrial(const SerialFrame &frame) {
     return true;
 }
 
+/**
+ * @brief 接收串口帧并分发查询、参数、调试与运动请求；运动交给统一执行器。
+ */
 void Task_Serial_CMD(void *pvParameters) {
     // 1. 只有本任务读取 Serial0；Debug/Release 共用缓冲区和收帧规则。
     char line[SERIAL_FRAME_BYTES];

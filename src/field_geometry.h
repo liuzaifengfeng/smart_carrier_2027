@@ -17,6 +17,9 @@ constexpr Rect OBSTACLES[]={
 };
 #undef FIELD_BOUNDS
 #undef FIELD_OBSTACLE
+/**
+ * @brief 根据场地边界、车体尺寸和障碍坐标生成几何版本签名，供上下位机核对地图一致性。
+ */
 inline uint32_t signature() {
     uint32_t hash=2166136261u;
     const float bounds[]={SIZE,BODY};
@@ -27,6 +30,10 @@ inline uint32_t signature() {
 }
 // 返回 nullptr 表示整个300mm方形车体与已知障碍/外边界保持 margin。
 // SAT同时检查世界轴与车体轴，不能仅检查四角是否落进矩形。
+/**
+ * @brief 检查指定位置、航向的整个方形车体与场地边界及障碍是否保持margin。
+ * @return nullptr 几何通过，否则为BOUNDARY或OBSTACLE；距离单位mm，航向deg。
+ */
 inline const char *check(float x,float y,float heading,float margin) {
     const float a=heading*3.14159265358979323846f/180;
     const float fx=cosf(a),fy=sinf(a),rx=sinf(a),ry=-cosf(a),half=BODY/2;

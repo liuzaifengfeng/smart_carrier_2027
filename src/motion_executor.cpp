@@ -33,21 +33,39 @@ int64_t scanBefore[4]={};
 float scanDistance=0;
 const char *activeSpan=nullptr;
 
+/**
+ * @brief 在临界区内复制当前作业状态，供其他任务读取。
+ */
 MotionStatus snapshot(){portENTER_CRITICAL(&jobMux);auto s=status;portEXIT_CRITICAL(&jobMux);return s;}
+/**
+ * @brief 检查OTA、取消代次与总任务取消标志，供当前运动控制器轮询。
+ */
 bool cancelled(){portENTER_CRITICAL(&jobMux);bool c=ota||launchGate.cancelled(job.generation);portEXIT_CRITICAL(&jobMux);return c||taskMotionAborted;}
+/**
+ * @brief 输出当前作业某个分项的BEGIN或END计时事件。
+ */
 void span(const char *name,bool begin) {
     Serial.printf("{EVT,MOTION,SPAN,%lu,%lu,%s,%s}\n",static_cast<unsigned long>(job.id),
         static_cast<unsigned long>(millis()),name,begin?"BEGIN":"END");
 }
+/**
+ * @brief 结束上一分项并开始新分项，同时更新当前作业阶段名称。
+ */
 void phase(const char *name) {
     if(activeSpan&&strcmp(activeSpan,name)==0)return;
     if(activeSpan)span(activeSpan,false);activeSpan=name;span(name,true);
     portENTER_CRITICAL(&jobMux);status.phase=name;portEXIT_CRITICAL(&jobMux);
 }
+/**
+ * @brief 输出当前作业的单次完成标志事件，用于分析底盘和机械臂重叠。
+ */
 void flag(const char *name) {
     Serial.printf("{EVT,MOTION,FLAG,%lu,%lu,%s,1}\n",static_cast<unsigned long>(job.id),
         static_cast<unsigned long>(millis()),name);
 }
+/**
+ * @brief 取消路径与相对位置运动并停止升降/伸缩；保留夹爪当前命令。
+ */
 void stopHardware() {
     ContinuousMotionCancel();
     CancelPositionMove();
@@ -55,6 +73,9 @@ void stopHardware() {
     for(uint8_t id=5;id<=6;++id)Emm_V5_Stop_Now(id,false);
     // 保留夹爪当前命令，不在未知持料状态下松手。
 }
+/**
+ * @brief 根据动作类型发送完成应答，并在圆盘抓取成功后推进物料登记进度。
+ */
 void completedEvent(const MotionStatus &result) {
     const auto &r=job.request;const bool success=result.state==MotionState::DONE;
     if(r.kind==MotionKind::LIDAR_POSE&&r.category[0])CompleteLidarPose(success,r.debug);
@@ -90,6 +111,9 @@ void completedEvent(const MotionStatus &result) {
             success?(r.kind==MotionKind::ARM_RAW||r.kind==MotionKind::ARM_POSE||r.kind==MotionKind::SERVO_RAW?"ISSUED":"DONE"):"FAILED");
     }
 }
+/**
+ * @brief 结束当前作业，记录终态、计时和错误，发送业务事件并保存历史快照。
+ */
 void finish(MotionState state,const char *reason=nullptr) {
     if(activeSpan){span(activeSpan,false);activeSpan=nullptr;}
     if(armSpanOpen){span("ARM_PROGRAM",false);armSpanOpen=false;}
@@ -109,6 +133,10 @@ void finish(MotionState state,const char *reason=nullptr) {
     portENTER_CRITICAL(&jobMux);history[historyIndex++%8]=result;portEXIT_CRITICAL(&jobMux);
     running=false;
 }
+/**
+ * @brief 调用BuildArmProgram构建步骤并启动机械臂Sequence；失败时结束当前作业。
+ * @return true 序列已启动，false 构建失败。
+ */
 bool beginArm(const MotionRequest &request) {
     portENTER_CRITICAL(&jobMux);status.phase="ARM_PREPARE";portEXIT_CRITICAL(&jobMux);
     const char *error=BuildArmProgram(request,program);
@@ -116,6 +144,9 @@ bool beginArm(const MotionRequest &request) {
     arm.begin(program,hardware);join.armStarted=true;join.armReady=false;
     span("ARM_PROGRAM",true);armSpanOpen=true;flag("ARM_STARTED");return true;
 }
+/**
+ * @brief 推进一次机械臂步骤序列，结束时设置ARM_READY；仍在执行或失败时返回false。
+ */
 bool tickArm() {
     arm.tick();if(arm.active())return false;
     if(arm.failure()){
@@ -125,11 +156,17 @@ bool tickArm() {
     if(!join.armReady){join.armReady=true;span("ARM_PROGRAM",false);armSpanOpen=false;flag("ARM_READY");}
     return true;
 }
+/**
+ * @brief 选择导航终点航向：显式theta优先，否则按功能区节点确定。
+ */
 float endpointHeading(const MotionRequest &r) {
     if(isfinite(r.theta))return r.theta;
     const uint8_t end=r.kind==MotionKind::NAVIGATE?r.endNode:r.path[r.pathCount-1];
     return end==DISC_AREA_NODE?DISC_AREA_HEADING:end==COARSE_AREA_NODE?COARSE_AREA_HEADING:end==TEMP_AREA_NODE?TEMP_AREA_HEADING:NAN;
 }
+/**
+ * @brief 准备正式节点路径并启动控制器，设置导航及机械臂合流条件；返回是否启动成功。
+ */
 bool beginPath() {
     const auto &r=job.request;
     if(!H30PrepareNodePath(r.path,r.pathCount,r.kind==MotionKind::NAVIGATE?NODE_PATH_SPEED_MM_S:r.speed,endpointHeading(r),r.automatic)) {
@@ -139,6 +176,10 @@ bool beginPath() {
     ContinuousMotionBegin();stage=2;join.armReady=r.observation==ArmObservation::NONE;
     return true;
 }
+/**
+ * @brief 非阻塞读取扫码队列，用parseTaskCode解析并登记currentTask；也接受已由串口登记的任务码。
+ * @return true 已取得有效任务码，false 仍未收到。
+ */
 bool pollTaskCode() {
     if(taskReceived)return true;
     char code[SCANNER_BUF_LEN];
@@ -149,10 +190,16 @@ bool pollTaskCode() {
     }
     return taskReceived;
 }
+/**
+ * @brief 将编码器记录的扫码前后行程换算到地图坐标，更新估算位姿；不是外部实测定位。
+ */
 void recordScanTravel(const RobotPose &start,float distance) {
     const continuous::Vec d=continuous::bodyToWorld({0,distance},start.theta);
     currentPose={start.x+d.x,start.y+d.y,start.theta};
 }
+/**
+ * @brief 推进扫码作业：START收臂、接近600mm并搜索400mm，必要时往返重试；底盘连续行程交给ScanMotionRunner，数据由pollTaskCode读取。
+ */
 void scanTick() {
     const float direction=job.request.zone==1?1:-1;
     if(stage==0) {
@@ -163,7 +210,7 @@ void scanTick() {
         if(!tickArm()||!running)return;
         if(pollTaskCode()){finish(MotionState::DONE);return;}
         scanStart=currentPose;
-        ScanMotionSettings cfg{direction*700,direction*400,Y_PULSE,static_cast<uint16_t>(SCAN_APPROACH_SPEED_RPM),static_cast<uint16_t>(SCAN_SEARCH_SPEED_RPM)};
+        ScanMotionSettings cfg{direction*600,direction*400,Y_PULSE,static_cast<uint16_t>(SCAN_APPROACH_SPEED_RPM),static_cast<uint16_t>(SCAN_SEARCH_SPEED_RPM)};
         BeginContinuousScan(cfg,pollTaskCode);stage=2;phase("SCAN_APPROACH");return;
     }
     if(stage==2) {
@@ -189,6 +236,9 @@ void scanTick() {
         if(received)finish(MotionState::DONE);else stage=3;
     }
 }
+/**
+ * @brief 推进导航作业：请求节点路径、执行底盘运动、按进站阶段提前启动观察姿态，等待两者合流完成。
+ */
 void navigationTick() {
     auto &r=job.request;
     if(stage==0&&r.kind==MotionKind::NAVIGATE) {
@@ -231,6 +281,9 @@ void navigationTick() {
     portEXIT_CRITICAL(&jobMux);
     if(join.complete())finish(MotionState::DONE);
 }
+/**
+ * @brief 统一运动任务循环：领取已放行作业，按MotionKind调用扫码、导航或机械臂执行入口，并推进视觉闭环。
+ */
 void task(void *) {
     for(;;) {
         if(!running) {
@@ -281,13 +334,29 @@ void task(void *) {
     }
 }
 }
+/**
+ * @brief 创建统一运动任务及作业队列；后续底盘、机械臂和视觉闭环由该任务推进。
+ * @return true 初始化成功，false 队列或任务创建失败。
+ */
 bool MotionExecutorInit() {
     if(worker)return true;
     queue=xQueueCreate(1,sizeof(Job));if(!queue)return false;
     return xTaskCreate(task,"MotionExecutor",12288,nullptr,6,&worker)==pdPASS;
 }
+/**
+ * @brief 通知运动任务立即检查待执行作业、取消请求或新视觉反馈。
+ */
 void WakeMotionExecutor(){if(worker)xTaskNotifyGive(worker);}
+/**
+ * @brief 读取当前运动作业编号，供运动任务内部输出分项日志。
+ */
 uint32_t CurrentMotionId(){return job.id;}
+/**
+ * @brief 按值复制动作请求到队列，不等待动作执行完成。工作任务按 kind 分发到 scanTick、navigationTick 或机械臂序列。
+ * @param request 动作类型、目标位置及本轮任务数据。
+ * @param launch true 立即允许执行；false 等串口回复 ACK 后调用 LaunchMotion 放行。
+ * @return 非零作业编号；0 表示未提交。提交成功不等于动作完成。
+ */
 uint32_t SubmitMotion(const MotionRequest &request,bool launch) {
     Job queued;queued.request=request;queued.state=currentState;queued.progress=roundProgress;
     portENTER_CRITICAL(&jobMux);
@@ -299,14 +368,30 @@ uint32_t SubmitMotion(const MotionRequest &request,bool launch) {
     if(xQueueSend(queue,&queued,0)!=pdTRUE)return 0;
     WakeMotionExecutor();return queued.id;
 }
+/**
+ * @brief 放行已入队的指定作业，并唤醒运动任务；用于保证串口 ACK 先于动作执行。
+ * @param id SubmitMotion 返回的作业编号。
+ */
 void LaunchMotion(uint32_t id){portENTER_CRITICAL(&jobMux);if(status.id==id&&status.state==MotionState::QUEUED)launchGate.release(id);portEXIT_CRITICAL(&jobMux);WakeMotionExecutor();}
+/**
+ * @brief 读取指定作业的状态快照，可查询当前作业及最近保留的终态。
+ * @param id 提交动作时取得的作业编号。
+ * @return 含执行状态、阶段、错误原因及底盘/机械臂完成标志的快照。
+ */
 MotionStatus GetMotionStatus(uint32_t id) {
     portENTER_CRITICAL(&jobMux);MotionStatus value;
     if(status.id==id)value=status;else for(const auto &entry:history)if(entry.id==id){value=entry;break;}
     if(value.state==MotionState::RUNNING)value.elapsedMs=millis()-value.startedMs;
     portEXIT_CRITICAL(&jobMux);return value;
 }
+/**
+ * @brief 判断是否存在排队中或执行中的运动作业。
+ * @return true 表示执行器忙碌。
+ */
 bool MotionExecutorActive(){const auto s=snapshot();return s.state==MotionState::QUEUED||s.state==MotionState::RUNNING;}
+/**
+ * @brief 取消当前作业代次并请求工作任务停车；旧作业不会在取消后继续执行。
+ */
 void CancelMotion(){
     portENTER_CRITICAL(&jobMux);launchGate.cancel();stopPending=true;portEXIT_CRITICAL(&jobMux);
     ContinuousTrialCancel();setAlignmentEnabled(false);
@@ -322,5 +407,14 @@ void CancelMotion(){
     }
     WakeMotionExecutor();
 }
+/**
+ * @brief 设置 OTA 占用状态；进入 OTA 时取消运动作业。
+ * @param active true 进入 OTA，false 退出 OTA。
+ */
 void MotionExecutorSetOta(bool active){portENTER_CRITICAL(&jobMux);ota=active;portEXIT_CRITICAL(&jobMux);if(active)CancelMotion();}
+/**
+ * @brief 阻塞当前调用任务，轮询指定作业直至终态；只供旧调试接口使用。
+ * @param id 待等待的作业编号。
+ * @return true 作业 DONE，false 编号无效或作业失败、取消。
+ */
 bool WaitMotion(uint32_t id){if(!id)return false;for(;;){const auto s=GetMotionStatus(id);if(s.complete())return s.state==MotionState::DONE;vTaskDelay(pdMS_TO_TICKS(10));}}

@@ -12,6 +12,9 @@ const char *health(IO &io,uint8_t id,const Motor &m,double target=0) {
     return error;
 }
 }
+/**
+ * @brief 读取惯性数据并处理当前路径的航向参考可用性；成功返回 nullptr。
+ */
 const char *Runner::sample(H30Attitude &motion) {
     if(io->cancelled())return "STOPPED";
     float measured=output->heading;
@@ -20,7 +23,13 @@ const char *Runner::sample(H30Attitude &motion) {
     else output->heading=measured;
     return io->cancelled()?"STOPPED":nullptr;
 }
+/**
+ * @brief 记录路径失败原因，切到结束阶段并停车。
+ */
 void Runner::fail(const char *reason) {error=reason;stage=FINISHED;io->halt();}
+/**
+ * @brief 初始化整条节点路径，记录配置、硬件接口和输出结果；后续由 tick 推进。
+ */
 void Runner::begin(const Route &path,const Settings &config,IO &hardware,Result &result) {
     *this=Runner{};route=&path;settings=&config;io=&hardware;output=&result;
     offset=config.startOffset;result.estimated=path.segments[0].start+offset;
@@ -31,12 +40,21 @@ void Runner::begin(const Route &path,const Settings &config,IO &hardware,Result 
     observationIndex=finalBlock?finalBlock-1:0;
     stage=START;due=hardware.now();
 }
+/**
+ * @brief 返回到下次推进所需等待毫秒数，供统一运动任务调度。
+ */
 uint32_t Runner::nextDelay() const {
     const int32_t left=static_cast<int32_t>(due-io->now());return left>0?left:0;
 }
+/**
+ * @brief 返回当前平移动作剩余距离(mm)，依据位置反馈估计。
+ */
 float Runner::remainingDistance() const {
     return fmaxf(0,fabsf(distance)-(output->s-baseS));
 }
+/**
+ * @brief 准备当前直行或转向动作的四轮目标与速度曲线；参数表示是否为到位校角。
+ */
 void Runner::startMove(bool alignment) {
     turningForAlignment=alignment;rotating=alignment;
     H30Attitude m;const char *failure=sample(m);if(failure){fail(failure);return;}
@@ -56,6 +74,9 @@ void Runner::startMove(bool alignment) {
     }
     zeroId=1;stage=prepared?PREPARE:ZERO;
 }
+/**
+ * @brief 结束当前航向对齐，转入后续路径选择阶段。
+ */
 void Runner::aligned() {
     if(action==FINAL){stage=FINISHED;io->halt();return;}
     if(action==ROTATION){index=after;stage=SELECT;return;}
@@ -67,10 +88,16 @@ void Runner::aligned() {
     applied=WheelCommand{};previous=io->now();lastReport=0;valid=false;
     io->beginAction();io->timing("OUTER_DRIFT_SENT");stage=OUTER;
 }
+/**
+ * @brief 完成当前移动段并推进路径索引和估算结果。
+ */
 void Runner::arrived() {
     if(turningForAlignment){stage=ALIGN;return;}
     offset={};index=after;stage=SELECT;
 }
+/**
+ * @brief 处理当前四轮位置动作的一次反馈、偏航及到位检查。
+ */
 void Runner::moveTick() {
     const uint32_t cycleAt=io->now();
     if(cycleAt-started>deadline){fail("MOTOR_ARRIVAL_TIMEOUT");return;}
@@ -152,6 +179,9 @@ void Runner::moveTick() {
     if(io->now()-lastReport>=200){io->report(rotating?"POSITION_TURN":"POSITION_STRAIGHT",*output,targetHeading);lastReport=io->now();}
     due=io->now()+(allIdle||maxResidual<=unitsPerDistance*(rotating?2.0:10.0)?1:20);
 }
+/**
+ * @brief 根据四轮反馈更新本次动作行程和到位残差；成功返回 nullptr。
+ */
 const char *Runner::displacement(const Motor (&states)[4]) {
     float pulses[4];
     for(int i=0;i<4;++i) {
@@ -175,6 +205,9 @@ const char *Runner::displacement(const Motor (&states)[4]) {
     for(int i=0;i<12;++i){float u=a+(b-a)/3,v=b-(b-a)/3;if(distanceAt(u)<distanceAt(v))b=v;else a=u;}
     tracker.s=fmaxf(tracker.s,(a+b)*.5f);output->s=tracker.s;return nullptr;
 }
+/**
+ * @brief 推进当前节点控制阶段一次，包括起步、段选择、位置目标下发及到位反馈。
+ */
 void Runner::tick() {
     if(!active())return;
     if(io->cancelled()){fail("STOPPED");return;}
@@ -278,6 +311,10 @@ void Runner::tick() {
 
 namespace node_position {
 // 同步兼容入口仅供旧调用和原生仿真；正式运动任务直接交替调用 tick。
+/**
+ * @brief 同步推进节点位置路径直至结束；result 保存估算位置和航向。
+ * @return nullptr 成功，否则返回错误原因。
+ */
 const char *run(const continuous::Route &route,const Settings &settings,IO &io,Result &result) {
     Runner runner;runner.begin(route,settings,io,result);
     while(runner.active()) {runner.tick();if(runner.active())io.wait(runner.nextDelay());}

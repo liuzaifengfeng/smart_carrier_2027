@@ -101,22 +101,76 @@ MotionRequest round(MotionKind kind,const int *colors,const int *positions,uint8
     return request;
 }
 }
+/**
+ * @brief 同步执行圆盘取料并放入指定载物台；materialCode为颜色，cargoCode为1~3号载物台，返回作业是否完成。
+ */
 bool MoveDiscToCargo(uint8_t color,uint8_t cargo) {
     auto r=transfer(MotionKind::DISC_GRAB,cargo,0,color);r.position=4;return submit(r);
 }
+/**
+ * @brief 同步执行载物台到工位的第一层放料；cargoCode和workAreaCode均为1~3，实际序列由BuildArmProgram构建。
+ */
 bool MoveCargoToWorkArea(uint8_t cargo,uint8_t work){return submit(transfer(MotionKind::TRANSFER,cargo,work));}
+/**
+ * @brief 同步执行工位取回到载物台；materialCode用于完成后恢复物料登记，工位和载物台编号为1~3。
+ */
 bool MoveWorkAreaToCargo(uint8_t color,uint8_t work,uint8_t cargo){return submit(transfer(MotionKind::RETRIEVE,cargo,work,color));}
+/**
+ * @brief 同步执行载物台到指定工位的第二层叠放，返回作业是否完成。
+ */
 bool StackCargoToWorkArea(uint8_t cargo,uint8_t work){auto r=transfer(MotionKind::TRANSFER,cargo,work);r.layer=2;return submit(r);}
+/**
+ * @brief 按本轮位置码同步放置三件物料，实际序列由BuildArmProgram构建。
+ * @param positions 三个载物台各自对应的工位编号1~3。
+ * @param layer 叠放层数，1为基础层，2为第二层。
+ * @return true 作业DONE，false 提交或执行失败。
+ */
 bool PlaceTaskCargoToWorkArea(const int positions[3],uint8_t layer){return submit(round(MotionKind::PLACE_ROUND,nullptr,positions,layer));}
+/**
+ * @brief 按本轮颜色和位置数组同步从工位取回三件，放入载物台1~3并恢复物料登记。
+ */
 bool RetrieveRoundToCargo(const int colors[3],const int positions[3]){return submit(round(MotionKind::RETRIEVE_ROUND,colors,positions));}
+/**
+ * @brief 按颜色数组顺序同步抓取圆盘三件物料，分别放到载物台1~3；不负责底盘导航。
+ */
 bool LoadRoundFromDisc(const int colors[3]){return submit(round(MotionKind::LOAD_ROUND,colors,nullptr));}
+/**
+ * @brief 第一层整组放料兼容入口，等价于PlaceTaskCargoToWorkArea传入layer=1。
+ */
 bool PlaceRoundToWorkArea(const int positions[3]){return PlaceTaskCargoToWorkArea(positions,1);}
+/**
+ * @brief 第二层整组叠放兼容入口，等价于PlaceTaskCargoToWorkArea传入layer=2。
+ */
 bool StackRoundToWorkArea(const int positions[3]){return PlaceTaskCargoToWorkArea(positions,2);}
+/**
+ * @brief 同步提交圆盘抓放作业；force选择强制抓取入口，成功只表示预设作业完成并登记。
+ */
 bool GrabDiscMaterial(uint8_t color,uint8_t cargo,bool force){auto r=transfer(MotionKind::DISC_GRAB,cargo,0,color);r.force=force;return submit(r);}
+/**
+ * @brief 检查目标载物台是否为空；当前实现不使用颜色参数，true表示允许继续放入。
+ */
 bool ValidateDiscPositionTransfer(uint8_t,uint8_t cargo){return cargoPlatforms[cargo-1].material==MATERIAL_NONE;}
+/**
+ * @brief 将已经夹住的圆盘物料同步放入指定载物台，完成后登记颜色；不重复夹取。
+ */
 bool PlaceHeldDiscMaterialToCargo(uint8_t color,uint8_t cargo){return submit(transfer(MotionKind::HELD_DISC,cargo,0,color));}
+/**
+ * @brief 按起始区号1或2同步执行扫码准备姿态，底盘偏移与机械臂步骤由LIDAR_POSE作业实现。
+ */
 bool PrepareLidarScanPose(uint8_t zone){MotionRequest r;r.kind=MotionKind::LIDAR_POSE;r.zone=zone;return submit(r);}
+/**
+ * @brief 同步演示三件载物台到工位的放料动作，按1到1、2到2、3到3执行；不负责底盘导航。
+ */
 bool DemoCargoToRoughArea(){MotionRequest r;r.kind=MotionKind::DEMO_PLACE;return submit(r);}
+/**
+ * @brief 同步演示三件工位取回，按工位1到载物台3、2到2、3到1执行；不负责导航。
+ */
 bool DemoWorkAreaToCargo(){MotionRequest r;r.kind=MotionKind::DEMO_RETRIEVE;return submit(r);}
+/**
+ * @brief 同步演示第二层叠放，目标高度为工位高度加一倍层高；不负责导航。
+ */
 bool DemoStackCargoToWorkArea(){MotionRequest r;r.kind=MotionKind::DEMO_PLACE;r.layer=2;return submit(r);}
+/**
+ * @brief 同步演示第三层叠放，目标高度为工位高度加两倍层高；不负责导航。
+ */
 bool DemoStackCargoToWorkArea3(){MotionRequest r;r.kind=MotionKind::DEMO_PLACE;r.layer=3;return submit(r);}

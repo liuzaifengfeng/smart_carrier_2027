@@ -323,6 +323,9 @@ bool executeNodeSegment(uint8_t startNode, uint8_t endNode, uint16_t speedRpm, u
 
 } // namespace
 
+/**
+ * @brief 按节点编号读取当前地图X/Y坐标(mm)，成功时写入x和y并返回true。
+ */
 bool ChassisGetNodePosition(uint8_t node,float &x,float &y) {
     NodePosition p;
     if(!getNodePosition(node,p))return false;
@@ -330,6 +333,9 @@ bool ChassisGetNodePosition(uint8_t node,float &x,float &y) {
 }
 
 // 注册原变量地址，上位机修改后由底盘和 PID 算法直接使用。
+/**
+ * @brief 在参数表末尾追加角点专用PID，保持此前参数编号顺序。
+ */
 void RegisterCornerAlignmentParameters() {
     PidController *controllers[] = {&s_cornerVisualXPid, &s_cornerVisualYPid, &s_cornerAnglePid};
     const char *axes[] = {"视觉X", "视觉Y", "角度"};
@@ -345,6 +351,9 @@ void RegisterCornerAlignmentParameters() {
     }
 }
 
+/**
+ * @brief 注册底盘运动、视觉PID、死区、节点地图和脉冲标定参数。
+ */
 void RegisterChassisParameters() {
     PidController *controllers[] = {&s_alignVisualXPid, &s_alignVisualYPid, &s_alignAnglePid};
     const char *axes[] = {"视觉X", "视觉Y", "角度"};
@@ -383,6 +392,9 @@ void RegisterChassisParameters() {
 }
 
 
+/**
+ * @brief 读取2号转台实际多圈角度(deg)，同时沿用现有线缆范围检查；成功写入angle并返回true。
+ */
 bool ReadArmTurretAngle(float &angle) {
     if (taskMotionAborted) return false;
     float measuredAngle = 0.0f;
@@ -508,6 +520,10 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
     return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, false);
 }
 
+/**
+ * @brief 按已规划的多圈绝对转台目标发令，不再选择最近等效角；其他轴的-1仍表示跳过。
+ * @return true 指令下发成功，不表示实测到位。
+ */
 bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed) {
     return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, true);
 }
@@ -723,6 +739,10 @@ struct PositionExecution {
     RobotPose target{};
 } positionExecution;
 }
+/**
+ * @brief 初始化四轮同步相对位置动作，不等待估算行程结束；由TickPositionMove推进。
+ * @return true 准备成功，false 请求无法执行。
+ */
 bool BeginPositionMove(float x, float y, float theta, float speed) {
     positionExecution.active=false;positionExecution.success=true;
     if(taskMotionAborted)return false;
@@ -794,13 +814,22 @@ bool BeginPositionMove(float x, float y, float theta, float speed) {
     positionExecution.active=true;
     return true;
 }
+/**
+ * @brief 判断相对位置动作是否仍处于等待结束的运行状态。
+ */
 bool PositionMoveActive(){return positionExecution.active;}
+/**
+ * @brief 停止当前相对位置移动并清除运行状态。
+ */
 void CancelPositionMove() {
     positionExecution.active=false;positionExecution.success=false;
     MotorBusGuard transaction;
     for(uint8_t id=1;id<=4;++id){Emm_V5_Stop_Now(id,true);vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));}
     Emm_V5_Synchronous_motion(0);
 }
+/**
+ * @brief 检查相对位置动作的估算时间并推进结束处理，不代表实测到位。
+ */
 void TickPositionMove() {
     if(!positionExecution.active)return;
     if(taskMotionAborted){CancelPositionMove();return;}
@@ -818,6 +847,9 @@ bool MovePosition(float x,float y,float theta,float speed,bool (*shouldStop)()) 
     return positionExecution.success;
 }
 
+/**
+ * @brief 同步执行扫码往返直行，用编码器记录完整或提前停车后的行程；distance单位mm，speed单位RPM。
+ */
 bool MoveScanPosition(float distance,float speed,bool (*shouldStop)()) {
     int64_t before[4],after[4];
     if(!ReadChassisEncoderPositions(before))return false;
@@ -835,6 +867,9 @@ bool MoveScanPosition(float distance,float speed,bool (*shouldStop)()) {
     return completed;
 }
 
+/**
+ * @brief 同步执行接近后降速扫码，距离单位mm，速度单位RPM；收到任务码回调为true时停车。
+ */
 bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t searchRpm, bool (*received)()) {
     const RobotPose start=currentPose;
     float forward=0;
@@ -961,10 +996,25 @@ bool waitObservation(ArmObservation pose) {
     return WaitMotion(SubmitMotion(request));
 }
 }
+/**
+ * @brief 同步提交并等待START收臂姿态，供旧调试入口调用。
+ */
 bool InitArm_start(){return waitObservation(ArmObservation::START);}
+/**
+ * @brief 同步提交并等待工位视觉前LOOK姿态，供旧调试入口调用。
+ */
 bool InitArm_look(){return waitObservation(ArmObservation::LOOK);}
+/**
+ * @brief 同步提交并等待圆盘整体对齐前LOOK2姿态。
+ */
 bool InitArm_look2(){return waitObservation(ArmObservation::LOOK2);}
+/**
+ * @brief 同步提交并等待圆盘单件识别前LOOK3姿态及转台实测就绪。
+ */
 bool InitArm_look3(){return waitObservation(ArmObservation::LOOK3);}
+/**
+ * @brief 同步提交并等待返家角点视觉前LOOK4姿态。
+ */
 bool InitArm_look4(){
     MotionRequest r;r.kind=MotionKind::HOME_OBSERVE;r.zone=static_cast<uint8_t>(currentStartZone);
     return WaitMotion(SubmitMotion(r));

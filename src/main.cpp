@@ -14,6 +14,9 @@
 #include "competition_flow.h"
 
 // 作业编号 0 保留给主流程时间线；这里只记录观察到的变化，不改变运动或故障处理。
+/**
+ * @brief 将对外RobotState转换成PHASE日志使用的固定名称。
+ */
 static const char *mainPhaseName(RobotState state) {
     switch (state) {
     case STATE_WAIT_START: return "WAIT_START";
@@ -35,6 +38,9 @@ static const char *mainPhaseName(RobotState state) {
     return "UNKNOWN";
 }
 
+/**
+ * @brief 仅在主状态或抓取进度变化时输出时间线事件，不改变运行状态。
+ */
 static void logMainMotionState(RobotState state, int progress) {
     static int previousState = -1;
     static int previousProgress = -1;
@@ -54,31 +60,87 @@ namespace {
 class RuntimeCompetition : public CompetitionIO {
     uint32_t startedAt=0;
 public:
+    /**
+     * @brief 读取主流程使用的设备运行毫秒数，供阶段间隔计时。
+     */
     uint32_t now()override{return millis();}
+    /**
+     * @brief 读取或更新对外 RobotState；读接口返回当前状态，写接口供阶段切换使用。
+     */
     RobotState state()override{return currentState;}
+    /**
+     * @brief 读取或更新对外 RobotState；读接口返回当前状态，写接口供阶段切换使用。
+     */
     void state(RobotState value)override{currentState=value;}
+    /**
+     * @brief 查询整场任务是否已取消，取消后主流程不再提交动作。
+     */
     bool aborted()override{return taskMotionAborted;}
+    /**
+     * @brief 读取当前选择的起始区号；主流程在启动准备时锁定返家区号。
+     */
     uint8_t zone()override{return static_cast<uint8_t>(currentStartZone);}
+    /**
+     * @brief 查询正式比赛启动许可，许可到达后开始计时并进入扫码。
+     */
     bool permission()override{return enableRun;}
+    /**
+     * @brief 读取当前轮已经完成抓取并登记到载物台的物料件数。
+     */
     int progress()override{return roundProgress;}
+    /**
+     * @brief 将当前轮圆盘抓取进度清零，供进入下一轮或阶段时使用。
+     */
     void clearProgress()override{roundProgress=0;}
+    /**
+     * @brief 将指定轮次的三件颜色和工位编号填入运动请求。
+     * @param request 接收本轮任务数据的动作请求。
+     * @param second true 第二轮，false 第一轮。
+     */
     void task(MotionRequest &request,bool second)override {
         portENTER_CRITICAL(&taskCodeMux);
         for(int i=0;i<3;++i){request.colors[i]=second?currentTask.round2_colors[i]:currentTask.round1_colors[i];request.positions[i]=second?currentTask.round2_pos[i]:currentTask.round1_pos[i];}
         portEXIT_CRITICAL(&taskCodeMux);
     }
+    /**
+     * @brief 提交一个非阻塞运动请求；返回作业编号，后续用 status 查询完成结果。
+     */
     uint32_t submit(const MotionRequest &request)override{return SubmitMotion(request);}
+    /**
+     * @brief 提交起始区扫码准备姿态作业；返回作业编号，不在主流程等待物理动作。
+     */
     uint32_t lidar()override{return SubmitLidarPoseAction();}
+    /**
+     * @brief 读取指定作业的执行快照；只有终态 DONE 才表示该作业按当前完成策略结束。
+     */
     MotionStatus status(uint32_t id)override{return GetMotionStatus(id);}
+    /**
+     * @brief 请求开启指定视觉功能；工位对齐与单件物料识别使用不同模式。
+     */
     void visionStart(VisionStartMode mode)override{requestVisionStart(mode);}
+    /**
+     * @brief 读取当前自动视觉对齐的 WAITING、DONE 或 FAILED 状态。
+     */
     AutoAlignmentState visionStatus()override{return getAutoAlignmentState();}
+    /**
+     * @brief 请求停止指定视觉功能，结束该阶段的视觉控制。
+     */
     void visionStop(VisionStartMode mode)override{requestVisionStop(mode);}
+    /**
+     * @brief 开启圆盘单件物料识别；识别结果触发独立的抓取作业。
+     */
     void materialStart()override {
         firstDiscGrabReady=false;xQueueReset(xVisualTaskQueue);
         requestVisionStart(VisionStartMode::DISC_MATERIAL);
         discMessageResumeRequested=true;display("WAIT DISC MATERIAL");
     }
+    /**
+     * @brief 停止圆盘单件物料识别并清除对应就绪标志。
+     */
     void materialStop()override{firstDiscGrabReady=false;requestVisionStop(VisionStartMode::DISC_MATERIAL);}
+    /**
+     * @brief 发布已解析的任务码显示，并设置扫码结束后的位姿准备标志。
+     */
     void taskReady()override {
         scanPosePending=true;xQueueReset(xVisualTaskQueue);
         char text[16];snprintf(text,sizeof(text),"%d%d%d+%d%d%d+%d%d%d+%d%d%d",
@@ -88,25 +150,40 @@ public:
             currentTask.round2_pos[0],currentTask.round2_pos[1],currentTask.round2_pos[2]);
         updateDisplay("DISPLAY","TASK_CODE",text);display("TASK OK");
     }
+    /**
+     * @brief 记录正式开始时间、输出 RUN_START，并启动比赛总计时器。
+     */
     void runStart()override {
         startedAt=millis();Serial.printf("{EVT,MOTION,RUN_START,0,%lu}\n",static_cast<unsigned long>(startedAt));
         if(xHomeTimer)xTimerStart(xHomeTimer,0);
     }
+    /**
+     * @brief 输出正式完成结果、停止比赛计时，并提交电机失能作业。
+     */
     void runDone()override {
         if(xHomeTimer)xTimerStop(xHomeTimer,0);
         const uint32_t finish=millis();
         Serial.printf("{EVT,MOTION,RUN_RESULT,0,%lu,DONE,%lu}\n",static_cast<unsigned long>(finish),static_cast<unsigned long>(finish-startedAt));
         MotionRequest request;request.kind=MotionKind::ENABLE;request.force=false;SubmitMotion(request);display("DONE");
     }
+    /**
+     * @brief 转入指定业务失败状态，取消运动并更新显示；沿用现有失败处理。
+     */
     void fail(RobotState reason)override {
         if(taskMotionAborted)return;
         if(xHomeTimer)xTimerStop(xHomeTimer,0);
         currentState=reason;CancelMotion();
         display(reason==STATE_ROUTE_FAILED?"ROUTE ERR":reason==STATE_ALIGN_FAILED?"ALIGN ERR":reason==STATE_SCAN_FAILED?"TASK ERR":"TRANSFER ERR");
     }
+    /**
+     * @brief 向上位机发布当前业务阶段的显示文本。
+     */
     void display(const char *text)override{updateDisplay("DISPLAY","DEBUG",text);}
 };
 }
+/**
+ * @brief 比赛主任务，每10ms调用 CompetitionFlow::tick，处理状态编排及主阶段日志。
+ */
 void Task_MainStateMachine(void *) {
     vTaskDelay(pdMS_TO_TICKS(1000));
     RuntimeCompetition runtime;CompetitionMap map;
@@ -122,6 +199,9 @@ void Task_MainStateMachine(void *) {
 }
 
 // ================= setup  =================
+/**
+ * @brief 初始化参数、串口、运动硬件及任务，建立比赛运行环境。
+ */
 void setup() {
     pinMode(BOOT0_PIN, INPUT_PULLUP);
     const bool ledPwmReady = LedPwm_Init();
@@ -171,6 +251,9 @@ void setup() {
     }
 }
 
+/**
+ * @brief 处理后台维护、灯光与按键采样；比赛业务由独立主状态机任务推进。
+ */
 void loop() {
     PollDebugBootButton();
     // 不依赖主状态机：总超时暂停主任务后仍持续闪灯。

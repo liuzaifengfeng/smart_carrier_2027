@@ -16,7 +16,7 @@
  * 工作流程:
  *  - Scanner_Init() 配置软串口 + 创建消息队列 + 启动监听任务
  *  - 监听任务按行解析收到的字符串, 打包成 ScannerMsg_t 发送到消息队列
- *  - 主状态机通过 Scanner_WaitCode() 阻塞等待(或非阻塞)取出一帧扫码数据
+ *  - 运动任务通过 pollTaskCode() 非阻塞取出扫码数据，主状态机只提交扫码作业
  ******************************************************************************/
 
 // 扫码枪软串口配置 (可在调用 Scanner_Init 时覆盖)
@@ -53,10 +53,10 @@ typedef struct {
 void Scanner_Init(int rxPin = SCANNER_RX_PIN, uint32_t baudrate = SCANNER_BAUDRATE);
 
 /**
- * @brief 等待一帧扫码数据 (伪函数, 供主状态机调用)
+ * @brief 从扫码枪消息队列读取一帧字符串；由 waitScannerCode 包装为毫秒接口。
  * @param out       输出缓冲区
  * @param len       输出缓冲区长度 (字节)
- * @param timeoutMs 阻塞超时时间(ms); 0 表示非阻塞, portMAX_DELAY 表示永久阻塞
+ * @param timeoutMs 实际为 FreeRTOS Tick 数；0 立即查询，portMAX_DELAY 永久等待。
  * @return true 拿到一帧数据, false 超时/无数据
  */
 bool Scanner_WaitCode(char *out, uint32_t len, TickType_t timeoutMs);
