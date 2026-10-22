@@ -27,7 +27,7 @@ static void simulate(const Node *nodes,Config cfg) {
 }
 int main() {
     Config c;c.count=5;c.startHeading=90;c.endHeading=180;c.policy=1;
-    Node outside[]={{{2090,1200},0},{{2090,1680},0},{{2090,2020},0},{{1680,2020},0},{{1200,2020},0}};
+    Node outside[]={{{2050,1200},0},{{2050,1680},0},{{2050,2020},0},{{1680,2020},0},{{1200,2020},0}};
     simulate(outside,c);int curves=0;
     for(size_t i=0;i<route.segmentCount;++i)if(route.segments[i].kind==CUBIC)++curves;
     CHECK(curves==1);
@@ -48,9 +48,9 @@ int main() {
         for(size_t i=0;i<route.segmentCount;++i)if(route.segments[i].kind==CUBIC)++count;
         CHECK(count==1);
     }
-    Node loop[]={{{2090,1200},0},{{2090,1680},0},{{2090,2020},0},{{1680,2020},0},{{1200,2020},0},
+    Node loop[]={{{2050,1200},0},{{2050,1680},0},{{2050,2020},0},{{1680,2020},0},{{1200,2020},0},
         {{720,2020},0},{{310,2020},0},{{310,1680},0},{{310,1200},0},{{310,720},0},{{310,240},0},
-        {{720,240},0},{{1200,240},0},{{1680,240},0},{{2090,240},0},{{2090,720},0},{{2090,1200},0}};
+        {{720,240},0},{{1200,240},0},{{1680,240},0},{{2050,240},0},{{2050,720},0},{{2050,1200},0}};
     c.count=17;c.endHeading=90;simulate(loop,c);
     c.count=5;c.endHeading=180;
     c.policy=2;simulate(outside,c);

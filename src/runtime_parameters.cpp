@@ -2,6 +2,7 @@
 #include "chassis.h"
 #include "serial_frame.h"
 #include "material_transfer.h"
+#include "motion_executor.h"
 #include "generated_parameter_defaults.h"
 #include <math.h>
 #include <float.h>
@@ -157,6 +158,12 @@ void initialize() {
     registerReverseMaterialDelays();
     // 角点 PID 最后追加，保留既有参数编号。
     RegisterCornerAlignmentParameters();
+    // 只追加；0 保持原有到站展开与标定计时，实车验证后再逐项启用。
+    RegisterRuntimeFloat("运动执行/look末段提前量(mm)",MOTION_LOOK_LEAD_MM,0,FLT_MAX);
+    RegisterRuntimeFloat("运动执行/look2末段提前量(mm)",MOTION_LOOK2_LEAD_MM,0,FLT_MAX);
+    RegisterRuntimeUInt("运动执行/机械臂反馈完成",ARM_FEEDBACK_ENABLED,0,1);
+    RegisterRuntimeUInt("运动执行/反馈后夹持保持(ms)",ARM_GRIP_HOLD_MS,0,UINT32_MAX);
+    RegisterRuntimeUInt("运动执行/反馈后释放保持(ms)",ARM_RELEASE_HOLD_MS,0,UINT32_MAX);
 }
 
 bool parseUnsigned(const char *text, uint32_t &value) {
@@ -179,13 +186,23 @@ void reply(const char *action, uint32_t id, const char *status, const char *deta
 }
 } // namespace
 
+/**
+ * @brief 将浮点参数引用注册到运行时参数表，供串口读取和修改；name为上位机显示名称。
+ */
 void RegisterRuntimeFloat(const char *name, float &value, float minimum, float maximum) {
     add(name, &value, minimum, maximum, false);
 }
+/**
+ * @brief 将无符号整型参数引用注册到运行时参数表，保留名称及可写范围信息。
+ */
 void RegisterRuntimeUInt(const char *name, uint32_t &value, float minimum, float maximum) {
     add(name, &value, minimum, maximum, true);
 }
 
+/**
+ * @brief 应用由robot_parameters.json生成并编译进固件的默认值。
+ * @return true 所有默认值应用成功，false 存在参数应用错误。
+ */
 bool ApplyCompiledParameterDefaults() {
     initialize();
     if (registrationFailed) {
@@ -221,6 +238,10 @@ bool ApplyCompiledParameterDefaults() {
     return true;
 }
 
+/**
+ * @brief 处理CFG参数读取、写入等串口动作；由串口层提供已解析字段和可写状态。
+ * @return true 已处理对应请求，false 请求无法处理。
+ */
 bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writable) {
     initialize();
     const char *action = size > 0 ? fields[0] : "FRAME";

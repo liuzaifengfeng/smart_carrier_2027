@@ -18,11 +18,17 @@ struct DebugReleaseButton {
     bool pending = false;
     uint32_t changedAtMs = 0;
 
+    /**
+     * @brief 设置是否允许按钮触发Release；忙碌时清除待处理请求。
+     */
     DEBUG_RELEASE_CONSTEXPR void setIdle(bool value) {
         idle = value;
         if (!idle) pending = false;
     }
 
+    /**
+     * @brief 输入按钮电平采样和当前毫秒数，完成消抖与单次按下判定；不直接切换模式。
+     */
     DEBUG_RELEASE_CONSTEXPR void update(bool pressed, uint32_t nowMs) {
         if (pressed != rawPressed) {
             rawPressed = pressed;
@@ -39,6 +45,10 @@ struct DebugReleaseButton {
         }
     }
 
+    /**
+     * @brief 消费一次允许执行的Release请求；成功消费后退出空闲状态。
+     * @return true 本次有请求，false 无请求。
+     */
     DEBUG_RELEASE_CONSTEXPR bool takeRequest() {
         const bool requested = idle && pending;
         pending = false;

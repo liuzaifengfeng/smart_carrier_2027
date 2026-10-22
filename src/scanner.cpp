@@ -80,7 +80,7 @@ void Scanner_Init(int rxPin, uint32_t baudrate) {
 }
 
 /**
- * @brief 等待一帧扫码数据 (伪函数)
+ * @brief 从扫码队列读取一帧字符串，timeoutMs 实际为 FreeRTOS Tick 数；0 立即查询。
  */
 bool Scanner_WaitCode(char *out, uint32_t len, TickType_t timeoutMs) {
     if (out == nullptr || len == 0 || xScannerQueue == NULL) {

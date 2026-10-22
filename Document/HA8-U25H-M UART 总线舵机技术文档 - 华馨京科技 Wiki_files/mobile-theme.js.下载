@@ -1,0 +1,202 @@
+/**
+ * Fashion Star Wiki - Mobile Theme Selector (Single Toggle, Bottom Position)
+ * Adds theme toggle to mobile/tablet side drawer (max-width: 59.99em)
+ * 
+ * Position: After all main navigation items (last child of .md-nav__list)
+ * Format: Single <button> row with icon showing next action (moon for dark, sun for light)
+ * 
+ * Reuses existing MkDocs Material palette inputs - no duplicate inputs or IDs.
+ * Uses native button behavior for Enter/Space - no custom keydown handlers.
+ * Idempotent: prevents duplicates in MkDocs instant navigation.
+ */
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Only add theme selector on mobile/tablet (< 60em breakpoint)
+  function checkAndAddThemeSelector() {
+    // Check if we're on mobile/tablet
+    if (window.innerWidth >= 960) { // 60em = 960px
+      return;
+    }
+
+    // Check if theme selector already exists (prevent duplicates in instant navigation)
+    if (document.querySelector('.md-nav__theme-toggle')) {
+      return;
+    }
+
+    // Find existing MkDocs Material palette inputs dynamically
+    const allPaletteInputs = document.querySelectorAll('input[name="__palette"]');
+    let lightInput = null;
+    let darkInput = null;
+    
+    // Find inputs by their associated label's data-md-color-scheme
+    allPaletteInputs.forEach(input => {
+      const label = document.querySelector('label[for="' + input.id + '"]');
+      if (label) {
+        const schemeContainer = label.closest('[data-md-color-scheme]') || label.parentElement?.closest('[data-md-color-scheme]');
+        if (schemeContainer) {
+          const scheme = schemeContainer.getAttribute('data-md-color-scheme');
+          if (scheme === 'default' || scheme === '') {
+            lightInput = input;
+          } else if (scheme === 'slate') {
+            darkInput = input;
+          }
+        }
+      }
+    });
+
+    // Fallback: index-based detection
+    if (!lightInput || !darkInput) {
+      if (allPaletteInputs.length >= 2) {
+        lightInput = allPaletteInputs[0];
+        darkInput = allPaletteInputs[1];
+      }
+    }
+
+    if (!lightInput || !darkInput) {
+      console.warn('Mobile theme selector: Could not find Material palette inputs');
+      return;
+    }
+
+    // Find the side drawer nav list
+    const drawerNavList = document.querySelector('.md-nav--primary > .md-nav__list');
+    if (!drawerNavList) {
+      return;
+    }
+
+    // Get current language for labels
+    const htmlLang = document.documentElement.lang || 'en';
+    const isZh = htmlLang === 'zh';
+    
+    // Get current theme state
+    const body = document.body;
+    const isDark = body.getAttribute('data-md-color-scheme') === 'slate';
+    
+    // Determine target input and labels based on current state
+    const targetInput = isDark ? lightInput : darkInput;
+    const actionLabel = isZh 
+      ? (isDark ? '外观：切换到浅色模式' : '外观：切换到深色模式')
+      : (isDark ? 'Appearance: switch to light mode' : 'Appearance: switch to dark mode');
+    
+    // Clone SVG icon from the corresponding native palette label
+    const sourceLabel = document.querySelector('label[for="' + targetInput.id + '"]');
+    let iconSvg = '';
+    if (sourceLabel) {
+      const existingSvg = sourceLabel.querySelector('svg');
+      if (existingSvg) {
+        iconSvg = existingSvg.outerHTML;
+      }
+    }
+    
+    // Create theme toggle as a native <button> element
+    const themeToggle = document.createElement('button');
+    themeToggle.className = 'md-nav__theme-toggle';
+    themeToggle.setAttribute('type', 'button');
+    themeToggle.setAttribute('aria-label', actionLabel);
+    themeToggle.setAttribute('title', actionLabel);
+    themeToggle.setAttribute('data-current-scheme', isDark ? 'slate' : 'default');
+    themeToggle.setAttribute('data-target-input-id', targetInput.id);
+    
+    // Theme toggle HTML structure
+    themeToggle.innerHTML = `
+      <span class="md-nav__theme-label">${isZh ? '外观' : 'Appearance'}</span>
+      <span class="md-nav__theme-icon" aria-hidden="true">
+        ${iconSvg}
+      </span>
+    `;
+
+    // Click handler: trigger the corresponding Material palette label
+    themeToggle.addEventListener('click', function() {
+      const currentScheme = this.getAttribute('data-current-scheme');
+      const targetId = this.getAttribute('data-target-input-id');
+      
+      if (!targetId) {
+        return;
+      }
+      
+      // Find the Material native label in the header
+      const targetLabel = document.querySelector('label[for="' + targetId + '"]');
+      if (targetLabel) {
+        // Single click on the native Material label
+        targetLabel.click();
+      }
+    });
+
+    // Append as the LAST child of the nav list (after all menu items)
+    drawerNavList.appendChild(themeToggle);
+
+    // Add separator line before the theme toggle
+    const separator = document.createElement('div');
+    separator.className = 'md-nav__theme-separator';
+    drawerNavList.insertBefore(separator, themeToggle);
+
+    // Sync state when theme changes
+    function syncPaletteState() {
+      const isDarkNow = body.getAttribute('data-md-color-scheme') === 'slate';
+      const existingToggle = document.querySelector('.md-nav__theme-toggle');
+      
+      if (!existingToggle) {
+        return;
+      }
+
+      const currentScheme = existingToggle.getAttribute('data-current-scheme');
+      const newScheme = isDarkNow ? 'slate' : 'default';
+      
+      // Only update if state actually changed
+      if (currentScheme === newScheme) {
+        return;
+      }
+
+      // Update attributes
+      existingToggle.setAttribute('data-current-scheme', newScheme);
+      
+      // Update target input ID
+      const newTargetInput = isDarkNow ? lightInput : darkInput;
+      existingToggle.setAttribute('data-target-input-id', newTargetInput.id);
+      
+      // Update labels
+      const newActionLabel = isZh 
+        ? (isDarkNow ? '外观：切换到浅色模式' : '外观：切换到深色模式')
+        : (isDarkNow ? 'Appearance: switch to light mode' : 'Appearance: switch to dark mode');
+      existingToggle.setAttribute('aria-label', newActionLabel);
+      existingToggle.setAttribute('title', newActionLabel);
+      
+      // Update display label
+      const labelSpan = existingToggle.querySelector('.md-nav__theme-label');
+      if (labelSpan) {
+        labelSpan.textContent = isZh ? '外观' : 'Appearance';
+      }
+      
+      // Update icon by cloning from native palette label
+      const newSourceLabel = document.querySelector('label[for="' + newTargetInput.id + '"]');
+      if (newSourceLabel) {
+        const newSvg = newSourceLabel.querySelector('svg');
+        if (newSvg) {
+          const iconSpan = existingToggle.querySelector('.md-nav__theme-icon');
+          if (iconSpan) {
+            iconSpan.innerHTML = newSvg.outerHTML;
+          }
+        }
+      }
+    }
+
+    // Initial sync
+    syncPaletteState();
+
+    // Listen for palette changes via MutationObserver
+    const observer = new MutationObserver(syncPaletteState);
+    observer.observe(body, { attributes: true, attributeFilter: ['data-md-color-scheme'] });
+
+    // Store observer reference
+    themeToggle._paletteObserver = observer;
+  }
+
+  // Run on load
+  checkAndAddThemeSelector();
+  
+  // Run on resize (debounced)
+  let resizeTimer;
+  window.addEventListener('resize', function() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(checkAndAddThemeSelector, 250);
+  });
+});

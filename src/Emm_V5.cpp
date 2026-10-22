@@ -1,4 +1,5 @@
 #include "Emm_V5.h"
+#include "motor_bus.h"
 
 /**
   * @brief    初始化电机
@@ -6,6 +7,8 @@
   */
 void Emm_V5_Init(void)
 {
+  MotorBusInit();
+  MotorBusGuard transaction;
   Serial1.begin(115200, SERIAL_8N1, SERIAL1_RXD_PIN, SERIAL1_TXD_PIN);
   delay(100);
   Emm_V5_Reset_Clog_Pro(0);
@@ -37,6 +40,7 @@ void Emm_V5_Init(void)
   */
 void Emm_V5_Reset_CurPos_To_Zero(uint8_t addr)
 {
+  MotorBusGuard transaction;
   uint8_t cmd[16] = {0};
   
   // 装载命令
@@ -56,6 +60,7 @@ void Emm_V5_Reset_CurPos_To_Zero(uint8_t addr)
   */
 void Emm_V5_Reset_Clog_Pro(uint8_t addr)
 {
+  MotorBusGuard transaction;
   uint8_t cmd[16] = {0};
   
   // 装载命令
@@ -76,6 +81,7 @@ void Emm_V5_Reset_Clog_Pro(uint8_t addr)
   */
 void Emm_V5_Read_Sys_Params(uint8_t addr, SysParams_t s)
 {
+  MotorBusGuard transaction;
   uint8_t i = 0;
   uint8_t cmd[16] = {0};
   
@@ -116,6 +122,7 @@ void Emm_V5_Read_Sys_Params(uint8_t addr, SysParams_t s)
   */
 void Emm_V5_Modify_Ctrl_Mode(uint8_t addr, bool svF, uint8_t ctrl_mode)
 {
+  MotorBusGuard transaction;
   uint8_t cmd[16] = {0};
   
   // 装载命令
@@ -139,6 +146,7 @@ void Emm_V5_Modify_Ctrl_Mode(uint8_t addr, bool svF, uint8_t ctrl_mode)
   */
 void Emm_V5_En_Control(uint8_t addr, bool state, bool snF)
 {
+  MotorBusGuard transaction;
   uint8_t cmd[16] = {0};
   
   // 装载命令
@@ -159,6 +167,7 @@ void Emm_V5_En_Control(uint8_t addr, bool state, bool snF)
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
 void Emm_V5_En_Control_all(bool state){
+  MotorBusGuard transaction;
   vTaskDelay(pdMS_TO_TICKS(10));
   Emm_V5_En_Control(0, state, false);
   vTaskDelay(pdMS_TO_TICKS(10));
@@ -182,6 +191,7 @@ void Emm_V5_En_Control_all(bool state){
   */
 void Emm_V5_Vel_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, bool snF)
 {
+  MotorBusGuard transaction;
   uint8_t cmd[16] = {0};
 
   // 装载命令
@@ -211,6 +221,7 @@ void Emm_V5_Vel_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, bo
   */
 void Emm_V5_Pos_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, uint32_t clk, bool raF, bool snF)
 {
+  MotorBusGuard transaction;
   uint8_t cmd[16] = {0};
 
   // 装载命令
@@ -240,6 +251,7 @@ void Emm_V5_Pos_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, ui
   */
 void Emm_V5_Stop_Now(uint8_t addr, bool snF)
 {
+  MotorBusGuard transaction;
   uint8_t cmd[16] = {0};
   
   // 装载命令
@@ -260,6 +272,7 @@ void Emm_V5_Stop_Now(uint8_t addr, bool snF)
   */
 void Emm_V5_Synchronous_motion(uint8_t addr)
 {
+  MotorBusGuard transaction;
   uint8_t cmd[16] = {0};
   
   // 装载命令
@@ -280,6 +293,7 @@ void Emm_V5_Synchronous_motion(uint8_t addr)
   */
 void Emm_V5_Origin_Set_O(uint8_t addr, bool svF)
 {
+  MotorBusGuard transaction;
   uint8_t cmd[16] = {0};
   
   // 装载命令
@@ -309,6 +323,7 @@ void Emm_V5_Origin_Set_O(uint8_t addr, bool svF)
   */
 void Emm_V5_Origin_Modify_Params(uint8_t addr, bool svF, uint8_t o_mode, uint8_t o_dir, uint16_t o_vel, uint32_t o_tm, uint16_t sl_vel, uint16_t sl_ma, uint16_t sl_ms, bool potF)
 {
+  MotorBusGuard transaction;
   uint8_t cmd[32] = {0};
   
   // 装载命令
@@ -346,6 +361,7 @@ void Emm_V5_Origin_Modify_Params(uint8_t addr, bool svF, uint8_t o_mode, uint8_t
   */
 void Emm_V5_Origin_Trigger_Return(uint8_t addr, uint8_t o_mode, bool snF)
 {
+  MotorBusGuard transaction;
   uint8_t cmd[16] = {0};
   
   // 装载命令
@@ -366,6 +382,7 @@ void Emm_V5_Origin_Trigger_Return(uint8_t addr, uint8_t o_mode, bool snF)
   */
 void Emm_V5_Origin_Interrupt(uint8_t addr)
 {
+  MotorBusGuard transaction;
   uint8_t cmd[16] = {0};
   
   // 装载命令
@@ -386,6 +403,7 @@ void Emm_V5_Origin_Interrupt(uint8_t addr)
   */
 void Emm_V5_Receive_Data(uint8_t *rxCmd, uint8_t *rxCount)
 {
+  MotorBusGuard transaction;
   int i = 0;
   unsigned long lTime;                    // 上一时刻的时间
   unsigned long cTime;                    // 当前时刻的时间

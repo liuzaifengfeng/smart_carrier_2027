@@ -1,0 +1,2074 @@
+/*
+==========================================================================
+Fashion Star Wiki - V47.9
+==========================================================================
+- Design System: Variable-driven vertical rhythm (VS Code Inspired).
+- Header Strategy: H1 individual logic; H2-H4 unified (Top 1.5, Bottom 0.5).
+- Content Flow: Paragraphs locked at Bottom 0.5rem for high info density.
+- Nav Specs: Left sidebar 16px; Right TOC 14px.
+- Border Spec: 1px horizontal table rules; subtle dividers elsewhere.
+==========================================================================
+*/
+
+/* 0. Font Strategy - 系统字体优先 */
+
+@font-face {
+  font-family: "Material Symbols Outlined";
+  font-style: normal;
+  font-weight: 400;
+  src: url("../assets/fonts/material-symbols-outlined.woff2") format("woff2");
+  font-display: block;
+}
+
+/* 中文站顶部入口：主站、Store 与 Wiki 首页。 */
+html[lang="zh"] .md-tabs__list > .md-tabs__item:nth-child(-n + 3) > .md-tabs__link::before,
+html[lang="zh"] .md-nav--primary > .md-nav__list > .md-nav__item:nth-child(-n + 3) > .md-nav__link::before {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 1em;
+  width: 1em;
+  height: 1em;
+  margin-inline-end: 0.35em;
+  overflow: hidden;
+  font-family: "Material Symbols Outlined";
+  font-size: 1.15em;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  direction: ltr;
+  font-feature-settings: "liga";
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 20;
+  -webkit-font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+}
+
+html[lang="zh"] .md-tabs__list > .md-tabs__item:nth-child(1) > .md-tabs__link::before,
+html[lang="zh"] .md-nav--primary > .md-nav__list > .md-nav__item:nth-child(1) > .md-nav__link::before {
+  content: "language";
+}
+
+html[lang="zh"] .md-tabs__list > .md-tabs__item:nth-child(2) > .md-tabs__link::before,
+html[lang="zh"] .md-nav--primary > .md-nav__list > .md-nav__item:nth-child(2) > .md-nav__link::before {
+  content: "storefront";
+}
+
+html[lang="zh"] .md-tabs__list > .md-tabs__item:nth-child(3) > .md-tabs__link::before,
+html[lang="zh"] .md-nav--primary > .md-nav__list > .md-nav__item:nth-child(3) > .md-nav__link::before {
+  content: "menu_book";
+}
+
+html[lang="zh"] .md-tabs__list > .md-tabs__item:nth-child(-n + 3) > .md-tabs__link,
+html[lang="zh"] .md-nav--primary > .md-nav__list > .md-nav__item:nth-child(-n + 3) > .md-nav__link {
+  align-items: center !important;
+}
+
+@media screen and (min-width: 60em) {
+  /* 桌面顶层导航：以细白线标识当前栏目，保持整体简约。 */
+  html[lang="zh"] .md-tabs__link {
+    position: relative;
+  }
+
+  html[lang="zh"] .md-tabs__item--active > .md-tabs__link::after {
+    position: absolute;
+    right: 0.35rem;
+    bottom: -0.28rem;
+    left: 0.35rem;
+    height: 1.6px;
+    border-radius: 999px;
+    background-color: #fff;
+    content: "";
+  }
+
+  html[lang="zh"] .md-tabs__list > .md-tabs__item:nth-child(4) {
+    position: relative;
+    margin-inline-start: 0.7rem;
+  }
+
+  html[lang="zh"] .md-tabs__list > .md-tabs__item:nth-child(4)::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: -0.35rem;
+    top: calc(50% + 1px);
+    width: 1px;
+    height: clamp(11px, 0.55rem, 13px);
+    background: rgba(255, 255, 255, 0.22);
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+}
+
+/* 1. Core Variables - 中央调度站 */
+:root {
+  /* 品牌色 */
+  --fs-accent: #8641A9;
+  --fs-divider: rgba(0,0,0,0.15); 
+  --fs-table-header-bg: #f7f7f7;
+  --fs-table-header-fg: var(--fs-content-fg);
+  --fs-table-fg: var(--fs-content-fg);
+  --fs-table-line: #e5e5e5;
+  --fs-table-hover-bg: #fafafa;
+
+  /* 字体栈：系统字体优先，接近 Wikipedia 的策略 */
+  --md-text-font: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                  "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+                  "Noto Sans CJK SC", sans-serif;
+  --md-code-font: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  
+  /* 文字颜色定义 (浅色模式) */
+  --fs-content-fg: #333333;           
+  --fs-header-fg: #242424;            /* H1-H4 专用深色 */
+  --fs-nav-inactive: var(--fs-content-fg); 
+
+  /* 正文超链接（参考维基百科浅色方案） */
+  --fs-link-unvisited: #4B5FD1;
+  --fs-link-visited: #4B5FD1;
+  --fs-link-hover: #8641A9;
+  --fs-link-active: #5D2F79;
+
+  /* Material Design 3 基础色彩覆盖 */
+  --md-primary-fg-color: var(--fs-accent);
+  --md-accent-fg-color: var(--fs-accent);
+  --md-default-fg-color: var(--fs-content-fg);
+
+  /* 垂直节奏刻度尺 */
+  --fs-space-zero: 0;            
+  --fs-space-small: 0.5rem;      
+  --fs-space-base: 1.0rem;       
+  --fs-space-medium: 1.5rem;     
+  --fs-space-large: 2.0rem;      
+}
+
+/* 让示例代码块使用正文字体（仅对包裹在 .fs-body-code 内的代码生效） */
+.fs-body-code pre,
+.fs-body-code pre code {
+  font-family: var(--md-text-font) !important;
+  font-size: 1em !important;
+}
+
+[data-md-color-scheme="slate"] {
+  --fs-divider: rgba(255,255,255,0.15);
+  --fs-table-header-bg: #242424;
+  --fs-table-header-fg: var(--fs-content-fg);
+  --fs-table-fg: var(--fs-content-fg);
+  --fs-table-line: #383838;
+  --fs-table-hover-bg: #202020;
+  --md-default-bg-color: #181818;
+  --md-default-bg-color--light: #1e1f20;
+  
+  /* 文字颜色定义 (深色模式) */
+  --fs-content-fg: #CCCCCC;      
+  --fs-header-fg: #F1F1F1;            /* H1-H4 专用浅色 */
+  --fs-nav-inactive: var(--fs-content-fg); 
+  /* 正文超链接（参考维基百科深色方案） */
+  --fs-link-unvisited: #88A3E8;
+  --fs-link-visited: #88A3E8;
+  --fs-link-hover: var(--fs-accent);
+  --fs-link-active: #353262;
+  --md-default-fg-color: var(--fs-content-fg);
+}
+
+/* 1.1 正文超链接颜色（仅正文区域，避免影响 footer/social） */
+.md-content .md-typeset a {
+  color: var(--fs-link-unvisited) !important;
+  text-decoration: none;
+}
+
+.md-content .md-typeset a:visited {
+  color: var(--fs-link-unvisited) !important;
+}
+
+.md-content .md-typeset a:hover,
+.md-content .md-typeset a:focus {
+  color: var(--fs-link-hover) !important;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-content .md-typeset a:active {
+  color: var(--fs-link-active) !important;
+}
+
+.md-content .md-typeset a code {
+  color: inherit !important;
+}
+
+.md-content .md-typeset a.md-button,
+.md-content .md-typeset a.fs-download-btn,
+.md-content .md-typeset a.md-button:hover,
+.md-content .md-typeset a.fs-download-btn:hover {
+  text-decoration: none !important;
+}
+
+/* Compact entry points for Star Arm 102 and servo configuration tools. */
+.md-typeset .fs-star102-actions > p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 20px 0 24px;
+}
+
+.md-content .md-typeset .fs-star102-actions a.md-button,
+.md-content .md-typeset a.fs-tool-entry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 46px;
+  padding: 10px 18px;
+  border: 1px solid #e6d9ee;
+  border-radius: 8px;
+  background: #f6f0fa;
+  color: #70408f !important;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 24px;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.md-content .md-typeset .fs-star102-actions a.md-button::after,
+.md-content .md-typeset a.fs-tool-entry::after {
+  content: "→";
+  font-weight: 400;
+}
+
+.md-content .md-typeset .fs-star102-actions a.md-button:hover,
+.md-content .md-typeset a.fs-tool-entry:hover {
+  background: #eee2f5;
+  border-color: #c9aedb;
+}
+
+.md-content .md-typeset .fs-star102-actions a.md-button--primary {
+  background: #7e46a1;
+  border-color: #7e46a1;
+  color: #fff !important;
+}
+
+.md-content .md-typeset .fs-star102-actions a.md-button--primary:hover {
+  background: #693786;
+  border-color: #693786;
+}
+
+.md-content .md-typeset .fs-star102-actions a.md-button:focus-visible,
+.md-content .md-typeset a.fs-tool-entry:focus-visible {
+  outline: 2px solid #9c6dbc;
+  outline-offset: 3px;
+}
+
+[data-md-color-scheme="slate"] .md-content .md-typeset .fs-star102-actions a.md-button:not(.md-button--primary),
+[data-md-color-scheme="slate"] .md-content .md-typeset a.fs-tool-entry {
+  background: #352a40;
+  border-color: #604b71;
+  color: #dfc4f0 !important;
+}
+
+[data-md-color-scheme="slate"] .md-content .md-typeset .fs-star102-actions a.md-button:not(.md-button--primary):hover,
+[data-md-color-scheme="slate"] .md-content .md-typeset a.fs-tool-entry:hover {
+  background: #493558;
+}
+
+@media (max-width: 600px) {
+  .md-typeset .fs-star102-actions > p {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* 1.2 字体渲染：覆盖 Material 默认 antialiased，避免 Mac 上发细 */
+body,
+.md-typeset,
+.md-nav,
+.md-header,
+.md-footer {
+  -webkit-font-smoothing: subpixel-antialiased !important;
+  -moz-osx-font-smoothing: auto !important;
+}
+
+/* 2. Component Cleanup */
+.md-logo, [class*="md-logo"], .md-header__button.md-logo { display: none !important; }
+.md-header__source, .md-nav__source, [data-md-component="source"] { display: none !important; }
+.md-header__title { margin-left: 0 !important; }
+.md-header__ellipsis { padding-left: 0.5rem !important; }
+
+/* 隐藏页脚导航 */
+.md-footer-nav, .md-footer__nav,
+nav.md-footer__inner[aria-label="Footer"],
+nav.md-footer__inner[aria-label="页脚"] {
+  display: none !important; height: 0 !important; margin: 0 !important; padding: 0 !important; border: none !important;
+}
+
+/* 页脚社交图标：与 copyright 文本保持同色 */
+.md-footer-meta .md-social__link,
+.md-footer-meta .md-social__link:visited,
+.md-footer-meta .md-social__link:hover,
+.md-footer-meta .md-social__link:focus,
+.md-footer-meta .md-social__link:active {
+  color: var(--md-footer-fg-color--light) !important;
+}
+
+/* 3. Scrollbar Aesthetics */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background-color: var(--fs-divider); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--fs-accent); }
+
+/* 桌面端防抖：页面高度变化时保留滚动条槽位，避免点击目录时整体横向抖动 */
+@media screen and (min-width: 60em) {
+  html {
+    scrollbar-gutter: stable both-edges;
+    overflow-y: scroll !important;
+  }
+  body {
+    overflow-y: visible !important;
+  }
+}
+
+/* 桌面端布局稳定：TOC 为空页也保留右侧栏占位，避免页面标题横向跳动 */
+@media screen and (min-width: 76.25em) {
+  /* 固定左右侧栏宽度，避免切页时主内容横向重排 */
+  .md-sidebar--primary {
+    width: 12.1rem !important;
+    min-width: 12.1rem !important;
+    flex: 0 0 12.1rem !important;
+  }
+  .md-sidebar--secondary {
+    display: block !important;
+    width: 12.1rem !important;
+    min-width: 12.1rem !important;
+    flex: 0 0 12.1rem !important;
+  }
+
+  .md-sidebar--secondary[hidden] {
+    display: block !important;
+    visibility: hidden !important;
+  }
+
+  /* 空 TOC 页面保留栏位，但不显示目录内容 */
+  .md-sidebar--secondary nav.md-nav--secondary:not(:has(ul[data-md-component="toc"])) {
+    visibility: hidden !important;
+  }
+
+  /* 空 TOC 与有 TOC 页面保持相同内容宽度，避免页面进入后出现右移/回弹 */
+  [dir="ltr"] .md-sidebar--secondary ~ .md-content > .md-content__inner {
+    margin-right: 1.2rem !important;
+  }
+  [dir="rtl"] .md-sidebar--secondary ~ .md-content > .md-content__inner {
+    margin-left: 1.2rem !important;
+  }
+
+  /* 主导航栏也固定保留内容侧边距，避免切页瞬间出现左侧边距切换 */
+  [dir="ltr"] .md-sidebar--primary ~ .md-content > .md-content__inner {
+    margin-left: 1.2rem !important;
+  }
+  [dir="rtl"] .md-sidebar--primary ~ .md-content > .md-content__inner {
+    margin-right: 1.2rem !important;
+  }
+}
+
+/* 4. 左侧侧边栏 (Navigation) */
+
+/* [A] 基础字号与颜色 */
+.md-nav__link, .md-nav__title {
+  color: var(--fs-nav-inactive);
+  transition: color 125ms, font-weight 125ms;
+}
+
+/* 防止 sticky 顶级标题阴影覆盖第一行菜单。 */
+.md-sidebar--primary > .md-sidebar__scrollwrap > .md-sidebar__inner > nav.md-nav--primary > .md-nav__title {
+  box-shadow: none !important;
+}
+.md-sidebar--primary > .md-sidebar__scrollwrap > .md-sidebar__inner > nav.md-nav--primary > .md-nav__list {
+  padding-top: 6px;
+}
+.md-sidebar--primary > .md-sidebar__scrollwrap > .md-sidebar__inner > nav.md-nav--primary > .md-nav__list > .md-nav__item:first-child > .md-nav__link,
+.md-sidebar--primary > .md-sidebar__scrollwrap > .md-sidebar__inner > nav.md-nav--primary > .md-nav__list > .md-nav__item:first-child > .md-nav__container {
+  margin-top: 0;
+}
+/* lifted 模式下当前活动分组（包括 PLC）默认带 sticky 阴影；去除阴影，避免标题覆盖首个子菜单。 */
+.md-sidebar--primary > .md-sidebar__scrollwrap > .md-sidebar__inner > nav.md-nav--primary.md-nav--lifted > .md-nav__list > .md-nav__item--active > .md-nav__link {
+  box-shadow: none !important;
+}
+
+/* 顶级目录与嵌套目录 16px */
+.md-nav__title,
+.md-nav__item--nested > .md-nav__link,
+.md-nav__item--nested > label.md-nav__link {
+  font-size: 16px !important;
+}
+
+.md-sidebar--primary .md-nav__item--nested > .md-nav__link,
+.md-sidebar--primary .md-nav__item--nested > label.md-nav__link {
+  align-items: center;
+  line-height: 1.3;
+  margin-top: 6px;
+  min-height: 27px;
+}
+
+/* 特殊：顶级 Home 锁定 16px */
+nav[data-md-level="0"] > .md-nav__list > .md-nav__item:first-child > .md-nav__link {
+  font-size: 16px !important;
+}
+
+/* 普通文章 16px */
+.md-nav__item:not(.md-nav__item--nested) > .md-nav__link {
+  font-size: 16px !important;
+}
+
+/* 普通叶子链接与带箭头菜单使用相同的垂直节奏；
+   多行标题仍可在 27px 最小高度之上自然扩展。 */
+.md-sidebar--primary .md-nav__item:not(.md-nav__item--nested):not(.md-nav__item--section) > .md-nav__link {
+  align-items: center;
+  line-height: 1.3;
+  margin-top: 6px;
+  min-height: 27px;
+}
+
+/* [B] 选中状态与 2.5px 竖线 */
+li.md-nav__item--active > .md-nav__link,
+li.md-nav__item--active > label.md-nav__link {
+  color: var(--fs-accent) !important;
+  font-weight: 600 !important;
+  position: relative;
+}
+
+/* navigation.indexes 容器结构：激活项中的标题链接也要用品牌色 */
+li.md-nav__item--active > .md-nav__container > a.md-nav__link,
+li.md-nav__item--active > .md-nav__container > label.md-nav__link {
+  color: var(--fs-accent) !important;
+  font-weight: 600 !important;
+}
+
+/* 导航悬停：仅显示灰色底色，当前页仍由左侧竖线标识。 */
+.md-sidebar--primary .md-nav__item > .md-nav__link:hover,
+.md-sidebar--primary .md-nav__item > .md-nav__container > a.md-nav__link:hover,
+.md-sidebar--primary .md-nav__item > .md-nav__container > label.md-nav__link:hover {
+  background-color: transparent !important;
+  color: var(--fs-nav-inactive) !important;
+  position: relative;
+  z-index: 0;
+}
+
+/* 当前页面悬停时保持紫色和加粗，仅叠加悬浮底色。 */
+.md-sidebar--primary li.md-nav__item--active > .md-nav__link:hover,
+.md-sidebar--primary li.md-nav__item--active > .md-nav__container > a.md-nav__link:hover,
+.md-sidebar--primary li.md-nav__item--active > .md-nav__container > label.md-nav__link:hover {
+  color: var(--fs-accent) !important;
+  font-weight: 600 !important;
+}
+
+/* 无箭头的类目标题悬停时与其他菜单项使用相同的深灰色。 */
+.md-sidebar--primary .md-nav__item--section.md-nav__item--active > .md-nav__container > a.md-nav__link:hover,
+.md-sidebar--primary .md-nav__item--section > .md-nav__container > a.md-nav__link.md-nav__link--active:hover {
+  color: var(--fs-nav-inactive) !important;
+  font-weight: 600 !important;
+}
+
+/* 悬浮底色固定为 27px 高，并延伸至与分割线一致的右边界。 */
+.md-sidebar--primary .md-nav__item > .md-nav__link:hover::before,
+.md-sidebar--primary .md-nav__item > .md-nav__container > a.md-nav__link:hover::before,
+.md-sidebar--primary .md-nav__item > .md-nav__container > label.md-nav__link:hover::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  bottom: auto;
+  height: 100%;
+  min-height: 27px;
+  transform: translateY(-50%);
+  left: -12px;
+  right: -15px;
+  border-radius: 4px;
+  background-color: #f1f1f1;
+  pointer-events: none;
+}
+
+/* 顶部三个入口的 ::before 用于图标，悬停时保持在布局中；底色改由链接本身承载。 */
+html[lang="zh"] .md-sidebar--primary .md-nav--primary > .md-nav__list > .md-nav__item:nth-child(-n + 3) > .md-nav__link:hover {
+  background-color: #f1f1f1 !important;
+  border-radius: 4px;
+}
+
+html[lang="zh"] .md-sidebar--primary .md-nav--primary > .md-nav__list > .md-nav__item:nth-child(-n + 3) > .md-nav__link:hover::before {
+  position: static;
+  z-index: auto;
+  inset: auto;
+  min-height: 0;
+  transform: none;
+  border-radius: 0;
+  background-color: transparent;
+}
+
+/* 带子菜单的导航项统一使用完整容器的单一悬浮底色，避免链接与展开标签叠加。 */
+.md-sidebar--primary .md-nav__item--nested > .md-nav__container {
+  position: relative;
+  z-index: 0;
+  align-items: center;
+  margin-top: 6px;
+  min-height: 27px;
+}
+.md-sidebar--primary .md-nav__item--nested > .md-nav__container > a.md-nav__link,
+.md-sidebar--primary .md-nav__item--nested > .md-nav__container > label.md-nav__link {
+  align-items: center;
+  align-self: center;
+  line-height: 1.3;
+  margin-top: 0;
+  min-height: 27px;
+}
+
+/* 所有主导航行只使用一个明确的 6px 间距来源。 */
+.md-sidebar--primary .md-nav--primary .md-nav__item > .md-nav__link,
+.md-sidebar--primary .md-nav--primary .md-nav__item > .md-nav__container {
+  margin-top: 6px;
+}
+.md-sidebar--primary .md-nav--primary .md-nav__item > .md-nav__container > a.md-nav__link,
+.md-sidebar--primary .md-nav--primary .md-nav__item > .md-nav__container > label.md-nav__link {
+  margin-top: 0;
+}
+.md-sidebar--primary .md-nav--primary,
+.md-sidebar--primary .md-nav--primary .md-nav {
+  margin-bottom: 0;
+}
+.md-sidebar--primary .md-nav--primary .md-nav__toggle ~ .md-nav {
+  margin-bottom: 0;
+}
+/* 去除 Material 默认的底部轨道和列表 padding，保证最后一个子项到下一个同级项只保留 6px。 */
+.md-sidebar--primary .md-nav--primary .md-nav__list {
+  padding-bottom: 0;
+}
+.md-sidebar--primary .md-nav--primary .md-nav__toggle ~ .md-nav {
+  grid-template-rows: minmax(0, 0fr);
+}
+.md-sidebar--primary .md-nav--primary .md-nav__toggle.md-toggle--indeterminate ~ .md-nav,
+.md-sidebar--primary .md-nav--primary .md-nav__toggle:checked ~ .md-nav {
+  grid-template-rows: minmax(0, 1fr);
+}
+.md-sidebar--primary .md-nav__item--nested > .md-nav__container:hover::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  bottom: auto;
+  height: 100%;
+  min-height: 27px;
+  transform: translateY(-50%);
+  left: -12px;
+  right: -15px;
+  border-radius: 4px;
+  background-color: #f1f1f1;
+  pointer-events: none;
+}
+.md-sidebar--primary .md-nav__item--nested > .md-nav__container > a.md-nav__link:hover::before,
+.md-sidebar--primary .md-nav__item--nested > .md-nav__container > label.md-nav__link:hover::before {
+  content: none !important;
+}
+
+li.md-nav__item--active > .md-nav__link::after,
+li.md-nav__item--active > label.md-nav__link::after {
+  content: "";
+  position: absolute;
+  left: -12px; top: 0; bottom: 0;
+  width: 2.5px;
+  background-color: var(--fs-accent);
+  display: block !important;
+}
+
+/* [C] 屏蔽逻辑 (Home & Section) */
+/* 屏蔽顶级 Home 竖线 */
+nav[data-md-level="0"] > .md-nav__list > .md-nav__item:first-child > .md-nav__link::after {
+  display: none !important;
+}
+
+/* 强制屏蔽 Section 标题及一切非内容项的竖线 */
+.md-nav__item--section > .md-nav__link::after,
+.md-nav__item--section > label::after,
+.md-nav__item--section > .md-nav__link--active::after,
+.md-nav__title::after,
+[for="__drawer"]::after {
+  display: none !important;
+  content: none !important;
+  width: 0 !important;
+}
+
+/* current-only 分组：仅显示当前选中项（索引页不显示任何子项） */
+.md-sidebar--primary .md-nav__item--nested:has(> .md-nav > .md-nav__list > .md-nav__item > .md-nav__link[href*="current-only"]) > .md-nav > .md-nav__list > .md-nav__item {
+  display: none !important;
+}
+.md-sidebar--primary .md-nav__item--nested:has(> .md-nav > .md-nav__list > .md-nav__item > .md-nav__link[href*="current-only"]) > .md-nav > .md-nav__list > .md-nav__item.md-nav__item--active {
+  display: list-item !important;
+}
+/* current-only 锚点本身永远隐藏（避免误点后出现） */
+.md-sidebar--primary .md-nav__item--nested > .md-nav > .md-nav__list > .md-nav__item:has(> .md-nav__link[href*="current-only"]) {
+  display: none !important;
+}
+/* current-only 分组：隐藏右侧展开箭头，避免用户误以为可展开列表 */
+.md-sidebar--primary .md-nav__item--nested:has(> .md-nav > .md-nav__list > .md-nav__item > .md-nav__link[href*="current-only"]) > .md-nav__container > label.md-nav__link,
+.md-sidebar--primary .md-nav__item--nested:has(> .md-nav > .md-nav__list > .md-nav__item > .md-nav__link[href*="current-only"]) > .md-nav__container .md-nav__icon {
+  display: none !important;
+}
+
+/* Bus Servo 是协议入口：桌面端始终显示 UART、RS485 和 CAN 三个分支。 */
+@media screen and (min-width: 60em) {
+  .md-sidebar--primary .md-nav__item--nested:has(> .md-nav__container > a[href$="/bus-servo/"]) > .md-nav {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+  .md-sidebar--primary .md-nav__item--nested:has(> .md-nav__container > a[href$="/bus-servo/"]) > .md-nav__container .md-nav__icon {
+    transform: rotate(0deg) !important;
+  }
+}
+
+/* 左侧导航展开箭头：增强可见性（略大、略深） */
+.md-sidebar--primary .md-nav__icon {
+  width: 1.1rem !important;
+  height: 1.1rem !important;
+  opacity: 0.95 !important;
+}
+
+/* 左侧导航防抖：禁用主导航的展开/颜色过渡，避免点击目录时视觉抖动 */
+.md-sidebar--primary .md-nav__item--nested > .md-nav,
+.md-sidebar--primary .md-nav__item > .md-nav__link,
+.md-sidebar--primary .md-nav__item > .md-nav__container > a.md-nav__link,
+.md-sidebar--primary .md-nav__item > .md-nav__container > label.md-nav__link,
+.md-sidebar--primary .md-nav__icon {
+  transition: none !important;
+}
+.md-sidebar--primary .md-nav {
+  transition: none !important;
+}
+
+/* PC 端：分组标题保持黑色（关闭 navigation.indexes 后不变色） */
+@media (min-width: 60em) {
+  .md-sidebar--primary .md-nav__item--section > .md-nav__link,
+  .md-sidebar--primary .md-nav__item--section > .md-nav__link--active,
+  .md-sidebar--primary .md-nav__item--section > label.md-nav__link,
+  .md-sidebar--primary .md-nav__item--section > label.md-nav__link--active,
+  .md-sidebar--primary .md-nav__item--section > .md-nav__container > a.md-nav__link,
+  .md-sidebar--primary .md-nav__item--section > .md-nav__container > a.md-nav__link--active,
+  .md-sidebar--primary .md-nav__item--section > .md-nav__container > label.md-nav__link,
+  .md-sidebar--primary .md-nav__item--section > .md-nav__container > label.md-nav__link--active {
+    color: var(--fs-header-fg) !important;
+    opacity: 1 !important;
+  }
+}
+
+/* 5. Right Sidebar (TOC) - 14.5px */
+.md-sidebar--secondary .md-nav__title[for="__toc"] {
+  font-size: 0 !important; 
+  color: transparent !important; 
+  margin-bottom: 0.8rem !important; 
+  display: block !important;       
+  height: auto !important;          
+}
+
+.md-sidebar--secondary .md-nav__title[for="__toc"]::after {
+  font-size: 12.8px !important; 
+  font-weight: 600 !important;
+  color: var(--fs-header-fg) !important; 
+  display: block !important;
+  height: auto !important;          
+  line-height: 1.2 !important;
+  white-space: nowrap !important;   
+  text-transform: none !important;  
+}
+
+/* 重新注入内容 */
+[lang="en"] .md-sidebar--secondary .md-nav__title[for="__toc"]::after { content: "On this page" !important; }
+[lang="zh"] .md-sidebar--secondary .md-nav__title[for="__toc"]::after { content: "本页目录" !important; }
+
+/* 关键修复：通过 nav.md-nav--secondary 强力锁定右侧目录字号 */
+.md-sidebar--secondary nav.md-nav--secondary .md-nav__link { 
+  padding: 0.15rem 0 !important; 
+  margin: 0 !important;
+  line-height: 1.5 !important; 
+  font-size: 14px !important;      /* 强制回退到 14px */
+  color: var(--fs-content-fg) !important;
+  opacity: 1 !important; 
+}
+
+/* 激活态 */
+.md-sidebar--secondary nav.md-nav--secondary .md-nav__link--active { 
+  font-weight: 600 !important; 
+  color: var(--fs-accent) !important; 
+}
+
+/* 悬停态 */
+.md-sidebar--secondary nav.md-nav--secondary .md-nav__link:hover {
+  color: var(--fs-accent) !important;
+}
+
+/* 彻底屏蔽 TOC 内部可能产生的任何竖线或装饰 */
+.md-sidebar--secondary nav.md-nav--secondary .md-nav__link::after { 
+  display: none !important; 
+  content: none !important;
+}
+
+/* 6. Content Typography - 核心垂直节奏控制 */
+.md-typeset { 
+  color: var(--fs-content-fg);
+  line-height: 1.75;
+}
+
+/* Keep article text stable across the theme's wide-screen font breakpoints. */
+@media screen {
+  .md-content .md-typeset {
+    font-size: 16px;
+  }
+}
+
+/* --- 全局加粗统一 --- */
+.md-typeset strong, 
+.md-typeset b {
+  font-weight: 600 !important; 
+}
+
+/* 标题按层级区分上方留白，保留现有字号与下方间距。 */
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4 {
+  font-weight: 600 !important;
+  color: var(--fs-header-fg) !important;
+  margin-bottom: var(--fs-space-small) !important;
+}
+.md-typeset h2 { margin-top: 36px !important; }
+.md-typeset h3 { margin-top: 24px !important; }
+.md-typeset h4 { margin-top: 20px !important; }
+
+/* H1 单独处理：顶部归零，底部 1.5rem (24px) */
+.md-typeset h1 {
+  font-weight: 600 !important;
+  color: var(--fs-header-fg) !important; 
+  margin-top: var(--fs-space-zero) !important;
+  margin-bottom: var(--fs-space-medium) !important;
+}
+
+/* 正文段落: 上 0 / 下 0.5rem (8px) */
+.md-typeset p {
+  margin-top: var(--fs-space-zero) !important;
+  margin-bottom: var(--fs-space-small) !important;
+}
+
+/* [核心修正] 列表间距：基础缩进 1.2rem */
+.md-typeset ul, 
+.md-typeset ol {
+  margin-top: var(--fs-space-zero) !important;
+  margin-bottom: var(--fs-space-small) !important;
+  padding-left: 1.2rem !important; 
+}
+
+/* [核心修正] 特别针对 Tip/Note 等提示框内的列表进行缩进优化 */
+.md-typeset .admonition ul, 
+.md-typeset .admonition ol {
+  margin-left: 0 !important;
+  padding-left: 1.8em !important; /* 强制消除 Tip 容器导致的多余空白 */
+}
+
+/* 列表项内部微调 */
+.md-typeset li {
+  margin-bottom: 0.1rem !important;
+}
+
+/* [核心修正] 提升 Tip 内列表的条目间距，增加专业感 */
+.md-typeset .admonition li {
+  margin-bottom: 4px !important; 
+}
+
+.md-typeset li p {
+  margin-bottom: 0 !important; 
+}
+
+/* 处理文章开头第一个标题的顶距 */
+.md-typeset h1:first-child,
+.md-typeset h2:first-child {
+  margin-top: 0 !important;
+}
+
+/* 7. Image Optimization - 全局图片相框化 (V52.6 响应式完全适配版) */
+
+/* [A] 全局普通图片：基础样式 (排除表格和代码框内的图片) */
+.md-typeset img:not(td img):not(pre img) { 
+  display: block !important; 
+  margin: var(--fs-space-base) auto !important; 
+  
+  /* 桌面端保持精致留白感 */
+  width: 85% !important;
+  max-width: 85% !important;
+  
+  /* 无边框/无阴影 */
+  background-color: transparent !important;
+  padding: 5px !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  box-sizing: border-box !important;
+  transition: all 0.25s ease;
+  cursor: zoom-in;
+}
+
+/* [B] 悬停态：浅色模式品牌色，深色模式标题色 */
+.md-typeset img:not(td img):not(pre img):hover {
+  border: none !important;
+  box-shadow: none !important;
+  transform: none !important;
+  cursor: zoom-in;
+}
+
+/* --- 深色模式适配 --- */
+[data-md-color-scheme="slate"] .md-typeset img:not(td img):not(pre img) {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+[data-md-color-scheme="slate"] .md-typeset img:not(td img):not(pre img):hover {
+  border: none !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+/* Protocol SVGs have fixed dark labels and need a light canvas in dark mode. */
+[data-md-color-scheme="slate"] .md-typeset img[src*="rs485-servo/protocols/images/"][src$=".svg"] {
+  background-color: #f7f7f7 !important;
+}
+
+/* Protocol diagrams: identical geometry, colors selected by the Wiki theme. */
+.md-typeset img.fs-protocol-dark {
+  display: none !important;
+}
+[data-md-color-scheme="slate"] .md-typeset img.fs-protocol-light {
+  display: none !important;
+}
+[data-md-color-scheme="slate"] .md-typeset img.fs-protocol-dark[src$=".svg"] {
+  display: block !important;
+  background-color: transparent !important;
+}
+
+/* Preserve dark diagram contrast in the enlarged image viewer too. */
+.gslide-image img[src*="rs485-servo/protocols/"][src$="-dark.svg"] {
+  background-color: transparent !important;
+}
+
+/* --- [关键修正] 移动端/iPad 响应式增强：强制 100% 全宽 --- */
+@media screen and (max-width: 1024px) {
+  .md-typeset img:not(td img):not(pre img) {
+    /* 必须加 !important 以覆盖桌面端的 85% */
+    width: 100% !important; 
+    max-width: 100% !important;
+    margin: var(--fs-space-small) auto !important; 
+    padding: 5px !important; /* 缩小内衬增加可视面积 */
+  }
+}
+
+/* [C] 特殊修复：屏蔽徽章、国旗、头像装饰 (追加 width: auto 以防被拉伸) */
+.md-typeset img[src*="shields.io"],
+.md-typeset img.flag-icon,
+.md-typeset .fs-avatar {
+  display: inline-block !important;
+  margin: 0 4px !important;
+  max-width: none !important;
+  width: auto !important; /* 确保小图标不继承 85%/100% 的宽度 */
+  padding: 0 !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  vertical-align: middle;
+}
+
+/* 头像保持圆形 */
+.md-typeset .fs-avatar { border-radius: 50% !important; }
+
+/* [D] 兼容性补丁 */
+.md-typeset h1 + p { text-align: left !important; }
+
+/* 8. Table Optimization (V47.3 精准间距优化版) */
+.md-typeset__table { 
+  margin-top: var(--fs-space-zero) !important;      
+  margin-bottom: var(--fs-space-small) !important;   
+  display: block !important;
+  width: 100% !important;
+  overflow-x: auto; 
+}
+
+/* iOS glightbox 关闭按钮可见性修正（仅中文站点） */
+.glightbox-container .gclose {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  right: calc(env(safe-area-inset-right, 0px) + 8px);
+  z-index: 10001;
+  opacity: 1 !important;
+  visibility: visible !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  pointer-events: auto !important;
+  width: 32px !important;
+  height: 32px !important;
+  background: rgba(0, 0, 0, 0.55) !important;
+  color: #fff !important;
+  border-radius: 999px !important;
+}
+
+.glightbox-container {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* 普通文档与 CAD 表格：浅色表头、横向分隔线，保留各列显式对齐。 */
+.md-typeset :is(table:not([class]), table.cad-files-table) {
+  width: 100% !important;
+  display: table !important;
+  border-collapse: collapse !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  font-size: 14px !important;
+  line-height: 1.75;
+  text-align: left;
+  color: var(--fs-table-fg);
+  background: var(--md-default-bg-color);
+}
+
+.md-typeset :is(table:not([class]), table.cad-files-table) :is(th, td) {
+  padding: 12px !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--fs-table-line) !important;
+  box-shadow: none !important;
+  line-height: 1.75 !important;
+  vertical-align: top !important;
+  overflow-wrap: anywhere;
+}
+
+.md-typeset :is(table:not([class]), table.cad-files-table) th {
+  background: var(--fs-table-header-bg) !important;
+  color: var(--fs-table-header-fg);
+  font-weight: 700 !important;
+}
+
+/* 未指定对齐的列默认左对齐；Markdown 的列对齐与 HTML align 属性优先。 */
+.md-typeset :is(table:not([class]), table.cad-files-table) :is(th, td):not([align]) {
+  text-align: left;
+}
+
+.md-typeset :is(table:not([class]), table.cad-files-table) tr {
+  background: transparent;
+}
+.md-typeset :is(table:not([class]), table.cad-files-table) tbody tr:hover {
+  background: var(--fs-table-hover-bg);
+}
+
+/* 列表与段落保留自然换行，避免额外撑高最后一行。 */
+.md-typeset :is(table:not([class]), table.cad-files-table) :is(ul, ol) {
+  margin: 0 !important;
+  padding-left: 1.2em !important;
+}
+.md-typeset :is(table:not([class]), table.cad-files-table) li {
+  margin: 0 !important;
+}
+.md-typeset :is(table:not([class]), table.cad-files-table) :is(th, td) > :last-child {
+  margin-bottom: 0 !important;
+}
+
+/* 含图单元格保留紧凑内边距。 */
+.md-typeset :is(table:not([class]), table.cad-files-table) td:has(img) {
+  padding: 5px !important;
+}
+
+/* --- [修正] 优化表格内图片的尺寸逻辑 --- */
+.md-typeset table:not([class]) td img {
+  display: inline-block !important;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 2px !important;
+  
+  /* 响应式高度：桌面端适当放大，移动端保持紧凑 */
+  max-height: 120px !important; /* 桌面端从 85px 提升至 120px */
+  width: auto !important;
+  object-fit: contain !important;
+}
+
+/* 移动端特殊处理：维持 85px 以防撑开屏幕 */
+@media screen and (max-width: 768px) {
+  .md-typeset table:not([class]) td img {
+    max-height: 85px !important;
+  }
+}
+
+/* 优化表格内按钮 */
+.md-typeset table:not([class]) .fs-download-btn {
+  padding: 4px 15px !important;
+  font-size: 14px !important;
+  margin: 0 !important;
+}
+
+/* 9. Assets & Icons */
+img.flag-icon {
+  height: 15px; width: auto; border-radius: 2px;
+  vertical-align: middle; margin-right: 8px; margin-bottom: 2px;
+  display: inline-block; border: 0.5px solid rgba(0,0,0,0.05); 
+}
+
+/* 10. Layout Balance & TOC Border */
+@media screen and (min-width: 60em) {
+  .md-grid { max-width: 69rem !important; }
+  .md-content { box-shadow: inset 1px 0 0 var(--fs-divider) !important; }
+  .md-sidebar--secondary nav.md-nav--secondary { position: relative; padding-left: 16px !important; }
+  .md-sidebar--secondary nav.md-nav--secondary::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+    width: 1px; background-color: var(--fs-divider); z-index: 1;
+  }
+}
+
+/* 表格内容强制不换行工具类 */
+.no-wrap {
+    white-space: nowrap !important;
+    word-break: keep-all !important;
+}
+
+/* 表格合并单元格不换行（cad-files 用） */
+.no-wrap-cell {
+  white-space: nowrap !important;
+}
+
+.no-wrap-cell ul li,
+.no-wrap-cell ul li a,
+.no-wrap-cell strong {
+  white-space: nowrap !important;
+}
+
+/* [1-10 部分保持不变] */
+
+/* 11. E-commerce Purchase Cards (V47.0 布局专用) */
+.fs-buy-grid {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: center !important;
+  gap: 20px !important;
+  margin: 2.0rem auto !important;
+}
+
+.md-typeset .fs-buy-card {
+  width: 260px !important; 
+  flex: 0 0 260px !important;
+  border: 1px solid var(--fs-divider) !important; /* 卡片外大框 */
+  border-radius: 12px !important;
+  padding: 12px !important;
+  background-color: var(--md-default-bg-color) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+
+.fs-buy-card p { margin: 0 !important; display: block !important; width: 100% !important; }
+
+/* 重点：Section 11 里的图片宽度跟随卡片，样式继承 Section 7 */
+.fs-buy-card img { 
+  width: 100% !important; 
+  max-width: 100% !important;
+}
+
+/* 12. 按钮样式 (精致胶囊型) */
+.md-typeset .fs-download-btn {
+  background-color: var(--fs-accent) !important;
+  color: #FFFFFF !important;
+  border: 1px solid var(--fs-accent) !important;
+  border-radius: 8px !important;   /* 更圆润的按钮 */
+  padding: 4px 30px !important;    /* 左右撑开 */
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  text-decoration: none !important;
+  transition: all 0.25s ease;
+  display: inline-block !important;
+  white-space: nowrap !important;  /* 禁止文字换行 */
+}
+
+/* 按钮文字颜色优先级高于正文链接颜色规则 */
+.md-content .md-typeset a.fs-download-btn,
+.md-content .md-typeset a.fs-download-btn:visited,
+.md-content .md-typeset a.fs-download-btn:focus,
+.md-content .md-typeset a.fs-download-btn:active {
+  color: #FFFFFF !important;
+  text-decoration: none !important;
+}
+
+.md-typeset .fs-download-btn:hover { 
+  opacity: 0.9; 
+  transform: translateY(-2px); 
+  box-shadow: 0 4px 10px rgba(134, 65, 169, 0.3) !important;
+  color: #FFFFFF !important; 
+}
+
+.md-content .md-typeset a.fs-download-btn:hover {
+  color: #FFFFFF !important;
+}
+
+/* ==========================================================================
+13. Code Blocks - VS Code 官方一体化方案 (V52.1.1 加固版)
+==========================================================================
+*/
+/* [A] 最外层容器：唯一的边框和 8px 圆角承载者 */
+.md-typeset div.highlight {
+  position: relative !important;
+  margin: var(--fs-space-base) 0 !important;
+  background-color: #f8f8f8 !important; /* 浅色模式底色 */
+  border: 1px solid var(--fs-divider) !important;
+  border-radius: 8px !important;        /* 统一改为 8px */
+  padding: 0 !important;                /* 彻底消除外层自带的 padding */
+  /* 细节修正 1：防止标题栏背景溢出圆角 */
+  overflow: hidden !important;          
+}
+
+/* [B] 标题栏：占据容器顶部 34px 高度 */
+.md-typeset div.highlight::before {
+  content: "CODE"; 
+  display: block !important;
+  height: 34px !important;
+  line-height: 34px !important;
+  padding: 0 16px !important;
+  background-color: rgba(0, 0, 0, 0.04) !important; /* VS Code 式浅灰标题栏 */
+  color: var(--fs-header-fg) !important;
+  font-family: var(--md-code-font-family);
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--fs-divider) !important;
+  /* 确保标题栏顶部的圆角与外层一致 */
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+}
+
+/* 语言自动识别（根据 code 的语言类名） */
+.md-typeset div.highlight:has(code.language-json)::before { content: "JSON" !important; }
+.md-typeset div.highlight:has(code.language-python)::before { content: "PYTHON" !important; }
+.md-typeset div.highlight:has(code.language-bash)::before { content: "BASH" !important; }
+.md-typeset div.highlight:has(code.language-shell)::before { content: "SHELL" !important; }
+.md-typeset div.highlight:has(code.language-sh)::before { content: "SHELL" !important; }
+.md-typeset div.highlight:has(code.language-cpp)::before { content: "C++" !important; }
+.md-typeset div.highlight.language-json::before { content: "JSON" !important; }
+.md-typeset div.highlight.language-python::before { content: "PYTHON" !important; }
+.md-typeset div.highlight.language-bash::before { content: "BASH" !important; }
+.md-typeset div.highlight.language-shell::before { content: "SHELL" !important; }
+.md-typeset div.highlight.language-sh::before { content: "SHELL" !important; }
+.md-typeset div.highlight.language-cpp::before { content: "C++" !important; }
+
+/* [C] 正文区域：去除所有嵌套背景 */
+.md-typeset div.highlight pre {
+  margin: 0 !important;
+  padding: 12px 16px !important; 
+  background-color: transparent !important; /* 透明以露出外层底色 */
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  overflow: auto !important;
+  /* 细节修正 2：确保滚动条不遮挡按钮 */
+  scrollbar-gutter: stable;
+}
+
+.md-typeset div.highlight pre code {
+  background-color: transparent !important;
+  padding: 0 !important;
+}
+
+/* [D] 复制按钮：精准移动至标题栏内部 (34px 高度) */
+.md-typeset .md-clipboard {
+  position: absolute !important;
+  top: 5px !important;      /* 调整至标题栏垂直居中 (34-24)/2 */
+  right: 10px !important;   /* 距离右边框 10px */
+  z-index: 10 !important;
+  background-color: transparent !important;
+  color: var(--fs-header-fg) !important;
+  transition: opacity 0.2s;
+  opacity: 0.4;
+}
+
+/* 细节修正 3：彻底干掉按钮自带的背景圈（MkDocs 默认会有个灰色圆圈） */
+.md-typeset .md-clipboard::after {
+  background-color: transparent !important;
+}
+
+.md-typeset .md-clipboard:hover {
+  opacity: 1;
+}
+
+/* [E] 深色模式适配 */
+[data-md-color-scheme="slate"] .md-typeset div.highlight {
+  background-color: #1e1e1e !important;
+}
+[data-md-color-scheme="slate"] .md-typeset div.highlight::before {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* ==========================================================================
+   Fashion Star Wiki - Admonition Customization
+   ========================================================================== */
+
+/* 提示框：浅色整块背景、单侧色条，与正文保持相同字号。 */
+.md-typeset .admonition {
+  --fs-callout-bg: #edf3f7;
+  --fs-callout-stripe: #527f9c;
+  --fs-callout-fg: var(--fs-content-fg);
+  border: 0 !important;
+  border-left: 5px solid var(--fs-callout-stripe) !important;
+  border-radius: 0;
+  box-shadow: none !important;
+  background: var(--fs-callout-bg);
+  color: var(--fs-callout-fg);
+  font: 16px/1.75 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  padding: 16px 20px;
+  margin: 20px 0;
+  overflow-wrap: anywhere;
+}
+
+.md-typeset .admonition:is(.tip, .hint, .success, .check, .done) {
+  --fs-callout-bg: #eaf5f2;
+  --fs-callout-stripe: #368470;
+}
+.md-typeset .admonition:is(.warning, .caution, .attention, .important) {
+  --fs-callout-bg: #fff3e2;
+  --fs-callout-stripe: #d18a30;
+}
+.md-typeset .admonition:is(.danger, .error, .failure, .fail, .missing, .bug) {
+  --fs-callout-bg: #fceeed;
+  --fs-callout-stripe: #bf5a54;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .admonition {
+  --fs-callout-bg: #202e39;
+  --fs-callout-stripe: #80adc8;
+  --fs-callout-fg: var(--fs-content-fg);
+}
+[data-md-color-scheme="slate"] .md-typeset .admonition:is(.tip, .hint, .success, .check, .done) {
+  --fs-callout-bg: #1c302c;
+  --fs-callout-stripe: #6fb8a2;
+}
+[data-md-color-scheme="slate"] .md-typeset .admonition:is(.warning, .caution, .attention, .important) {
+  --fs-callout-bg: #352c20;
+  --fs-callout-stripe: #d9aa63;
+}
+[data-md-color-scheme="slate"] .md-typeset .admonition:is(.danger, .error, .failure, .fail, .missing, .bug) {
+  --fs-callout-bg: #362426;
+  --fs-callout-stripe: #df8b85;
+}
+
+/* 保留有意义的标题文字，取消独立标题色块、图标与边线。 */
+.md-typeset .admonition > .admonition-title {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0 0 6px !important;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+}
+.md-typeset .admonition > .admonition-title::before,
+.md-typeset .admonition > .admonition-title::after {
+  display: none;
+}
+.md-typeset .admonition strong,
+.md-typeset .admonition b {
+  font-weight: 700 !important;
+}
+.md-typeset .admonition > p {
+  margin: 0 0 10px !important;
+}
+.md-typeset .admonition :is(ul, ol) {
+  margin: 8px 0 10px !important;
+  padding-left: 1.3em !important;
+}
+.md-typeset .admonition > :first-child {
+  margin-top: 0 !important;
+}
+.md-typeset .admonition > :last-child,
+.md-typeset .admonition > :last-child > :last-child {
+  margin-bottom: 0 !important;
+}
+@media screen and (max-width: 600px) {
+  .md-typeset .admonition {
+    padding: 14px 16px;
+  }
+}
+
+/* 折叠框沿用原有样式与交互，独立于正文提示框。 */
+.md-typeset details {
+  border-width: 1.0px !important;       /* 恢复为 1px */
+  border-left-width: 4px !important;  /* 左侧条稍微加粗以保持辨识度 */
+  border-radius: 4px;
+  box-shadow: none !important;
+  font-size: 14px !important;
+  margin-bottom: var(--fs-space-small) !important;
+}
+
+/* [2] Note 样式：恢复原生 */
+/* FAQ 需求：details 折叠块从蓝色改为灰色（仅影响 details） */
+.md-typeset details:not(.admonition) {
+  border-color: #e5e5e5 !important;
+  background-color: transparent !important;
+  padding: 0;
+  overflow: hidden;
+}
+[data-md-color-scheme="slate"] .md-typeset details:not(.admonition) {
+  background-color: transparent !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+.md-typeset details:not(.admonition) > summary {
+  background-color: #e5e5e5;
+  padding: 0.65rem 1rem;
+  border-radius: 0;
+  border-bottom: 1px solid #e5e5e5;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  position: relative;
+}
+[data-md-color-scheme="slate"] .md-typeset details:not(.admonition) > summary {
+  background-color: rgba(255, 255, 255, 0.08);
+  border-bottom-color: transparent;
+}
+.md-typeset details:not(.admonition) > summary::marker,
+.md-typeset details:not(.admonition) > summary::-webkit-details-marker {
+  display: none;
+}
+.md-typeset details:not(.admonition) > summary::before {
+  display: none !important;
+}
+.md-typeset details:not(.admonition) > summary::after {
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+}
+.md-typeset details[open]:not(.admonition) > summary::after {
+  transform: translateY(-50%) rotate(90deg) !important;
+}
+.md-typeset details:not(.admonition) > summary + * {
+  margin: 0;
+  padding: 0.7rem 1rem;
+  background: transparent;
+}
+.md-typeset details:not(.admonition) > summary + * > :first-child {
+  margin-top: 0;
+}
+.md-typeset details:not(.admonition) > summary + * > :last-child {
+  margin-bottom: 0;
+}
+
+/* [3] Important 折叠框沿用原有品牌色 */
+.md-typeset details.important {
+  border-color: var(--fs-accent) !important;
+}
+.md-typeset .important > summary::before {
+  background-color: var(--fs-accent) !important;
+  width: 1.1rem !important;
+  height: 1.1rem !important;
+  -webkit-mask-image: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12,17.27L18.18,21L16.45,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.55,13.97L5.82,21L12,17.27Z"/></svg>') !important;
+  mask-image: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12,17.27L18.18,21L16.45,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.55,13.97L5.82,21L12,17.27Z"/></svg>') !important;
+}
+
+/* [4] Tip 折叠框沿用原有青色 */
+.md-typeset details.tip {
+  border-color: #00BFA5 !important;
+}
+.md-typeset .tip > summary::before {
+  background-color: #00BFA5 !important;
+  width: 1.1rem !important;
+  height: 1.1rem !important;
+  -webkit-mask-image: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12,2A7,7 0 0,0 5,9C5,11.39 6.19,13.5 8,14.74V17A1,1 0 0,0 9,18H15A1,1 0 0,0 16,17V14.74C17.81,13.5 19,11.39 19,9A7,7 0 0,0 12,2M9,21A1,1 0 0,0 10,22H14A1,1 0 0,0 15,21V20H9V21M12,4A5,5 0 0,1 17,9C17,11.05 15,12.5 15,14H9C9,12.5 7,11.05 7,9A5,5 0 0,1 12,4Z"/></svg>') !important;
+  mask-image: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12,2A7,7 0 0,0 5,9C5,11.39 6.19,13.5 8,14.74V17A1,1 0 0,0 9,18H15A1,1 0 0,0 16,17V14.74C17.81,13.5 19,11.39 19,9A7,7 0 0,0 12,2M9,21A1,1 0 0,0 10,22H14A1,1 0 0,0 15,21V20H9V21M12,4A5,5 0 0,1 17,9C17,11.05 15,12.5 15,14H9C9,12.5 7,11.05 7,9A5,5 0 0,1 12,4Z"/></svg>') !important;
+}  
+
+/* --- 贡献者头像：行内圆形版 --- */
+
+/* 1. 确保列表项内容可以水平排列 */
+.md-typeset li {
+    display: list-item; /* 保持列表符号 */
+}
+
+/* 2. 行内头像容器 */
+.fs-contributors-inline {
+    display: inline-flex !important;
+    vertical-align: middle; /* 与文字对齐 */
+    margin-left: 10px;      /* 距离文字的间距 */
+    gap: 8px;
+}
+
+/* 3. 强制头像为圆形、无边框、不换行 */
+.md-typeset .fs-avatar {
+    display: inline-block !important; /* 覆盖全局 block */
+    width: 45px !important;           /* 稍微缩小以匹配行高 */
+    height: 45px !important;
+    
+    /* 核心形状：50% 确保正圆 */
+    border-radius: 50% !important; 
+    
+    /* 彻底去掉所有边框和阴影 */
+    border: none !important; 
+    outline: none !important;
+    box-shadow: none !important;
+    
+    /* 消除 Section 7 的 margin auto 居中影响 */
+    margin: 0 !important; 
+    
+    /* 确保图片填充且不拉伸 */
+    object-fit: cover !important;
+    max-width: none !important;
+    
+    transition: transform 0.2s ease !important;
+}
+
+/* 悬停微调 */
+.md-typeset .fs-avatar:hover {
+    transform: scale(1.2) !important;
+}
+
+/* 16. Market Content - 产品购物卡片专属 (V1.2) */
+
+/* [A] 栅格容器 */
+.fs-buy-grid {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 20px !important;
+  justify-content: center !important;
+  margin: 1.5rem 0 !important;
+}
+
+/* [B] 卡片主体 */
+.fs-buy-card {
+  flex: 0 1 280px !important;
+  max-width: 300px !important;
+  text-align: center !important;
+  padding: 16px !important;
+  border: 1px solid var(--fs-divider) !important;
+  border-radius: 8px !important;
+  background-color: transparent !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+
+/* [C] 图片：彻底“素颜”化，强力覆盖 Section 7 的紫框 */
+/* 使用三级连写提升权重，确保彻底剥离边框、背景、阴影和位移 */
+.md-typeset .fs-buy-card img,
+.md-typeset .fs-buy-card img:hover {
+  width: auto !important;
+  max-width: 100% !important;
+  height: auto !important;
+  /* 强力重置边框样式 */
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background-color: transparent !important;
+  padding: 0 !important;
+  margin: 0 auto 12px auto !important;
+  /* 彻底禁用任何悬停位移或动画 */
+  transform: none !important;
+  transition: none !important;
+}
+
+/* [D] 型号文字：16px, 600字重 */
+.fs-product-name {
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  color: var(--fs-header-fg) !important;
+  margin-bottom: 8px !important;
+  line-height: 1.4 !important;
+  text-align: center !important;
+}
+
+/* [E] 价格文字：Logo色, 16px, 600字重 */
+.fs-product-price {
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  color: var(--fs-accent) !important; 
+  margin-bottom: 15px !important;
+  text-align: center !important;
+}
+
+/* [F] 按钮：居中并微调 */
+.fs-buy-card .md-button {
+  margin: 0 auto !important;
+  display: inline-block !important;
+  font-size: 14px !important; /* 按钮文字略小一点更有层次感 */
+}
+
+/* 17. SDK Index Cards */
+.md-typeset .grid.cards.sdk-cards > ul > li {
+  border: 1px solid rgba(0, 0, 0, 0.24) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.10) !important;
+  transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+}
+
+.md-typeset .grid.cards.sdk-cards > ul > li:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.16) !important;
+}
+
+.md-typeset .grid.cards.sdk-cards > ul > li > p:last-child {
+  font-size: 14px !important;
+  line-height: 1.55 !important;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .grid.cards.sdk-cards > ul > li {
+  border-color: rgba(255, 255, 255, 0.28) !important;
+  background-color: rgba(255, 255, 255, 0.02) !important;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.38) !important;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .grid.cards.sdk-cards > ul > li:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.48) !important;
+}
+
+/* ==========================================================================
+   GitHub Icon - All Screen Sizes (visibility controlled by CSS)
+   ========================================================================== */
+
+/* GitHub icon button styling - shown on all screen sizes */
+.md-header__github {
+  display: block;
+}
+
+/* Desktop-specific sizing (>= 60em) */
+@media screen and (min-width: 60em) {
+  .md-header__github .md-header__button {
+    width: 2.2rem;
+    height: 2.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .md-header__github svg {
+    width: 1.05rem;
+    height: 1.05rem;
+    display: block;
+  }
+}
+
+/* Mobile/Tablet sizing (< 60em) - match native palette button size */
+@media screen and (max-width: 59.984375em) {
+  .md-header__github .md-header__button {
+    width: 2rem;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .md-header__github svg {
+    width: 1rem;
+    height: 1rem;
+    display: block;
+  }
+}
+
+/* Ensure GitHub icon inherits current color from header */
+.md-header__github .md-header__button svg {
+  fill: currentColor;
+  color: inherit;
+}
+
+/* Hover and active states */
+.md-header__github .md-header__button:hover svg,
+.md-header__github .md-header__button:active svg {
+  opacity: 0.7;
+}
+
+/* Focus-visible state for keyboard navigation */
+.md-header__github .md-header__button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  border-radius: 50%;
+}
+
+/* ==========================================================================
+   Mobile/Tablet: Hide palette form, show GitHub only
+   ========================================================================== */
+
+/* Hide palette form on mobile/tablet (< 60em) - visual only, inputs remain functional */
+@media screen and (max-width: 59.984375em) {
+  form.md-header__option[data-md-component="palette"] {
+    display: none;
+  }
+}
+
+/* Show palette form on desktop (>= 60em) */
+@media screen and (min-width: 60em) {
+  form.md-header__option[data-md-component="palette"] {
+    display: block;
+  }
+}
+
+/* ==========================================================================
+   Mobile Theme Selector - Single Toggle, Bottom Position (max-width: 59.99em)
+   ========================================================================== */
+
+/* Theme separator line */
+.md-nav__theme-separator {
+  display: none;
+  height: 1px;
+  background-color: var(--fs-content-fg);
+  opacity: 0.15;
+  margin: 0.8rem 1rem;
+}
+
+@media screen and (max-width: 59.984375em) {
+  .md-nav__theme-separator {
+    display: block;
+  }
+}
+
+/* Theme toggle row */
+.md-nav__theme-toggle {
+  display: none;
+  min-height: 48px;
+  padding: 0.75rem 1rem;
+  margin: 0;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  border-radius: 4px;
+  user-select: none;
+  /* Native button reset */
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+  text-align: left;
+}
+
+@media screen and (max-width: 59.984375em) {
+  .md-nav__theme-toggle {
+    display: flex;
+  }
+}
+
+.md-nav__theme-toggle:active {
+  background-color: rgba(134, 65, 169, 0.12);
+}
+
+/* Focus-visible state for keyboard navigation */
+.md-nav__theme-toggle:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+/* Label text */
+.md-nav__theme-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fs-content-fg);
+  flex: 1;
+  text-align: left;
+}
+
+/* Icon container */
+.md-nav__theme-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+}
+
+.md-nav__theme-icon svg {
+  width: 1.2rem;
+  height: 1.2rem;
+  fill: currentColor;
+  color: var(--fs-content-fg);
+  opacity: 0.8;
+}
+
+/* Hover state: only on devices with true hover capability (mouse) */
+@media (hover: hover) and (pointer: fine) {
+  .md-nav__theme-toggle:hover {
+    background-color: rgba(134, 65, 169, 0.08);
+  }
+
+  [data-md-color-scheme="slate"] .md-nav__theme-toggle:hover {
+    background-color: rgba(134, 65, 169, 0.15);
+  }
+}
+
+/* Dark mode adjustments */
+[data-md-color-scheme="slate"] .md-nav__theme-toggle:active {
+  background-color: rgba(134, 65, 169, 0.2);
+}
+
+/* ==========================================================================
+   Unified Non-Purchase Cards
+   Text Hub cards share the same surface and interaction contract as Wiki EN.
+========================================================================== */
+
+.md-typeset .fs-card-grid {
+  --fs-card-title-size: clamp(16px, 0.8rem, 18px);
+  --fs-card-meta-size: clamp(13px, 0.65rem, 15px);
+  --fs-card-description-size: clamp(14px, 0.7rem, 16px);
+  --fs-card-border-color: rgba(0, 0, 0, 0.15);
+  --fs-card-background: var(--md-default-bg-color);
+  --fs-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --fs-card-title-color: var(--fs-link-unvisited);
+  --fs-card-meta-color: rgba(0, 0, 0, 0.55);
+  --fs-card-body-color: var(--md-typeset-color);
+  --fs-card-interaction-color: #8641A9;
+  --fs-card-radius: 10px;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .fs-card-grid {
+  --fs-card-border-color: rgba(255, 255, 255, 0.18);
+  --fs-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  --fs-card-title-color: #88A3E8;
+  --fs-card-meta-color: #cccccc;
+  --fs-card-body-color: #cccccc;
+  --fs-card-interaction-color: #B36FD1;
+}
+
+.md-typeset .grid.cards.fs-card-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem !important;
+}
+
+.md-typeset .grid.cards.fs-card-grid > ul > li {
+  position: relative;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0 !important;
+  padding: 1rem !important;
+  border: 1px solid var(--fs-card-border-color) !important;
+  border-radius: var(--fs-card-radius) !important;
+  background-color: var(--fs-card-background) !important;
+  box-shadow: var(--fs-card-shadow) !important;
+  transform: none !important;
+  transition: border-color 0.15s ease, color 0.15s ease !important;
+  cursor: pointer;
+}
+
+.md-typeset .grid.cards.fs-card-grid > ul > li > p:first-child,
+.md-typeset .grid.cards.fs-card-grid > ul > li > p:first-child > strong,
+.md-typeset .grid.cards.fs-card-grid > ul > li > p:first-child > strong > a {
+  margin-bottom: 0 !important;
+  color: var(--fs-card-title-color) !important;
+  font-size: var(--fs-card-title-size) !important;
+  font-weight: 600 !important;
+  line-height: 1.4 !important;
+  text-decoration: none !important;
+}
+
+.md-typeset .grid.cards.fs-card-grid > ul > li > p:nth-of-type(2) {
+  margin-bottom: 0 !important;
+  color: var(--fs-card-meta-color) !important;
+  font-size: var(--fs-card-meta-size) !important;
+  font-weight: 500 !important;
+  line-height: 1.5 !important;
+}
+
+.md-typeset .grid.cards.fs-card-grid > ul > li > p:nth-of-type(3),
+.md-typeset .grid.cards.fs-card-grid > ul > li > p:last-child {
+  margin-bottom: 0 !important;
+  color: var(--fs-card-body-color) !important;
+  font-size: var(--fs-card-description-size) !important;
+  font-weight: 400 !important;
+  line-height: 1.55 !important;
+}
+
+.md-typeset .grid.cards.fs-card-grid > ul > li > p:first-child > strong > a {
+  position: static !important;
+  z-index: auto;
+}
+
+.md-typeset .grid.cards.fs-card-grid > ul > li > p:first-child > strong > a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: var(--fs-card-radius);
+}
+
+.md-typeset .grid.cards.fs-card-grid > ul > li > p:first-child > strong > a:focus-visible::after,
+.md-typeset .grid.cards.fs-card-grid > ul > li > p:first-child > strong > a.focus-visible::after {
+  outline: 2px solid var(--fs-card-interaction-color);
+  outline-offset: 2px;
+}
+
+.md-typeset .grid.cards.fs-card-grid > ul > li:focus-within > p:first-child,
+.md-typeset .grid.cards.fs-card-grid > ul > li:focus-within > p:first-child > strong,
+.md-typeset .grid.cards.fs-card-grid > ul > li:focus-within > p:first-child > strong > a {
+  color: var(--fs-card-interaction-color) !important;
+}
+
+@media screen and (max-width: 767px) {
+  .md-typeset .grid.cards.fs-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .md-typeset .grid.cards.fs-card-grid > ul > li:hover {
+    border-color: var(--fs-card-interaction-color) !important;
+    transform: none !important;
+    box-shadow: var(--fs-card-shadow) !important;
+  }
+
+  .md-typeset .grid.cards.fs-card-grid > ul > li:hover > p:first-child,
+  .md-typeset .grid.cards.fs-card-grid > ul > li:hover > p:first-child > strong,
+  .md-typeset .grid.cards.fs-card-grid > ul > li:hover > p:first-child > strong > a {
+    color: var(--fs-card-interaction-color) !important;
+    text-decoration: none !important;
+  }
+}
+
+@media (hover: none) or (pointer: coarse) {
+  .md-typeset .grid.cards.fs-card-grid > ul > li:active {
+    border-color: var(--fs-card-interaction-color) !important;
+  }
+
+  .md-typeset .grid.cards.fs-card-grid > ul > li:active > p:first-child,
+  .md-typeset .grid.cards.fs-card-grid > ul > li:active > p:first-child > strong,
+.md-typeset .grid.cards.fs-card-grid > ul > li:active > p:first-child > strong > a {
+    color: var(--fs-card-interaction-color) !important;
+  }
+}
+
+/* 中文站现有配件图片卡片纳入同一视觉系统。 */
+.md-typeset .parts-ds-grid .parts-ds-card,
+.md-typeset .parts-ds-grid a.parts-ds-card {
+  border-color: var(--fs-card-border-color) !important;
+  border-radius: var(--fs-card-radius) !important;
+  background-color: var(--fs-card-background) !important;
+  box-shadow: var(--fs-card-shadow) !important;
+  transform: none !important;
+  transition: border-color 0.15s ease, color 0.15s ease !important;
+}
+
+.md-typeset .parts-ds-grid .parts-ds-label {
+  color: var(--fs-card-title-color) !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .md-typeset .parts-ds-grid a.parts-ds-card:hover {
+    border-color: var(--fs-card-interaction-color) !important;
+  }
+
+  .md-typeset .parts-ds-grid a.parts-ds-card:hover .parts-ds-label {
+    color: var(--fs-card-interaction-color) !important;
+  }
+}
+
+/* 图片索引卡片与文字卡片使用同一表面与交互规范。 */
+.md-typeset .fs-card-grid:not(.grid) {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.md-typeset .fs-card-grid.fs-card-grid--single {
+  grid-template-columns: minmax(0, 220px);
+  justify-content: center;
+  margin: 1rem 0;
+}
+
+.md-typeset .fs-card-grid a.fs-card {
+  position: relative;
+  display: block;
+  padding: 10px !important;
+  border: 1px solid var(--fs-card-border-color) !important;
+  border-radius: var(--fs-card-radius) !important;
+  background-color: var(--fs-card-background) !important;
+  box-shadow: var(--fs-card-shadow) !important;
+  color: inherit;
+  text-align: center;
+  text-decoration: none !important;
+  transform: none !important;
+  transition: border-color 0.15s ease, color 0.15s ease !important;
+  cursor: pointer;
+}
+
+.md-typeset .fs-card-grid a.fs-card img {
+  display: block;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  cursor: pointer !important;
+}
+
+.md-typeset .fs-card-grid a.fs-card .fs-card-title {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--fs-card-title-color) !important;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none !important;
+}
+
+.md-typeset .fs-card-grid a.fs-card:focus-visible {
+  outline: 2px solid var(--fs-card-interaction-color);
+  outline-offset: 2px;
+}
+
+.md-typeset .fs-card-grid a.fs-card:focus-visible .fs-card-title {
+  color: var(--fs-card-interaction-color) !important;
+}
+
+@media screen and (max-width: 640px) {
+  .md-typeset .fs-card-grid:not(.grid):not(.fs-card-grid--single) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 顶级侧栏类目链接保持可点击，但不显示悬浮或激活底色。 */
+.md-sidebar--primary .md-nav__item--section > .md-nav__container {
+  cursor: pointer !important;
+  background-color: transparent !important;
+}
+.md-sidebar--primary .md-nav__item--section > .md-nav__container::before,
+.md-sidebar--primary .md-nav__item--section > .md-nav__container > a.md-nav__link::before,
+.md-sidebar--primary .md-nav__item--section > .md-nav__container > label.md-nav__link::before {
+  content: none !important;
+  display: none !important;
+}
+.md-sidebar--primary .md-nav__item--section > .md-nav__container > a.md-nav__link,
+.md-sidebar--primary .md-nav__item--section > .md-nav__container > label.md-nav__link {
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  background-color: transparent !important;
+}
+.md-sidebar--primary .md-nav__item--section > .md-nav__container > a.md-nav__link:hover,
+.md-sidebar--primary .md-nav__item--section > .md-nav__container > label.md-nav__link:hover,
+.md-sidebar--primary .md-nav__item--section > .md-nav__container:hover,
+.md-sidebar--primary .md-nav__item--section.md-nav__item--active > .md-nav__container {
+  background-color: transparent !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .md-typeset .fs-card-grid a.fs-card:hover {
+    border-color: var(--fs-card-interaction-color) !important;
+    transform: none !important;
+    box-shadow: var(--fs-card-shadow) !important;
+  }
+
+  .md-typeset .fs-card-grid a.fs-card:hover .fs-card-title {
+    color: var(--fs-card-interaction-color) !important;
+    text-decoration: none !important;
+  }
+}
+
+@media (hover: none) or (pointer: coarse) {
+  .md-typeset .fs-card-grid a.fs-card:active {
+    border-color: var(--fs-card-interaction-color) !important;
+  }
+
+  .md-typeset .fs-card-grid a.fs-card:active .fs-card-title {
+    color: var(--fs-card-interaction-color) !important;
+  }
+}
+
+/* 中文站旧版产品图片卡片兼容层：与 EN 的 fs-card 图片卡片保持同一视觉契约。 */
+.md-typeset .uart-ds-grid,
+.md-typeset .parts-ds-grid {
+  --fs-card-border-color: rgba(0, 0, 0, 0.15);
+  --fs-card-background: var(--md-default-bg-color);
+  --fs-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --fs-card-title-color: var(--fs-link-unvisited);
+  --fs-card-interaction-color: #8641A9;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .uart-ds-grid,
+[data-md-color-scheme="slate"] .md-typeset .parts-ds-grid {
+  --fs-card-border-color: rgba(255, 255, 255, 0.18);
+  --fs-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  --fs-card-title-color: #88A3E8;
+  --fs-card-interaction-color: #B36FD1;
+}
+
+.md-typeset .uart-ds-grid,
+.md-typeset .parts-ds-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.md-typeset .uart-ds-grid .uart-ds-card,
+.md-typeset .parts-ds-grid .parts-ds-card,
+.md-typeset .uart-ds-grid a.uart-ds-card,
+.md-typeset .parts-ds-grid a.parts-ds-card {
+  border: 1px solid var(--fs-card-border-color) !important;
+  border-radius: 10px !important;
+  background-color: var(--fs-card-background) !important;
+  box-shadow: var(--fs-card-shadow) !important;
+  transform: none !important;
+  transition: border-color 0.15s ease, color 0.15s ease !important;
+}
+
+.md-typeset .uart-ds-grid .uart-ds-card img,
+.md-typeset .parts-ds-grid .parts-ds-card img {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto;
+  margin: 0 auto !important;
+  padding: 0 !important;
+}
+
+.md-typeset .uart-ds-grid .uart-ds-label,
+.md-typeset .parts-ds-grid .parts-ds-label {
+  color: var(--fs-card-title-color) !important;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .md-typeset .uart-ds-grid a.uart-ds-card:hover,
+  .md-typeset .parts-ds-grid a.parts-ds-card:hover {
+    border-color: var(--fs-card-interaction-color) !important;
+    box-shadow: var(--fs-card-shadow) !important;
+  }
+
+  .md-typeset .uart-ds-grid a.uart-ds-card:hover .uart-ds-label,
+  .md-typeset .parts-ds-grid a.parts-ds-card:hover .parts-ds-label {
+    color: var(--fs-card-interaction-color) !important;
+  }
+}
+
+@media screen and (max-width: 640px) {
+  .md-typeset .uart-ds-grid,
+  .md-typeset .parts-ds-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Article lists, FAQ groups, and explicitly secondary notes. */
+.md-typeset { --fs-faq-bg:#f5f0fa; --fs-faq-line:#e5e5e5; --fs-faq-active:var(--md-primary-fg-color); --fs-secondary-fg:#62666d; }
+[data-md-color-scheme="slate"] .md-typeset { --fs-faq-bg:#2c2435; --fs-faq-line:#383838; --fs-faq-active:#c9a3e6; --fs-secondary-fg:#afb3ba; }
+.md-content__inner>ul, .md-content__inner>ol { margin:12px 0 18px!important; }
+.md-content__inner>ul>li, .md-content__inner>ol>li { margin-bottom:8px!important; }
+.md-content__inner li li { margin-bottom:4px!important; }
+/* Plain HTML details are FAQs; semantic admonition types keep their own styles. */
+.md-typeset details:not([class]) { font-size:16px!important; line-height:1.75; border:1px solid var(--fs-faq-line)!important; border-radius:8px; margin:16px 0 24px!important; padding:0; background:var(--md-default-bg-color)!important; }
+.md-typeset details:not([class]):has(+ details:not([class])) { border-bottom:0!important; border-bottom-left-radius:0; border-bottom-right-radius:0; margin-bottom:0!important; }
+.md-typeset details:not([class])+details:not([class]) { border-top-left-radius:0; border-top-right-radius:0; margin-top:0!important; }
+.md-typeset details:not([class])>summary { padding:16px 48px 16px 20px; margin:0; border:0; background:var(--fs-faq-bg); color:var(--md-default-fg-color); font-size:16px; font-weight:600; line-height:1.75; cursor:pointer; }
+.md-typeset details:not([class])>summary::after { right:20px; }
+.md-typeset details:not([class])[open]>summary, .md-typeset details:not([class])>summary:hover { color:var(--fs-faq-active); }
+.md-typeset details:not([class])>summary:focus-visible { outline:2px solid var(--fs-faq-active); outline-offset:-3px; }
+.md-typeset details:not([class])>summary+* { margin:14px 20px 0; padding:0 0 18px; }
+.md-typeset details:not([class])>summary+:is(ul,ol) { margin-left:40px; }
+.md-typeset details:not([class]) li { margin-bottom:6px; }
+.md-typeset .admonition.secondary { border:0!important; border-left:2px solid var(--fs-faq-line)!important; background:transparent; box-shadow:none; padding:0 0 0 16px; margin:20px 0 24px; color:var(--fs-secondary-fg); font:inherit; font-size:15px; line-height:1.75; }
+.md-typeset .admonition.secondary>.admonition-title { font-size:14px; margin-bottom:6px; font-weight:600; }
+[data-md-color-scheme="slate"] .md-typeset .admonition.secondary { background:transparent; }
+
+[data-md-color-scheme="slate"] .md-typeset details:not([class]) { border-color:var(--fs-faq-line)!important; }
+[data-md-color-scheme="slate"] .md-typeset details:not([class])>summary { background:var(--fs-faq-bg); }

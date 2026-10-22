@@ -108,43 +108,70 @@ extern CargoPlatform cargoPlatforms[MATERIAL_STATION_COUNT];
 
 // 从圆盘抓取一种物料，然后放到指定载物台。
 // materialCode：物料颜色编号 1~6；cargoCode：载物台编号 1~3。
+/**
+ * @brief 同步执行圆盘取料并放入指定载物台；materialCode为颜色，cargoCode为1~3号载物台，返回作业是否完成。
+ */
 bool MoveDiscToCargo(uint8_t materialCode, uint8_t cargoCode);
 
 // 从指定载物台抓取物料，然后放到粗加工区或暂存区的指定位置（第一层）。
 // cargoCode：载物台编号 1 ~ 3；workAreaCode：区域位置编号 1 ~ 3。
+/**
+ * @brief 同步执行载物台到工位的第一层放料；cargoCode和workAreaCode均为1~3，实际序列由BuildArmProgram构建。
+ */
 bool MoveCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode);
 
 // 调试示例：在三个载物台手动放好物料并将小车停在粗加工区后调用。
 // 每次调用依次完整搬运三次：载物台 1 -> 区域 1、2 -> 2、3 -> 3。
 // 临时颜色码在函数内指定，也可在 Debug 模式发送 {CMD,ARM,DEMO1} 调用。
+/**
+ * @brief 同步演示三件载物台到工位的放料动作，按1到1、2到2、3到3执行；不负责底盘导航。
+ */
 bool DemoCargoToRoughArea();
 
 // 取回调试示例：小车停在暂存区、三个区域位置各有一件物料且三个载物台为空时调用。
 // 由内到外依次放置：区域 1 -> 载物台 3、区域 2 -> 载物台 2、区域 3 -> 载物台 1。
 // Debug 模式发送 {CMD,ARM,DEMO4}；本函数不负责底盘导航或检测区域内是否真的有物料。
+/**
+ * @brief 同步演示三件工位取回，按工位1到载物台3、2到2、3到1执行；不负责导航。
+ */
 bool DemoWorkAreaToCargo();
 
 // 码放调试示例：手动装好三个载物台并将小车停在码放区后，发送 {CMD,ARM,DEMO2}。
 // 顺序为 1 -> 1、2 -> 2、3 -> 3；松手高度为区域基础高度 + secondLayerOffset。
 // 调用方保证目标高度在机械行程内；本函数不负责底盘导航。
+/**
+ * @brief 同步演示第二层叠放，目标高度为工位高度加一倍层高；不负责导航。
+ */
 bool DemoStackCargoToWorkArea();
 
 // 码放第三层调试示例：手动装好三个载物台并将小车停在码放区后，发送 {CMD,ARM,DEMO3}。
 // 顺序为 1 -> 1、2 -> 2、3 -> 3；松手高度为区域基础高度 + 2 倍 secondLayerOffset。
 // 调用方保证目标高度在机械行程内；本函数不负责底盘导航。
+/**
+ * @brief 同步演示第三层叠放，目标高度为工位高度加两倍层高；不负责导航。
+ */
 bool DemoStackCargoToWorkArea3();
 
 // ================= 开局雷达扫描位姿 =================
 // 根据当前启停区执行不同的底盘移动，再执行若干机械臂动作。
 // startZoneCode：1 表示启停区 1，2 表示启停区 2；其他值会直接返回 false。
 // 具体距离和机械臂动作在 material_transfer.cpp 的函数内填写。
+/**
+ * @brief 按起始区号1或2同步执行扫码准备姿态，底盘偏移与机械臂步骤由LIDAR_POSE作业实现。
+ */
 bool PrepareLidarScanPose(uint8_t startZoneCode);
 
 // 从粗加工区或暂存区的指定位置抓取物料，然后放到指定载物台。
 // materialCode 用于恢复载物台中的物料状态记录。
+/**
+ * @brief 同步执行工位取回到载物台；materialCode用于完成后恢复物料登记，工位和载物台编号为1~3。
+ */
 bool MoveWorkAreaToCargo(uint8_t materialCode, uint8_t workAreaCode, uint8_t cargoCode);
 
 // 从指定载物台抓取物料，然后码放到区域指定位置的第二层。
+/**
+ * @brief 同步执行载物台到指定工位的第二层叠放，返回作业是否完成。
+ */
 bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode);
 
 // ================= 三个物料的整组搬运动作 =================
@@ -157,33 +184,60 @@ bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode);
 // 第二批 PlaceTaskCargoToWorkArea(currentTask.round2_pos, 2)。
 // 调用前必须已装料并停在目标区域；本函数不负责底盘导航。
 // 调用方保证目标高度在机械行程内；执行失败返回 false。
+/**
+ * @brief 按本轮位置码同步放置三件物料，实际序列由BuildArmProgram构建。
+ * @param positionCodes 三个载物台各自对应的工位编号1~3。
+ * @param layer 叠放层数，1为基础层，2为第二层。
+ * @return true 作业DONE，false 提交或执行失败。
+ */
 bool PlaceTaskCargoToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT], uint8_t layer);
 
 // 按颜色码依次从圆盘抓取三个物料，分别放到 1、2、3 号载物台。
 // 示例：LoadRoundFromDisc(currentTask.round1_colors);
+/**
+ * @brief 按颜色数组顺序同步抓取圆盘三件物料，分别放到载物台1~3；不负责底盘导航。
+ */
 bool LoadRoundFromDisc(const int materialCodes[MATERIAL_STATION_COUNT]);
 
 // 第一层兼容入口，等价于 PlaceTaskCargoToWorkArea(positionCodes, 1)。
 // 示例：PlaceRoundToWorkArea(currentTask.round1_pos);
+/**
+ * @brief 第一层整组放料兼容入口，等价于PlaceTaskCargoToWorkArea传入layer=1。
+ */
 bool PlaceRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]);
 
 // 按位置码从区域中取回三个物料，分别放回 1、2、3 号载物台。
 // 示例：RetrieveRoundToCargo(currentTask.round1_colors,
 //                              currentTask.round1_pos);
+/**
+ * @brief 按本轮颜色和位置数组同步从工位取回三件，放入载物台1~3并恢复物料登记。
+ */
 bool RetrieveRoundToCargo(const int materialCodes[MATERIAL_STATION_COUNT], const int positionCodes[MATERIAL_STATION_COUNT]);
 
 // 第二层兼容入口，等价于 PlaceTaskCargoToWorkArea(positionCodes, 2)。
 // 示例：StackRoundToWorkArea(currentTask.round2_pos);
+/**
+ * @brief 第二层整组叠放兼容入口，等价于PlaceTaskCargoToWorkArea传入layer=2。
+ */
 bool StackRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]);
 
 // 圆盘抓取接口
 // force=true 时，载物台占用仅警告并继续。
 // true 表示预设动作执行完成并已登记物料；不代表传感器确认实物。
+/**
+ * @brief 同步提交圆盘抓放作业；force选择强制抓取入口，成功只表示预设作业完成并登记。
+ */
 bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force = false);
 
 // 新版圆盘位置抓取分为“位置专用夹取”和“公共载物台放置”两段。
 // 夹取前先调用校验；夹住并抬升后调用放置，成功后登记载物台颜色。
+/**
+ * @brief 检查目标载物台是否为空；当前实现不使用颜色参数，true表示允许继续放入。
+ */
 bool ValidateDiscPositionTransfer(uint8_t materialCode, uint8_t cargoCode);
+/**
+ * @brief 将已经夹住的圆盘物料同步放入指定载物台，完成后登记颜色；不重复夹取。
+ */
 bool PlaceHeldDiscMaterialToCargo(uint8_t materialCode, uint8_t cargoCode);
 
 

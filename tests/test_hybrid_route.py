@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def positions():
-    xs, ys = [310, 720, 1200, 1680, 2090], [240, 720, 1200, 1680, 2020]
+    xs, ys = [310, 720, 1200, 1680, 2050], [240, 720, 1200, 1680, 2020]
     return {i: (xs[i % 5 if i//5 % 2 == 0 else 4-i % 5], ys[i//5]) for i in range(25)}
 
 
@@ -33,7 +33,7 @@ class HybridTests(unittest.TestCase):
     def test_outside_bulges_away_and_never_clips(self):
         plan = self.plan()
         self.assertEqual(sum(p.kind == 'CUBIC' for p in plan.segments), 1)
-        self.assertGreater(max(x for _, x, _, _ in plan.preview), 2090)
+        self.assertGreater(max(x for _, x, _, _ in plan.preview), 2050)
         self.assertGreater(max(y for _, _, y, _ in plan.preview), 2020)
         self.assertTrue(all(check_pose(x, y, h, 20) is None for _, x, y, h in plan.preview))
 

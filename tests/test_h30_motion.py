@@ -16,7 +16,7 @@ class MotionTests(unittest.TestCase):
         command = [compiler] if compiler else [str(zig), 'c++']
         cache = ROOT/'.pio/native_h30_formal';cache.mkdir(exist_ok=True)
         source = (ROOT/'src/continuous_trial.cpp').read_text(encoding='utf-8')
-        (cache/'h30_formal_actual.inc').write_text(source[source.index('bool H30StartNodePath('):], encoding='utf-8')
+        (cache/'h30_formal_actual.inc').write_text(source[source.index('bool H30PrepareNodePath('):source.index('void ContinuousMotionBegin(')], encoding='utf-8')
         exe = cache/'test.exe'
         result = subprocess.run(command+['-std=c++14', '-O1', '-I', str(cache), str(ROOT/'tests/h30_formal_native.cpp'),
             str(ROOT/'src/continuous_route.cpp'), str(ROOT/'src/hybrid_route.cpp'), '-o', str(exe)], capture_output=True, text=True)
@@ -52,16 +52,5 @@ class MotionTests(unittest.TestCase):
         panel.result_callback.assert_called_once_with(1200, 1200, 90)
 
     def test_formal_entry_uses_shared_controller_without_rezero(self):
-        chassis = (ROOT/'src/chassis.cpp').read_text(encoding='utf-8')
-        actual = chassis[chassis.index('bool MoveNodePath('):]
-        actual = actual[:actual.index('bool InitArm_start(')]
-        self.assertIn('H30RunNodePath(', actual)
-        self.assertNotIn('commandSynchronizedStraight(', actual)
-        controller = (ROOT/'src/continuous_trial.cpp').read_text(encoding='utf-8')
-        actual = controller[controller.index('bool H30StartNodePath('):]
-        self.assertNotIn('CalibrateH30', actual)
-        self.assertIn('cfg.policy=2', actual)
-        serial = (ROOT/'src/serial_commands.inc').read_text(encoding='utf-8')
-        actual = serial[serial.index('static void serialRoute('):serial.index('static void serialRelease(')]
-        self.assertIn('H30StartNodePath(', actual)
-        self.assertNotIn('executeNodePathWithStatus(', actual)
+        # 与同一原生适配器测试共用实际准备入口，旧同步入口只验证提交语义。
+        self.test_actual_formal_navigation_adapter()

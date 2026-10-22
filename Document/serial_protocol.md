@@ -62,7 +62,7 @@ Debug空闲时按BOOT0（GPIO0，低电平）等效执行 `{CMD,SYS,RELEASE}`，
 
 ### 参数与限制
 
-手动强制抓取：`{CMD,VISION,FORCE_GRAB,color,cargo}`，color=1～6、cargo=1～3，Debug/Release 均可用。无需开启 DISC_MATERIAL、无需任务码、不检查任务颜色或抓取顺序；接令 ACK 后先停止连续对齐并取消其业务等待，再直接调用当前 `GrabDiscMaterial(color,cargo)`。强制模式下，目标载物台已有料时发送 `{EVT,VISION,FORCE_GRAB,WARN,OCCUPIED,原颜色,cargo}` 并继续执行；普通抓取仍拒绝占用。标定位姿及运动边界检查继续生效。警告在上位机状态栏及日志显示，函数返回后状态栏仍保留本次占用警告。成功放置后将载物台颜色记录更新为本次颜色；动作失败提前返回时保留原记录。当前该函数已实现底盘与机械臂抓取、放到载物台的动作，强制入口不修改任务进度。函数返回后发送 `{EVT,VISION,FORCE_GRAB,REQUESTED,color,cargo}`；强制入口不使用完成结果推进任务，REQUESTED 不证明成功，必须结合物料日志及现场结果判断，拒绝错误参数回复 RANGE，参数数量错误回复 FORMAT。上位机“视觉 → 圆盘物料回传与抓取”选择颜色和载物台后点击“强制抓取”。
+手动强制抓取：`{CMD,VISION,FORCE_GRAB,color,cargo}`，color=1～6、cargo=1～3，Debug/Release 均可用。无需开启 DISC_MATERIAL、任务码或任务顺序；先取消业务对齐等待，向统一运动任务提交抓放。接令返回 `{RSP,VISION,FORCE_GRAB,ACK,color,cargo}` 与 `{EVT,VISION,FORCE_GRAB,REQUESTED,color,cargo}`，二者只表示提交。动作结束后发送 `{EVT,VISION,FORCE_GRAB,DONE,color,cargo}` 或 `FAILED`；上位机等待匹配颜色/载物台的终态。目标载物台已有料时仍发送 `{EVT,VISION,FORCE_GRAB,WARN,OCCUPIED,原颜色,cargo}` 并继续；原有动作边界和标定继续生效。成功末端更新载物台记录，提前失败保留原记录，不推进自动任务进度。错误参数 RANGE、参数数量错误 FORMAT。
 
 上位机“视觉 → 手动输入任务码”输入 `156+123+516+231` 后点击下发或按回车，发送 `{CMD,TASK,SET,156+123+516+231}`。固件回传 `{RSP,TASK,SET,OK,任务码}` 并发送 TASK_CODE 显示事件；界面仅在确认后更新当前任务码。四组都须恰好三位，第一/三组颜色为 1～6，第二/四组各为 1、2、3 的排列；格式或数值错误回复 RANGE，参数数量错误回复 FORMAT，不覆盖已有任务码。
 
@@ -74,7 +74,7 @@ TASK SET 在 Debug 可修改任务码并重置抓取进度为 0；开启 DISC_MA
 
 手动连续对齐可发送 `{CMD,VISION,ALIGN_START,模式}` 指定上述五种模式之一；无自动对齐时，无模式的旧命令和 Debug 上电默认使用 `DISC` 死区；自动对齐期间，无模式命令沿用当前自动模式。未知模式回复 `RANGE`，多余参数回复 `FORMAT`。此命令只开启底盘闭环，相机识别仍通过 `START_REQUEST` 控制。
 
-`START_REQUEST,WORK_AREA` 和 `START_REQUEST,WORK_AREA_LOADED`（粗加工／暂存区定位）在串口 ACK 后，由串口入口显式停车并执行 `InitArm_look()`；成功后才调用 `requestVisionStart()` 开启 PID、开始对齐计时并发出 START_REQUEST 事件。失败或被超时中断时发送 `{EVT,VISION,START_FAILED,模式,ARM}`，不发启动事件。自动状态机当前在三处空工位定位及第二轮暂存区带物料定位调用前显式执行并检查 look；两处粗加工放料后的带物料定位及 look 已注释，失败时进入搬运故障。`requestVisionStart()` 本身不执行机械臂动作。ACK 不表示 look 成功或视觉已启动；直接 `ALIGN_START` 不执行 look。
+`START_REQUEST,WORK_AREA` 和 `START_REQUEST,WORK_AREA_LOADED` 在串口 ACK 后由统一运动任务执行 look；成功才发 START_REQUEST 并开始 PID/对齐计时，失败发送 `{EVT,VISION,START_FAILED,模式,ARM}`。自动流程将路径与 look 作为联合完成条件，确认二者完成后才启动视觉；粗加工放料后直接取回，不再启动带物料定位。ACK 不代表姿态或视觉已就绪。
 
 键盘微调：Shift+Q 左转、Shift+E 右转，按住启动，松开 Q/E 或 Shift 停止。MOVE 的 dir 支持 0=前进、1=后退、2=左移、3=右移、4=左转、5=右转；speed 为电机 RPM，stop=0 启动、stop=1 停止。单独 Q/E 仍执行 ±90° 相对旋转。
 
@@ -314,3 +314,24 @@ Release 自动流程继续使用 DISC 定位完成后开启 DISC_MATERIAL 的切
 固件堵转检查已临时禁用：`src/node_position_control.h` 的 `MOTOR_STALL_CHECK_ENABLED=false` 对全部四轮生效，不再仅凭堵转状态位报告 `MOTOR_STALL`；驱动器自身保护未修改，其他错误和到位条件保持有效。恢复时将开关改为 `true` 后重新编译烧录。
 
 机械臂速度参数（ARM MOVE1/MOVE2 与全部搬运速度）统一接受有限且≥1的float数值，取消300/500人为上限。转换到升降/伸缩驱动转速时，仅按16位RPM字段饱和，避免整数回绕。
+
+## 统一执行与计时扩展（2026-10-21）
+
+串口运动入口改为提交作业，保留上述 ACK 与既有完成事件字段。先保留作业、发送 ACK，再放行工作任务。抓放期间仍处理 POSE、IMU、CFG GET、MOTION STATUS、停止及所需路径/视觉输入；竞争运动命令可回复 BUSY，串口不等待整段动作。旧 ARM INIT/MOVE 的 ISSUED 语义保留，不能按该事件宣称实测到位。
+
+新增 `{CMD,MOTION,STATUS,id}`，返回 `{RSP,MOTION,STATUS,OK,id,state,phase,elapsed_ms}`；未知编号返回 `ERR,ID`。state 为 QUEUED/RUNNING/DONE/FAILED/CANCELLED；保留当前和最近八个作业。已有命令 ACK 不新增 id 字段，日志 RESULT/FLAG 可用于关联作业。NAV STOP 取消统一作业及识别业务，ACK 仅表示请求停止，终态和现场停车另行确认。
+
+计时帧不改变协议版本 2：
+
+```text
+{EVT,MOTION,PHASE,0,time_ms,state_name}
+{EVT,MOTION,FLAG,id,time_ms,name,value}
+{EVT,MOTION,SPAN,id,time_ms,name,BEGIN|END}
+{EVT,MOTION,STEP,id,time_ms,index,name,BEGIN|END}
+{EVT,MOTION,RESULT,id,time_ms,DONE|FAILED|CANCELLED,elapsed_ms}
+{EVT,MOTION,RUN_START,0,time_ms}
+{EVT,MOTION,RUN_RESULT,0,time_ms,DONE,elapsed_ms}
+{EVT,MOTION,ERROR,id,time_ms,reason}
+```
+
+设备时间为开机毫秒，编号 0 为业务/视觉。SPAN/STEP 可嵌套或并行，不得累计成总成绩；RUN_RESULT 缺失则本次计时不完整。未收到首帧便停止视觉时 ERROR 而不生成首帧 END。分析命令、完成策略及实车验收见 [统一运动执行](motion_executor.md)。

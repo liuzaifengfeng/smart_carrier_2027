@@ -1,11 +1,17 @@
 #include "continuous_route.h"
 
 namespace continuous {
+/**
+ * @brief 向路径追加起点a到终点b的直线段，更新累计行程。
+ */
 void Route::line(Vec a,Vec b) {
     float n=norm(b-a); if(n<0.001f)return;
     Segment &v=segments[segmentCount++]; v=Segment{};
     v.start=a;v.end=b;v.offset=length;v.length=n;length+=n;
 }
+/**
+ * @brief 根据节点及配置构建路径段和速度规划；成功返回nullptr，否则为几何或配置错误原因。
+ */
 const char *Route::build(const Node *nodes,const Config &cfg) {
     config=cfg;segmentCount=0;speedCount=0;length=0;plannedSeconds=0;
     if(!nodes||cfg.count<2||cfg.count>MAX_NODES)return "COUNT";
@@ -76,6 +82,9 @@ const char *Route::build(const Node *nodes,const Config &cfg) {
     // 初始位置和当前导航位置是否一致，由运行时再次校验。
     return nullptr;
 }
+/**
+ * @brief 查询累计路径距离s(mm)处的位置、切向及曲率。
+ */
 Pose Route::at(float s) const {
     if(config.policy){size_t i=movingPhase(s);return phaseAt(i,s-segments[i].offset);}
     s=clamp(s,0,length);size_t i=0;
@@ -87,14 +96,23 @@ Pose Route::at(float s) const {
         p.tangent=Vec(-sinf(a)*sign,cosf(a)*sign);p.curvature=sign/v.radius;}
     return p;
 }
+/**
+ * @brief 查询累计路径距离s(mm)处的计划地图航向(deg)。
+ */
 float Route::heading(float s) const {
     if(config.policy){size_t i=movingPhase(s);return phaseHeading(i,s-segments[i].offset);}
     float u=clamp(s/length,0,1);return wrap(config.startHeading+headingDelta*u*u*u*(10+u*(-15+6*u)));
 }
+/**
+ * @brief 查询路径航向相对行程的变化率(deg/mm)。
+ */
 float Route::headingSlope(float s) const {
     if(config.policy){size_t i=movingPhase(s);return phaseSlope(i,s-segments[i].offset);}
     float u=clamp(s/length,0,1);return headingDelta*30*u*u*(1-u)*(1-u)/length;
 }
+/**
+ * @brief 检查路径距离s处的车体四角是否位于旧模型的场地边界内。
+ */
 bool Route::inside(float s) const {
     Pose p=at(s);
     for(int x:{-1,1})for(int y:{-1,1}) {
@@ -103,6 +121,9 @@ bool Route::inside(float s) const {
     }
     return true;
 }
+/**
+ * @brief 结合四轮最大转速、曲率及航向变化计算当前位置的几何速度上限(mm/s)。
+ */
 float Route::geometricCap(float s) const {
     Pose p=at(s);Vec body=worldToBody(p.tangent,heading(s));
     float px=body.x*config.lateralPpm,py=body.y*config.forwardPpm,pr=headingSlope(s)*config.rotationPpd;
@@ -123,11 +144,17 @@ float Route::geometricCap(float s) const {
     }
     return cap;
 }
+/**
+ * @brief 查询路径距离s(mm)处结合几何、加速度及停止约束后的速度上限(mm/s)。
+ */
 float Route::speedCap(float s) const {
     size_t next=static_cast<size_t>(s/spacing)+1;if(next>=speedCount)next=speedCount-1;
     float remain=fmaxf(0,next*spacing-s);
     return fminf(geometricCap(s),sqrtf(speeds[next]*speeds[next]+2*config.accel*remain));
 }
+/**
+ * @brief 将车体平移速度(mm/s)及角速度(deg/s)换算为四轮RPM，并按配置上限等比例缩放。
+ */
 WheelCommand wheels(Vec body,float omega,const Config &cfg) {
     WheelCommand out;
     float px=body.x*cfg.lateralPpm,py=body.y*cfg.forwardPpm,pr=omega*cfg.rotationPpd;
@@ -140,9 +167,15 @@ WheelCommand wheels(Vec body,float omega,const Config &cfg) {
     out.omega=(p[0]+p[1]+p[2]+p[3])/(4*cfg.rotationPpd);
     return out;
 }
+/**
+ * @brief 初始化路径跟踪状态；actualHeading为开始时实测地图航向(deg)。
+ */
 void Tracker::begin(const Route &route,float actual) {
     *this=Tracker{};estimated=route.at(0).p;(void)actual;
 }
+/**
+ * @brief 按已下发轮速、实测航向及时间dt(s)更新估算位置，不代表外部定位。
+ */
 void Tracker::integrate(const Route &route,float actual,float dt) {
     Vec world=bodyToWorld(applied.body,actual);estimated=estimated+world*dt;
     if(route.config.policy) {
@@ -154,6 +187,9 @@ void Tracker::integrate(const Route &route,float actual,float dt) {
     }
     if(!finishing)s=fminf(route.length,s+fmaxf(0,dot(world,route.at(s).tangent))*dt);
 }
+/**
+ * @brief 计算一个控制周期的四轮命令、航向误差及完成结果；dt为秒，sampleMs为样本毫秒数。
+ */
 Output Tracker::update(const Route &route,float actual,float dt,uint32_t sampleMs) {
     if(route.config.policy)return updateHybrid(route,actual,dt,sampleMs);
     Output out;const Config &c=route.config;

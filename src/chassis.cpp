@@ -7,6 +7,8 @@
 #include "continuous_trial.h"
 #include "node_position_hardware.h"
 #include "position_move_timing.h"
+#include "motor_bus.h"
+#include "motion_executor.h"
 volatile bool taskMotionAborted = false;
 #include <float.h>
 
@@ -30,11 +32,11 @@ struct NodePosition {
 // 从底向上、从左到右：0~4、9~5、10~14、19~15、20~24。
 // 沿用项目 X 向右、Y 向上；中心间距 480 mm。
 NodePosition NODE_POSITIONS[FIELD_NODE_COUNT] = {
-    {310.0f, 240.0f}, {720.0f, 240.0f}, {1200.0f, 240.0f}, {1680.0f, 240.0f}, {2090.0f, 240.0f},
-    {2090.0f, 720.0f}, {1680.0f, 720.0f}, {1200.0f, 720.0f}, {720.0f, 720.0f}, {310.0f, 720.0f},
-    {310.0f, 1200.0f}, {720.0f, 1200.0f}, {1200.0f, 1200.0f}, {1680.0f, 1200.0f}, {2090.0f, 1200.0f},
-    {2090.0f, 1680.0f}, {1680.0f, 1680.0f}, {1200.0f, 1680.0f}, {720.0f, 1680.0f}, {310.0f, 1680.0f},
-    {310.0f, 2020.0f}, {720.0f, 2020.0f}, {1200.0f, 2020.0f}, {1680.0f, 2020.0f}, {2090.0f, 2020.0f},
+    {310.0f, 240.0f}, {720.0f, 240.0f}, {1200.0f, 240.0f}, {1680.0f, 240.0f}, {2050.0f, 240.0f},
+    {2050.0f, 720.0f}, {1680.0f, 720.0f}, {1200.0f, 720.0f}, {720.0f, 720.0f}, {310.0f, 720.0f},
+    {310.0f, 1200.0f}, {720.0f, 1200.0f}, {1200.0f, 1200.0f}, {1680.0f, 1200.0f}, {2050.0f, 1200.0f},
+    {2050.0f, 1680.0f}, {1680.0f, 1680.0f}, {1200.0f, 1680.0f}, {720.0f, 1680.0f}, {310.0f, 1680.0f},
+    {310.0f, 2020.0f}, {720.0f, 2020.0f}, {1200.0f, 2020.0f}, {1680.0f, 2020.0f}, {2050.0f, 2020.0f},
 };
 
 constexpr uint32_t MOTOR_PULSES_PER_REVOLUTION = 3200; // 16 细分时，电机转一圈的脉冲数
@@ -48,9 +50,9 @@ constexpr float ROUTE_ANGLE_EPSILON_DEG = 0.01f;       // 小于该角度时不�
 // 顺序对应 VisionStartMode；各行独立调整，X/Y 为视觉单位，角度为度。
 VisionAlignmentDeadzone ALIGN_DEADZONES[] = {
     {8.0f, 8.0f, 0.5f}, // DISC 圆盘对齐
-    {3.0f, 3.0f, 0.2f}, // DISC_MATERIAL 圆盘物料对齐
-    {3.0f, 3.0f, 0.2f}, // WORK_AREA
-    {3.0f, 3.0f, 0.2f}, // WORK_AREA_LOADED
+    {5.0f, 5.0f, 0.2f}, // DISC_MATERIAL 圆盘物料对齐
+    {5.0f, 5.0f, 0.2f}, // WORK_AREA
+    {5.0f, 5.0f, 0.2f}, // WORK_AREA_LOADED
     {6.0f, 6.0f, 0.4f}, // CORNER
 };
 AlignmentFrameWaiter s_alignmentWaiter;
@@ -321,6 +323,9 @@ bool executeNodeSegment(uint8_t startNode, uint8_t endNode, uint16_t speedRpm, u
 
 } // namespace
 
+/**
+ * @brief 按节点编号读取当前地图X/Y坐标(mm)，成功时写入x和y并返回true。
+ */
 bool ChassisGetNodePosition(uint8_t node,float &x,float &y) {
     NodePosition p;
     if(!getNodePosition(node,p))return false;
@@ -328,6 +333,9 @@ bool ChassisGetNodePosition(uint8_t node,float &x,float &y) {
 }
 
 // 注册原变量地址，上位机修改后由底盘和 PID 算法直接使用。
+/**
+ * @brief 在参数表末尾追加角点专用PID，保持此前参数编号顺序。
+ */
 void RegisterCornerAlignmentParameters() {
     PidController *controllers[] = {&s_cornerVisualXPid, &s_cornerVisualYPid, &s_cornerAnglePid};
     const char *axes[] = {"视觉X", "视觉Y", "角度"};
@@ -343,6 +351,9 @@ void RegisterCornerAlignmentParameters() {
     }
 }
 
+/**
+ * @brief 注册底盘运动、视觉PID、死区、节点地图和脉冲标定参数。
+ */
 void RegisterChassisParameters() {
     PidController *controllers[] = {&s_alignVisualXPid, &s_alignVisualYPid, &s_alignAnglePid};
     const char *axes[] = {"视觉X", "视觉Y", "角度"};
@@ -381,6 +392,9 @@ void RegisterChassisParameters() {
 }
 
 
+/**
+ * @brief 读取2号转台实际多圈角度(deg)，同时沿用现有线缆范围检查；成功写入angle并返回true。
+ */
 bool ReadArmTurretAngle(float &angle) {
     if (taskMotionAborted) return false;
     float measuredAngle = 0.0f;
@@ -459,7 +473,7 @@ static bool MoveArmInternal(float high, float length, float turret_angle, float 
         const uint32_t pulses = static_cast<uint32_t>(high * HEIGHT_PULSE);
         // RPM 写入协议的 16 位字段，在此完成数值饱和。
         const uint16_t rpm = speed >= UINT16_MAX / 15.0f ? UINT16_MAX : speed * 15.0f;
-        Emm_V5_Pos_Control(5, 1, rpm, 250, pulses, true, false);
+        Emm_V5_Pos_Control(5, 1, rpm, 252, pulses, true, false);
         vTaskDelay(pdMS_TO_TICKS(10));
         currentArm.high = high;
     }
@@ -506,6 +520,10 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
     return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, false);
 }
 
+/**
+ * @brief 按已规划的多圈绝对转台目标发令，不再选择最近等效角；其他轴的-1仍表示跳过。
+ * @return true 指令下发成功，不表示实测到位。
+ */
 bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed) {
     return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, true);
 }
@@ -714,7 +732,21 @@ void OmniMove(float xVelocity, float yVelocity, float rotationVelocity, uint16_t
     Emm_V5_Synchronous_motion(0);
 }
 
-bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)()) {
+namespace {
+struct PositionExecution {
+    bool active=false,success=true;
+    uint32_t started=0,duration=0;
+    RobotPose target{};
+} positionExecution;
+}
+/**
+ * @brief 初始化四轮同步相对位置动作，不等待估算行程结束；由TickPositionMove推进。
+ * @return true 准备成功，false 请求无法执行。
+ */
+bool BeginPositionMove(float x, float y, float theta, float speed) {
+    positionExecution.active=false;positionExecution.success=true;
+    if(taskMotionAborted)return false;
+    MotorBusGuard transaction;
     // SE(2) 指数映射的逆：x/y 是起始车身系中的终点位移。
     // 转动过程中车身系也在转动，不能直接把终点 x/y 当作累计车身位移。
     const double angle = static_cast<double>(theta) * PI / 180.0;
@@ -764,7 +796,6 @@ bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)
     // 与导航/扫码统一：theta=0时车头(+Y)朝地图+X，车身+X朝地图-Y。
     const double targetX = currentPose.x + x * sin(heading) + y * cos(heading);
     const double targetY = currentPose.y - x * cos(heading) + y * sin(heading);
-    if (shouldStop != nullptr && shouldStop()) return false;
     for (uint8_t motor = 1; motor <= 4; ++motor) {
         // 耗时计算与实际下发使用同一加速度档位。
         if (pulses[motor - 1] == 0) {
@@ -776,29 +807,49 @@ bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)
         vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
     }
     Emm_V5_Synchronous_motion(0);
-    uint32_t remainingMs = static_cast<uint32_t>(waitMs);
-    while (remainingMs > 0) {
-        if (shouldStop != nullptr && shouldStop()) {
-            for (uint8_t motor = 1; motor <= 4; ++motor) {
-                Emm_V5_Stop_Now(motor, true);
-                vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
-            }
-            Emm_V5_Synchronous_motion(0);
-            return false;
-        }
-        const uint32_t pollMs = shouldStop != nullptr ? 10 : 1000;
-        const uint32_t chunkMs = remainingMs > pollMs ? pollMs : remainingMs;
-        vTaskDelay(pdMS_TO_TICKS(chunkMs));
-        remainingMs -= chunkMs;
-    }
-    currentPose.x = static_cast<float>(targetX);
-    currentPose.y = static_cast<float>(targetY);
-    currentPose.theta = normalizeHeading(normalizeHeading(currentPose.theta)
-                                        + normalizeHeading(theta));
-    Serial.println("[MovePosition] Commands sent and estimated wait elapsed; arrival not verified");
+    positionExecution.started=millis();
+    positionExecution.duration=static_cast<uint32_t>(waitMs);
+    positionExecution.target={static_cast<float>(targetX),static_cast<float>(targetY),
+        normalizeHeading(normalizeHeading(currentPose.theta)+normalizeHeading(theta))};
+    positionExecution.active=true;
     return true;
 }
+/**
+ * @brief 判断相对位置动作是否仍处于等待结束的运行状态。
+ */
+bool PositionMoveActive(){return positionExecution.active;}
+/**
+ * @brief 停止当前相对位置移动并清除运行状态。
+ */
+void CancelPositionMove() {
+    positionExecution.active=false;positionExecution.success=false;
+    MotorBusGuard transaction;
+    for(uint8_t id=1;id<=4;++id){Emm_V5_Stop_Now(id,true);vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));}
+    Emm_V5_Synchronous_motion(0);
+}
+/**
+ * @brief 检查相对位置动作的估算时间并推进结束处理，不代表实测到位。
+ */
+void TickPositionMove() {
+    if(!positionExecution.active)return;
+    if(taskMotionAborted){CancelPositionMove();return;}
+    if(millis()-positionExecution.started<positionExecution.duration)return;
+    currentPose=positionExecution.target;positionExecution.active=false;
+    Serial.println("[MovePosition] Commands sent and estimated wait elapsed; arrival not verified");
+}
+bool MovePosition(float x,float y,float theta,float speed,bool (*shouldStop)()) {
+    if(shouldStop&&shouldStop())return false;
+    if(!BeginPositionMove(x,y,theta,speed))return false;
+    while(PositionMoveActive()) {
+        if(shouldStop&&shouldStop()){CancelPositionMove();return false;}
+        TickPositionMove();if(PositionMoveActive())vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return positionExecution.success;
+}
 
+/**
+ * @brief 同步执行扫码往返直行，用编码器记录完整或提前停车后的行程；distance单位mm，speed单位RPM。
+ */
 bool MoveScanPosition(float distance,float speed,bool (*shouldStop)()) {
     int64_t before[4],after[4];
     if(!ReadChassisEncoderPositions(before))return false;
@@ -816,6 +867,9 @@ bool MoveScanPosition(float distance,float speed,bool (*shouldStop)()) {
     return completed;
 }
 
+/**
+ * @brief 同步执行接近后降速扫码，距离单位mm，速度单位RPM；收到任务码回调为true时停车。
+ */
 bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t searchRpm, bool (*received)()) {
     const RobotPose start=currentPose;
     float forward=0;
@@ -935,99 +989,33 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength, float speedMmS, uint8_
 /**
  * @brief 机械臂初始化归零位
  */
-bool InitArm_start() {
-    if (!MoveArm(160,-1,-1,0,300)) return false;
-    vTaskDelay(pdMS_TO_TICKS(800));
-    if (!MoveArm(-1, -1, -55, -1, 300)) return false;
-    vTaskDelay(pdMS_TO_TICKS(100));
-    if (!MoveArm(154,40,-1,0,300)) return false;
-    vTaskDelay(pdMS_TO_TICKS(500));
-    return true;
+namespace {
+bool waitObservation(ArmObservation pose) {
+    MotionRequest request;request.kind=MotionKind::ARM_POSE;request.observation=pose;
+    request.zone=static_cast<uint8_t>(currentStartZone);
+    return WaitMotion(SubmitMotion(request));
 }
-
-/**
- * @brief 机械臂初始化归视觉位（暂存区/粗加工区视觉）
- */
-bool InitArm_look() {
-    if (!MoveArm(170,0,-1,60,200)) return false;
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    if (!MoveArm(-1, 0, 90, 80, 200)) return false;
-    vTaskDelay(pdMS_TO_TICKS(100));
-    if (!MoveArm(170,-1,-1,80,200)) return false;
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    return true;
 }
-
 /**
- * @brief 机械臂初始化归视觉位（圆盘定位视觉）
+ * @brief 同步提交并等待START收臂姿态，供旧调试入口调用。
  */
-bool InitArm_look2() {
-    if (!MoveArm(170,0,-1,-1,200)) return false;
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    if (!MoveArm(-1, 0, 90, 80, 200)) return false;
-    return true;
-}
-
+bool InitArm_start(){return waitObservation(ArmObservation::START);}
 /**
- * @brief 机械臂初始化归视觉位（圆盘物料定位视觉）
+ * @brief 同步提交并等待工位视觉前LOOK姿态，供旧调试入口调用。
  */
-bool InitArm_look3() {
-    if (!MoveArm(170,40,-1,-1,300)) return false;
-    vTaskDelay(pdMS_TO_TICKS(700));
-    if (!MoveArm(-1, -1, 90, 80, 300)) return false;
-
-    // MoveArm 只表示命令已成功下发。圆盘下一次识别必须等转台真实到达观察位，
-    // 否则动作期间积压的视觉结果可能被误当成下一件物料的新数据。
-    constexpr float LOOK3_TURRET_TARGET_DEG = 90.0f;       // 转台进入视觉观察位时的目标角度
-    constexpr float LOOK3_TURRET_TOLERANCE_DEG = 5.0f;     // 判断转台到位所允许的角度误差
-    constexpr uint32_t LOOK3_TURRET_TIMEOUT_MS = 1500;     // 等待转台到位的最大时长（毫秒）
-    constexpr uint32_t LOOK3_TURRET_POLL_MS = 50;          // 查询转台实际角度的时间间隔（毫秒）
-    const uint32_t startedAt = millis();                    // 记录等待开始时间，用于判断是否超时
-    float measuredAngle = NAN;
-    do {
-        if (taskMotionAborted) return false;
-        if (Servo_QueryAngleMTurn(2, measuredAngle, 100)
-                && isfinite(measuredAngle)
-                && fabsf(measuredAngle - LOOK3_TURRET_TARGET_DEG)
-                    <= LOOK3_TURRET_TOLERANCE_DEG) {
-            Serial.printf("[Arm] look3 ready: turret=%.1f deg, target=90.0+/-5.0 deg\n",
-                          measuredAngle);
-            return true;
-        }
-        vTaskDelay(pdMS_TO_TICKS(LOOK3_TURRET_POLL_MS));
-    } while (millis() - startedAt < LOOK3_TURRET_TIMEOUT_MS);
-
-    Serial.printf("[Arm] ERR: look3 turret not ready: actual=%.1f deg, target=90.0+/-5.0 deg\n",
-                  measuredAngle);
-    return false;
-}
-
+bool InitArm_look(){return waitObservation(ArmObservation::LOOK);}
 /**
- * @brief 机械臂初始化归视觉位（角点识别视觉）
+ * @brief 同步提交并等待圆盘整体对齐前LOOK2姿态。
  */
-bool InitArm_look4() {
-    if (currentStartZone == START_ZONE_1) {
-        //车体旋转到180°（绝对角度）        
-        if (!MovePosition(0.0f, 0.0f, NodeRouteTurn(currentPose.theta, 180.0f), 80.0f)) {
-            return false;}
-        if (!MoveArm(170,120,-1,-1,200)) return false;
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        if (!MoveArm(-1, -1, 90, 80, 200)) return false;
-        if (!MoveArm(-1, -1, 45, 90, 200)) return false;  
-        vTaskDelay(pdMS_TO_TICKS(500));
-    } else if (currentStartZone == START_ZONE_2) {
-        //车体旋转到180°（绝对角度）        
-        if (!MovePosition(0.0f, 0.0f, NodeRouteTurn(currentPose.theta, 180.0f), 80.0f)) {
-            return false;}
-        if (!MoveArm(170,120,-1,-1,200)) return false;
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        if (!MoveArm(-1, -1, 90, 80, 200)) return false;
-        if (!MoveArm(-1, -1, 135, 90, 200)) return false; 
-        vTaskDelay(pdMS_TO_TICKS(500));
-    } else {
-        Serial.println("[Arm] ERR: invalid start zone for corner vision pose");
-        return false;
-    }
-
-    return true;
+bool InitArm_look2(){return waitObservation(ArmObservation::LOOK2);}
+/**
+ * @brief 同步提交并等待圆盘单件识别前LOOK3姿态及转台实测就绪。
+ */
+bool InitArm_look3(){return waitObservation(ArmObservation::LOOK3);}
+/**
+ * @brief 同步提交并等待返家角点视觉前LOOK4姿态。
+ */
+bool InitArm_look4(){
+    MotionRequest r;r.kind=MotionKind::HOME_OBSERVE;r.zone=static_cast<uint8_t>(currentStartZone);
+    return WaitMotion(SubmitMotion(r));
 }

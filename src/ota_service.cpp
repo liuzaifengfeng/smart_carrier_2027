@@ -11,6 +11,7 @@ static const char* wifi_password = nullptr;
 static const char* wifi_hostname = nullptr;
 
 #include "continuous_trial.h"
+#include "motion_executor.h"
 static TaskHandle_t xOtaTaskHandle = NULL;
 
 // 声明外部需要暂停的业务任务句柄
@@ -29,8 +30,8 @@ static void ota_task(void *pvParameters) {
         ContinuousTrialSetOta(true);
         // 必须先确认四轮已由试跑任务停车；超时则重启前仍尝试直接停车。
         uint32_t stopAt=millis();
-        while(ContinuousTrialActive()&&millis()-stopAt<500)vTaskDelay(pdMS_TO_TICKS(10));
-        if(ContinuousTrialActive()){Emm_V5_Stop_Now(0,false);Serial1.flush();}
+        while((MotionExecutorActive()||ContinuousTrialActive())&&millis()-stopAt<500)vTaskDelay(pdMS_TO_TICKS(10));
+        if(MotionExecutorActive()||ContinuousTrialActive()){Emm_V5_Stop_Now(0,false);Serial1.flush();}
         String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
         Serial.println("Start updating " + type);
 
@@ -114,6 +115,9 @@ static void wifi_task(void *pvParameters) {
     }
 }
 
+/**
+ * @brief 初始化WiFi、mDNS及OTA后台任务；ssid、password为网络凭据，hostname为设备名称。
+ */
 void init_ota_service(const char* ssid, const char* password, const char* hostname) {
     wifi_ssid = ssid;
     wifi_password = password;

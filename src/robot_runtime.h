@@ -56,33 +56,13 @@ constexpr float START_ZONE_HEADING = 180.0f;
 constexpr float DISC_AREA_HEADING = 90.0f;
 constexpr float COARSE_AREA_HEADING = 270.0f;
 constexpr float TEMP_AREA_HEADING = 180.0f;
-enum RobotState {
-    STATE_WAIT_START,    // 待机,等一键启动
-    STATE_READ_TASK,     // 读取任务码(二维码板 / 机载电脑)
-    STATE_SCAN_FAILED,   // 扫码重试耗尽，保持停车，不进入抓取流程
-    STATE_ROUTE_FAILED,  // 路径失败，不进入后续用户代码
-    STATE_ALIGN_FAILED,  // 自动对齐失败，停车等待处理
-    STATE_TIMEOUT_FAILED, // 总任务超时，停止并等待人工处理
-    STATE_TRANSFER_FAILED, // 搬运动作失败，保持停车等待处理
-    STATE_GRAB_ROUND1,   // 第一批: 转盘抓取 3 个物料
-    STATE_PLACE_COARSE1, // 第一批: 放到粗加工区
-    STATE_PLACE_TEMP1,   // 第一批: 放到暂存区
-    STATE_GRAB_ROUND2,   // 第二批: 转盘抓取
-    STATE_PLACE_COARSE2, // 第二批: 放到粗加工区
-    STATE_STACK_TEMP2,   // 第二批: 码垛到暂存区(叠在第一批上)
-    STATE_RETURN_HOME,   // 回启停区,上报完成统计
-    STATE_DONE
-};
+#include "robot_state.h"
 
-enum StartZone {
-    START_ZONE_UNKNOWN = 0,
-    START_ZONE_1 = 1,
-    START_ZONE_2 = 2
-};
+
 
 enum class NodePathState { IDLE, WAITING, RECEIVING, RECEIVED, RUNNING, DONE, FAILED };
 
-enum class AutoAlignmentState { IDLE, WAITING, DONE, FAILED };
+
 
 typedef struct {
     float angleDeg;
@@ -107,23 +87,94 @@ extern volatile int  roundProgress;
 extern volatile bool firstDiscGrabReady;
 extern volatile bool discMessageResumeRequested; // look3 实测到位后，排空此前旧帧再开放圆盘抓取。
 extern volatile bool enableRun;
+extern volatile bool alignmentEnabled;
+extern volatile bool discMaterialActive;
+extern uint8_t discMaterialColor;
 extern QueueHandle_t xAlignmentQueue;
+extern NodePathState nodePathState;
+extern portMUX_TYPE nodePathMux;
+extern uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH];
+extern size_t nodePathLen;
 extern SemaphoreHandle_t xAlignmentMotionMutex;
 extern QueueHandle_t xVisualTaskQueue;
 extern TimerHandle_t xHomeTimer;
 extern SemaphoreHandle_t xLidarPoseMutex;
 
+/**
+ * @brief 请求起终点节点路径并同步等待导航作业；正式主状态机改用 SubmitMotion。
+ * @return true 路径作业完成，false 请求或执行失败。
+ */
 bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode, float finalHeading = NAN);
+/**
+ * @brief 读取自动对齐状态，供主流程决定是否进入取放料阶段。
+ */
 AutoAlignmentState getAutoAlignmentState();
+/**
+ * @brief 开启或关闭底盘视觉对齐，并维护当前模式、完成判定和显示应答。
+ * @param enable true 开启，false 关闭。
+ * @param acknowledge 是否输出控制应答。
+ * @param automatic 是否属于自动比赛对齐。
+ * @param owner 拥有该次对齐的视觉模式。
+ * @param onlyOwner 是否仅允许匹配拥有者关闭。
+ */
 void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false, VisionStartMode owner = VisionStartMode::NONE, bool onlyOwner = false);
+/**
+ * @brief 同步兼容入口：提交起始区扫码姿态并等待结果。
+ * @return true 作业成功，false 未提交或执行失败。
+ */
 bool runLidarPoseAction(bool fromCommand = false, bool allowRepeat = false);
+/**
+ * @brief 按起始区提交扫码准备姿态，正式模式复用已完成标志避免重复动作。
+ * @param fromCommand true 表示串口显式请求。
+ * @param allowRepeat 是否允许重复执行已完成的正式准备动作。
+ * @return 非零作业编号；0 表示未提交或无需重复。
+ */
+uint32_t SubmitLidarPoseAction(bool fromCommand=false,bool allowRepeat=false);
+/**
+ * @brief 处理扫码准备作业结束，仅在正式模式成功时登记准备已完成。
+ */
+void CompleteLidarPose(bool success,bool debug);
+/**
+ * @brief 封装并发送上位机显示事件；返回是否发送成功。
+ */
 bool updateDisplay(const char *commandType, const char *displayType, const char *content);
+/**
+ * @brief 发送开启指定视觉模式的请求，并按模式设置对齐或物料识别状态。
+ */
 void requestVisionStart(VisionStartMode mode);
+/**
+ * @brief 发送停止指定视觉模式的请求，并结束对应本地控制状态。
+ */
 void requestVisionStop(VisionStartMode mode);
+/**
+ * @brief 从扫码枪消息队列取出一帧字符串。
+ * @param out 输出任务码缓冲区。
+ * @param len 缓冲区容量，包含结束符。
+ * @param timeoutMs 等待毫秒数，0 表示立即查询。
+ * @return true 取得数据，false 没有数据或参数无效。
+ */
 bool waitScannerCode(char *out, uint32_t len, uint32_t timeoutMs);
+/**
+ * @brief 启动时读取转台或夹爪实际角度，成功时写入 storedAngle；不发运动指令。
+ */
 void readStartupServoAngle(uint8_t servoId, float &storedAngle);
+/**
+ * @brief 比赛主任务，每10ms调用 CompetitionFlow::tick，处理状态编排及主阶段日志。
+ */
 void Task_MainStateMachine(void *pvParameters);
+/**
+ * @brief 接收串口帧并分发查询、参数、调试与运动请求；运动交给统一执行器。
+ */
 void Task_Serial_CMD(void *pvParameters);
+/**
+ * @brief 采样板载BOOT按钮并记录Release请求，实际切换由空闲串口任务处理。
+ */
 void PollDebugBootButton(); // loop采样，Release由空闲的串口任务统一执行。
+/**
+ * @brief 接收视觉反馈并发布最新数据；实际闭环发令由运动任务推进。
+ */
 void Task_VisualAlignment(void *pvParameters);
+/**
+ * @brief 比赛总计时器超时回调，执行既有停止、失败状态及主任务暂停处理。
+ */
 void vHomeTimerCallback(TimerHandle_t xTimer);

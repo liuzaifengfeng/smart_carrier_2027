@@ -20,7 +20,14 @@ struct H30Attitude {
 // 单个 USB 客户端任务持有；不假设 USB 包边界等于 YIS 帧边界。
 class H30Parser {
 public:
+    /**
+     * @brief 清空H30字节解析缓存，下一帧从帧头重新接收。
+     */
     H30_CONSTEXPR void reset() { size_ = 0; }
+    /**
+     * @brief 逐字节解析H30 YIS数据帧，校验通过且含姿态字段时输出sample。
+     * @return true 得到完整姿态帧，false 尚未形成有效姿态帧。
+     */
     H30_CONSTEXPR bool feed(uint8_t byte, H30Attitude &sample) {
         buffer_[size_++] = byte;
         for (;;) {
@@ -67,10 +74,16 @@ public:
 private:
     uint8_t buffer_[262] = {};
     size_t size_ = 0;
+    /**
+     * @brief 丢弃H30缓存前缀字节，并保留剩余未消费数据。
+     */
     H30_CONSTEXPR void discard(size_t count) {
         size_ -= count;
         for (size_t i = 0; i < size_; ++i) buffer_[i] = buffer_[i + count];
     }
+    /**
+     * @brief 将小端有符号32位字段按1e-6比例解码为浮点物理量。
+     */
     static H30_CONSTEXPR float component(const uint8_t *p) {
         const uint32_t bits = uint32_t(p[0]) | (uint32_t(p[1]) << 8)
             | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);

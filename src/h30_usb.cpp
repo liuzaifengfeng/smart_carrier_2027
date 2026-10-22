@@ -209,6 +209,10 @@ void clientTask(void *) {
 }
 } // namespace
 
+/**
+ * @brief 初始化H30 USB接收，不等待设备插入；失败不阻断其他业务。
+ * @return true 初始化成功。
+ */
 bool H30UsbBegin() {
     if (initialized) return true;
     usb_host_config_t config = {};
@@ -245,6 +249,12 @@ bool H30UsbBegin() {
     return ok;
 }
 
+/**
+ * @brief 读取最新原始姿态和数据年龄，不进行地图航向标定。
+ * @param sample 输出H30原始姿态。
+ * @param ageMs 输出数据年龄(ms)。
+ * @return nullptr 成功，否则为初始化、离线、缺数据或过期原因。
+ */
 const char *H30UsbGetAttitude(H30Attitude &sample, uint32_t &ageMs) {
     portENTER_CRITICAL(&mux);
     const bool ready = initialized, connected = online, hasSample = valid;
@@ -268,6 +278,11 @@ const char *headingSampleError(uint32_t &ageMs) {
 }
 }
 
+/**
+ * @brief 将当前有效原始Yaw绑定到已知车体地图航向；失败清除旧参考。
+ * @param mapHeading 已确认的地图航向(deg)，0~360。
+ * @return nullptr 成功，否则为不可标定原因。
+ */
 const char *H30UsbCalibrateHeading(float mapHeading) {
     portENTER_CRITICAL(&mux);
     headingReference.reset();
@@ -279,6 +294,9 @@ const char *H30UsbCalibrateHeading(float mapHeading) {
     return error;
 }
 
+/**
+ * @brief 读取标定后的地图航向及数据年龄，不驱动电机；成功返回 nullptr。
+ */
 const char *H30UsbGetHeading(float &heading, uint32_t &ageMs) {
     portENTER_CRITICAL(&mux);
     const char *error = headingSampleError(ageMs);
@@ -287,12 +305,18 @@ const char *H30UsbGetHeading(float &heading, uint32_t &ageMs) {
     return error;
 }
 
+/**
+ * @brief 建立地图航向参考并输出REFERENCE事件；heading为已确认的车体航向(deg)。
+ */
 void CalibrateH30MapHeading(float heading) {
     const char *error = H30UsbCalibrateHeading(heading);
     if (error) Serial.printf("{EVT,IMU,REFERENCE,ERR,%s}\n", error);
     else Serial.printf("{EVT,IMU,REFERENCE,OK,%.3f}\n", heading);
 }
 
+/**
+ * @brief 读取同一快照中的地图航向、采样毫秒数和参考代次，供闭环判断新鲜度及重标定。
+ */
 const char *H30UsbGetHeadingSnapshot(float &heading,uint32_t &sampleMs,uint32_t &version) {
     portENTER_CRITICAL(&mux);
     uint32_t age=0;
@@ -303,6 +327,9 @@ const char *H30UsbGetHeadingSnapshot(float &heading,uint32_t &sampleMs,uint32_t 
     return error;
 }
 
+/**
+ * @brief 读取同一帧完整惯性数据、地图航向及参考代次；停稳检查需要加速度和角速度字段。
+ */
 const char *H30UsbGetMotionSnapshot(H30Attitude &sample,float &heading,uint32_t &version) {
     portENTER_CRITICAL(&mux);
     uint32_t age=0;const char *error=headingSampleError(age);

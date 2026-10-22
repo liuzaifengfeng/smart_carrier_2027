@@ -1,0 +1,23 @@
+/**
+ * Fashion Star Wiki - External Link Handler
+ * Opens Main Site and Store links in new tab
+ */
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Target external links in navigation
+  const externalLinks = [
+    'https://fashionstar.com.hk/',
+    'https://fashionstar.com.cn/',
+    'https://fashionstar.com.hk/store/'
+  ];
+
+  // Process all links in the document
+  document.querySelectorAll('a').forEach(function(link) {
+    externalLinks.forEach(function(url) {
+      if (link.href === url || link.href === url + '/') {
+        link.setAttribute('target', '_blank');
+        link.setAttribute('rel', 'noopener noreferrer');
+      }
+    });
+  });
+});
