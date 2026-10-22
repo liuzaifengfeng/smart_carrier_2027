@@ -55,14 +55,14 @@
           "integer": false
         },
         "搬运/工作区1/伸出(mm)": {
-          "value": 71.0,
+          "value": 70.0,
           "description": "工作区1：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区1/转台(deg)": {
-          "value": 48.0,
+          "value": 47.5,
           "description": "工作区1：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -97,14 +97,14 @@
           "integer": false
         },
         "搬运/工作区2/伸出(mm)": {
-          "value": 6.5,
+          "value": 5.0,
           "description": "工作区2：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区2/转台(deg)": {
-          "value": 83.5,
+          "value": 84.1999969,
           "description": "工作区2：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -146,7 +146,7 @@
           "integer": false
         },
         "搬运/工作区3/转台(deg)": {
-          "value": 122.699997,
+          "value": 123.199997,
           "description": "工作区3：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -499,7 +499,11 @@
           "integer": false
         },
         "对齐/DISC/角度死区(deg)": {
+<<<<<<< HEAD
+          "value": 0.600000024,
+=======
           "value": 0.6,
+>>>>>>> cdb53eb90b24a47e0c4914167435d2ec1c462893
           "description": "圆盘整体对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -562,7 +566,11 @@
           "integer": false
         },
         "对齐/WORK_AREA_LOADED/角度死区(deg)": {
+<<<<<<< HEAD
+          "value": 0.100000001,
+=======
           "value": 0.1,
+>>>>>>> cdb53eb90b24a47e0c4914167435d2ec1c462893
           "description": "载物工作区对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
