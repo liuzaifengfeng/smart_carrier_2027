@@ -164,7 +164,7 @@ struct Run {
 };
 constexpr bool timed(const Command& c, float angle, uint32_t time) {
     return c.id==2 && c.advanced && c.angle==angle && c.time==time
-        && c.acc==20 && c.dec==20 && c.power==0;
+        && c.acc==300 && c.dec==300 && c.time>c.acc+c.dec && c.power==0;
 }
 constexpr bool turn(float current, float target, float finalTarget, uint32_t time, float speed=250) {
     Run r;
@@ -224,7 +224,7 @@ constexpr bool mixedAxes() {
     Run r;
     return r.MoveArm(10,20,180,50,250) && r.count==4
         && r.commands[0].id==5 && r.commands[1].id==6
-        && timed(r.commands[2],180,100)
+        && timed(r.commands[2],180,1020)
         && r.commands[3].id==1 && !r.commands[3].advanced
         && r.commands[3].angle==50 && r.commands[3].time==89 && r.commands[3].power==0;
 }
@@ -232,19 +232,19 @@ constexpr bool plannedMixedAxes() {
     Run r;
     return r.MoveArmPlanned(10,20,-1,50,250) && r.count==4
         && r.commands[0].id==5 && r.commands[1].id==6
-        && timed(r.commands[2],-1,40) && r.commands[3].id==1;
+        && timed(r.commands[2],-1,601) && r.commands[3].id==1;
 }
-static_assert(turn(0,180,180,100), "180 degrees uses calibrated timing: 100 ms");
-static_assert(turn(0,90,90,50), "90 degrees uses calibrated timing: 50 ms");
-static_assert(turn(0,45,45,40), "small moves use 40 ms minimum");
-static_assert(turn(0,0,0,40), "zero angle is valid and keeps 40 ms minimum");
-static_assert(turn(90,180,180,50), "use measured displacement rather than target value");
-static_assert(turn(180,90,90,50), "reverse direction uses absolute displacement");
-static_assert(turn(0,99,99,55), "round fractional milliseconds to nearest integer");
-static_assert(turn(10,350,-10,40), "choose nearest equivalent within cable limits");
-static_assert(turn(350,10,10,189), "reject shorter equivalent outside cable limits");
-static_assert(turn(-150,180,180,183), "large permitted displacement scales beyond reference");
-static_assert(turn(0,180,180,100,100) && turn(0,180,180,100,300), "turret timing ignores old speed mapping");
+static_assert(turn(0,180,180,1020), "180 degrees: 250 deg/s peak, 300 ms acceleration and deceleration");
+static_assert(turn(0,90,90,660), "90 degrees: 660 ms total");
+static_assert(turn(0,45,45,601), "45 degrees: minimum 601 ms total");
+static_assert(turn(0,0,0,601), "zero angle retains minimum interval above acceleration plus deceleration");
+static_assert(turn(90,180,180,660), "use measured displacement rather than target value");
+static_assert(turn(180,90,90,660), "reverse direction uses absolute displacement");
+static_assert(turn(0,99,99,696), "99 degrees: 696 ms total");
+static_assert(turn(10,350,-10,601), "choose nearest equivalent within cable limits");
+static_assert(turn(350,10,10,1660), "reject shorter equivalent outside cable limits");
+static_assert(turn(-150,180,180,1620), "large permitted displacement scales beyond reference");
+static_assert(turn(0,180,180,1020,100) && turn(0,180,180,1020,300), "turret timing ignores old speed mapping");
 static_assert(grip(90,200,90,200), "gripper duration is one fifth of original timing");
 static_assert(grip(45,200,45,100), "gripper duration scales with angular travel");
 static_assert(grip(10,200,10,40), "gripper short moves use one-fifth minimum duration");
@@ -252,12 +252,12 @@ static_assert(grip(0,200,0,0), "gripper zero travel needs no artificial duration
 static_assert(grip(350,200,-10,40), "gripper selects nearest equivalent angle before timing");
 static_assert(guards(), "query failures, invalid angles, abort and sentinel");
 static_assert(mixedAxes(), "retain motor and gripper command order and gripper timing");
-static_assert(turn(0,180,180,100,500) && grip(90,500,90,80), "accept new maximum command speed 500");
-static_assert(turn(123.3f,-60,300,98), "ordinary callers retain nearest-angle behavior");
-static_assert(plannedTurn(123.3f,-60,102), "planned branch overrides greedy equivalent");
-static_assert(plannedTurn(0,360,200) && plannedTurn(350,-10,200), "preserve planned turn count");
-static_assert(plannedTurn(0,-1,40), "planned minus one is an actual angle");
-static_assert(plannedTurn(360,-150,283) && plannedTurn(-150,360,283), "cable boundary travel");
+static_assert(turn(0,180,180,1020,500) && grip(90,500,90,80), "accept new maximum command speed 500");
+static_assert(turn(123.3f,-60,300,1007), "ordinary callers retain nearest-angle behavior");
+static_assert(plannedTurn(123.3f,-60,1033), "planned branch overrides greedy equivalent");
+static_assert(plannedTurn(0,360,1740) && plannedTurn(350,-10,1740), "preserve planned turn count");
+static_assert(plannedTurn(0,-1,601), "planned minus one is an actual angle");
+static_assert(plannedTurn(360,-150,2340) && plannedTurn(-150,360,2340), "cable boundary travel");
 static_assert(plannedGuards() && plannedMixedAxes(), "planned guards precede all commands");
 static_assert(feedback(-1,true,false,false,true), "actual minus one is valid feedback");
 static_assert(feedback(360,true,false,false,true), "feedback keeps cache untouched");

@@ -480,7 +480,7 @@
           "integer": false
         }
       }
-    },
+    },   
     "对齐": {
       "description": "视觉闭环的容许误差与最大轮速。进入死区表示该方向误差已足够小。",
       "parameters": {
@@ -499,7 +499,11 @@
           "integer": false
         },
         "对齐/DISC/角度死区(deg)": {
+<<<<<<< HEAD
           "value": 0.600000024,
+=======
+          "value": 0.6,
+>>>>>>> cdb53eb90b24a47e0c4914167435d2ec1c462893
           "description": "圆盘整体对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -562,7 +566,11 @@
           "integer": false
         },
         "对齐/WORK_AREA_LOADED/角度死区(deg)": {
+<<<<<<< HEAD
           "value": 0.100000001,
+=======
+          "value": 0.1,
+>>>>>>> cdb53eb90b24a47e0c4914167435d2ec1c462893
           "description": "载物工作区对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -583,7 +591,7 @@
           "integer": false
         },
         "对齐/CORNER/角度死区(deg)": {
-          "value": 0.600000024,
+          "value": 0.6,
           "description": "角点/归位对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
