@@ -19,6 +19,16 @@ bool angleAvailable=true;
 bool ReadArmTurretAngle(float &angle){angle=170;return angleAvailable;}
 uint32_t SubmitMotion(const MotionRequest &,bool){return 1;}
 bool WaitMotion(uint32_t){return false;}
+std::vector<motion::Step> issuedArm;
+std::vector<uint32_t> armWaits;
+void vTaskDelay(uint32_t ticks){armWaits.push_back(ticks);}
+bool MoveArm(float high,float length,float turret,float pawl,float speed) {
+    motion::Step s;s.high=high;s.length=length;s.turret=turret;s.pawl=pawl;s.speed=speed;
+    issuedArm.push_back(s);return true;
+}
+bool MoveArmPlanned(float high,float length,float turret,float pawl,float speed) {
+    return MoveArm(high,length,turret,pawl,speed);
+}
 float NODE_PATH_ACCEL_MM_S2=2000,NODE_PATH_TURN_DEG_S=300,NODE_PATH_TURN_ACCEL_DEG_S2=400,NODE_PATH_HEADING_DEADBAND_DEG=1;
 struct Entry {std::string name;void *address;bool integer;float minimum,maximum;};
 std::vector<Entry> entries;
@@ -70,17 +80,69 @@ void rounds() {
     for(const auto &cargo:cargoPlatforms)assert(cargo.material==MATERIAL_RED);
 }
 void discs() {
-    for(uint8_t pos=1;pos<=3;++pos) {
-        cargoPlatforms[1].material=MATERIAL_NONE;
-        MotionRequest r;r.kind=MotionKind::DISC_GRAB;r.cargo=2;r.color=6;r.position=pos;
+    const auto saved=commonMaterialDelays;
+    const float savedHeight=materialTransferLayout.approachHeight;
+    // 使用独特数值确认圆盘后半段绑定公共表，而非硬编码或辅助圆盘延时。
+    commonMaterialDelays.pickGripMs=713;commonMaterialDelays.pickLiftMs=719;
+    commonMaterialDelays.placeAbove={101,11,1021};
+    commonMaterialDelays.placeDescendMs=733;commonMaterialDelays.placeReleaseMs=313;commonMaterialDelays.placeLiftMs=317;
+    materialTransferLayout.approachHeight=165;
+    const auto &d=commonMaterialDelays;
+    auto checkTail=[&](const motion::Program &p,size_t start,uint8_t cargo) {
+        const char *names[]={"PLACE_TRANSLATE_WAIT","PLACE_SETTLE","PLACE_ROTATE","PLACE_DESCEND","PLACE_RELEASE","PLACE_LIFT","CARGO_COMMIT"};
+        const uint32_t waits[]={d.placeAbove.translateMs,d.placeAbove.settleMs,d.placeAbove.rotateMs,d.placeDescendMs,d.placeReleaseMs,d.placeLiftMs,0};
+        for(size_t i=0;i<7;++i){assert(!strcmp(p.steps[start+i].name,names[i]));assert(p.steps[start+i].waitMs==waits[i]);}
+        const auto &lift=p.steps[start-1],&turn=p.steps[start+2],&down=p.steps[start+3];
+        const auto &target=materialTransferLayout.cargo[cargo-1];
+        assert(lift.high==165&&lift.length==0&&lift.turret==-1&&lift.pawl==-1&&lift.waitMs==d.pickLiftMs);
+        assert(turn.high==-1&&turn.length==-1&&turn.pawl==-1&&near(turn.turret,target.turretAngle)&&!turn.planned);
+        assert(near(down.high,target.high)&&near(down.length,target.length)&&down.turret==-1);
+        assert(p.steps[start+4].pawl==materialTransferLayout.clawOpenAngle&&p.steps[start+4].holdMs==41);
+        assert(p.steps[start+5].high==165&&p.steps[start+5].length==-1);
+        const auto &last=p.steps[start+6];assert(last.kind==motion::StepKind::COMMIT&&last.cargo==cargo&&last.color==6);
+    };
+    for(uint8_t cargo=1;cargo<=3;++cargo)for(uint8_t pos=0;pos<=4;++pos) {
+        cargoPlatforms[cargo-1].material=MATERIAL_NONE;
+        MotionRequest r;r.kind=MotionKind::DISC_GRAB;r.cargo=cargo;r.color=6;r.position=pos;
         motion::Program p;assert(!BuildArmProgram(r,p));
-        const float angle=pos==1?71:pos==2?90:102,length=pos==2?0:150;
-        assert(p.steps[0].high==120&&p.steps[1].high==80&&p.steps[2].pawl==-8&&p.steps[3].high==170);
-        assert(p.steps[0].waitMs==(pos==3?200:300)&&p.steps[1].waitMs==300&&p.steps[2].waitMs==200&&p.steps[3].waitMs==300);
-        for(int i=0;i<4;++i)assert(p.steps[i].turret==angle&&p.steps[i].length==length&&p.steps[i].speed==armSpeed);
-        const auto &last=p.steps[p.count-1];assert(last.kind==motion::StepKind::COMMIT&&last.cargo==2&&last.color==6);
-        assert(cargoPlatforms[1].material==MATERIAL_NONE);
+        checkTail(p,p.count-7,cargo);
+        assert(p.steps[p.count-9].waitMs==d.pickGripMs&&p.steps[p.count-9].holdMs==37);
+        if(pos>=1&&pos<=3) {
+            const float angle=pos==1?71:pos==2?90:102,length=pos==2?0:150;
+            assert(p.steps[0].high==120&&p.steps[1].high==80&&p.steps[2].pawl==-8);
+            assert(p.steps[0].waitMs==(pos==3?200:300)&&p.steps[1].waitMs==300);
+            for(int i=0;i<3;++i)assert(p.steps[i].turret==angle&&p.steps[i].length==length&&p.steps[i].speed==armSpeed);
+            assert(p.steps[3].speed==armSpeed);
+        } else if(pos==0) {
+            assert(p.steps[0].high==materialMotionSteps.discApproach.high);
+            assert(p.steps[0].waitMs==materialAuxiliaryDelays.discApproachMs);
+            assert(p.steps[2].speed==materialMotionSteps.discLiftSpeed);
+        } else assert(p.steps[p.count-8].speed==materialMotionSteps.pickLiftSpeed);
+        assert(cargoPlatforms[cargo-1].material==MATERIAL_NONE);
+        r.kind=MotionKind::HELD_DISC;assert(!BuildArmProgram(r,p));
+        assert(p.count==8);checkTail(p,1,cargo);
     }
+    for(auto &cargo:cargoPlatforms)cargo.material=MATERIAL_NONE;
+    MotionRequest load;load.kind=MotionKind::LOAD_ROUND;
+    for(int i=0;i<3;++i)load.colors[i]=6;
+    motion::Program loaded;assert(!BuildArmProgram(load,loaded));assert(loaded.count==39);
+    for(int i=0;i<3;++i)checkTail(loaded,13*i+6,i+1);
+    // 同步旧入口仍在当前工程中，核对它们与执行器使用相同的夹后衔接。
+    for(uint8_t cargo=1;cargo<=3;++cargo)for(int mode=0;mode<3;++mode) {
+        cargoPlatforms[cargo-1].material=MATERIAL_NONE;issuedArm.clear();armWaits.clear();
+        assert(mode==0?MoveDiscToCargo(6,cargo):mode==1?GrabDiscMaterial(6,cargo):PlaceHeldDiscMaterialToCargo(6,cargo));
+        const auto &target=materialTransferLayout.cargo[cargo-1];
+        const size_t start=issuedArm.size()-5;
+        assert(issuedArm[start].high==165&&issuedArm[start].length==0&&issuedArm[start].turret==-1&&issuedArm[start].pawl==-1);
+        assert(issuedArm[start+1].high==-1&&issuedArm[start+1].length==-1&&near(issuedArm[start+1].turret,target.turretAngle));
+        assert(near(issuedArm[start+2].high,target.high)&&near(issuedArm[start+2].length,target.length)&&issuedArm[start+2].turret==-1);
+        assert(issuedArm[start+3].pawl==materialTransferLayout.clawOpenAngle&&issuedArm[start+4].high==165);
+        const uint32_t waits[]={d.pickLiftMs,d.placeAbove.translateMs,d.placeAbove.settleMs,d.placeAbove.rotateMs,d.placeDescendMs,d.placeReleaseMs,d.placeLiftMs};
+        assert(armWaits.size()>=7);
+        for(int i=0;i<7;++i)assert(armWaits[armWaits.size()-7+i]==waits[i]);
+        assert(cargoPlatforms[cargo-1].material==6);
+    }
+    commonMaterialDelays=saved;materialTransferLayout.approachHeight=savedHeight;
 }
 void poses() {
     // 临时关闭雷达时，两启停区均只执行原斜移；恢复开关后保留原雷达姿态序列。
