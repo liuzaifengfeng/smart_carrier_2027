@@ -34,35 +34,35 @@
           "integer": false
         },
         "搬运/载物台1/伸出(mm)": {
-          "value": 22.0,
+          "value": 23.0,
           "description": "载物台1：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/载物台1/转台(deg)": {
-          "value": 239.600006,
+          "value": 240.0,
           "description": "载物台1：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
           "integer": false
         },
         "搬运/工作区1/高度(mm)": {
-          "value": 2.29999995,
+          "value": 2.5,
           "description": "工作区1：升降轴绝对高度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 175.0,
           "integer": false
         },
         "搬运/工作区1/伸出(mm)": {
-          "value": 71.0999985,
+          "value": 71.0,
           "description": "工作区1：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区1/转台(deg)": {
-          "value": 48.7000008,
+          "value": 48.0,
           "description": "工作区1：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -76,35 +76,35 @@
           "integer": false
         },
         "搬运/载物台2/伸出(mm)": {
-          "value": 20.0,
+          "value": 21.5,
           "description": "载物台2：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/载物台2/转台(deg)": {
-          "value": 271.200012,
+          "value": 271.700012,
           "description": "载物台2：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
           "integer": false
         },
         "搬运/工作区2/高度(mm)": {
-          "value": 2.29999995,
+          "value": 2.5,
           "description": "工作区2：升降轴绝对高度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 175.0,
           "integer": false
         },
         "搬运/工作区2/伸出(mm)": {
-          "value": 9.89999962,
+          "value": 6.5,
           "description": "工作区2：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区2/转台(deg)": {
-          "value": 86.1999969,
+          "value": 83.5,
           "description": "工作区2：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -118,35 +118,35 @@
           "integer": false
         },
         "搬运/载物台3/伸出(mm)": {
-          "value": 21.0,
+          "value": 21.8999996,
           "description": "载物台3：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/载物台3/转台(deg)": {
-          "value": 300.0,
+          "value": 299.5,
           "description": "载物台3：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
           "integer": false
         },
         "搬运/工作区3/高度(mm)": {
-          "value": 2.29999995,
+          "value": 2.5,
           "description": "工作区3：升降轴绝对高度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 175.0,
           "integer": false
         },
         "搬运/工作区3/伸出(mm)": {
-          "value": 46.2999992,
+          "value": 41.5,
           "description": "工作区3：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区3/转台(deg)": {
-          "value": 123.300003,
+          "value": 122.699997,
           "description": "工作区3：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -170,7 +170,7 @@
           "value": 300.0,
           "description": "上位机单轴试动作的默认速度；自动抓放流程使用下方各步骤独立速度。升降/伸缩驱动速度为value*3；舵机时间参数为(300-value)*10。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/夹爪张开(deg)": {
@@ -181,7 +181,7 @@
           "integer": false
         },
         "搬运/夹爪夹紧(deg)": {
-          "value": -8.0,
+          "value": -5.0,
           "description": "抓取夹紧和搬运持物时夹爪目标角度；不要填-1（表示不移动）。",
           "minimum": -360.0,
           "maximum": 360.0,
@@ -233,77 +233,77 @@
           "value": 400.0,
           "description": "圆盘抓取第1步：升降、伸缩、转台和张爪共用的 MoveArm 速度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/圆盘夹紧": {
           "value": 300.0,
           "description": "圆盘抓取第2步：夹紧夹爪的 MoveArm 速度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/圆盘提起": {
           "value": 400.0,
           "description": "圆盘抓取第3步：升至圆盘提起高度的 MoveArm 速度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/移至工位平移": {
           "value": 300.0,
           "description": "每次取料/放料前：升至安全高度、伸向目标并设置夹爪角度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/移至工位转向": {
           "value": 250.0,
           "description": "每次取料/放料前：在安全高度转向目标工位。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/取料下降": {
           "value": 300.0,
           "description": "从载物台或工作区取料：下降到工位高度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/取料夹紧": {
           "value": 250.0,
           "description": "从载物台或工作区取料：夹紧夹爪。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/取料提起": {
           "value": 300.0,
           "description": "从载物台或工作区取料：升至安全高度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/放料下降": {
           "value": 300.0,
           "description": "放入载物台或工作区：下降到目标高度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/放料松爪": {
           "value": 250.0,
           "description": "放入载物台或工作区：张开夹爪。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/放料提起": {
           "value": 300.0,
           "description": "放入载物台或工作区：升至安全高度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         }
       }
@@ -396,7 +396,7 @@
           "integer": false
         },
         "PID/CORNER/视觉X/Kp": {
-          "value": 0.005,
+          "value": 0.00499999989,
           "description": "CORNER角点对齐专用：比例增益，乘以当前误差。误差单位沿用视觉端输出，不能默认视为毫米。",
           "minimum": 0.0,
           "maximum": 100.0,
@@ -424,7 +424,7 @@
           "integer": false
         },
         "PID/CORNER/视觉Y/Kp": {
-          "value": 0.005,
+          "value": 0.00499999989,
           "description": "CORNER角点对齐专用：比例增益，乘以当前误差。误差单位沿用视觉端输出，不能默认视为毫米。",
           "minimum": 0.0,
           "maximum": 100.0,
@@ -452,7 +452,7 @@
           "integer": false
         },
         "PID/CORNER/角度/Kp": {
-          "value": 0.015,
+          "value": 0.0149999997,
           "description": "CORNER角点对齐专用：比例增益，乘以当前误差。误差单位为度。",
           "minimum": 0.0,
           "maximum": 100.0,
@@ -499,7 +499,7 @@
           "integer": false
         },
         "对齐/DISC/角度死区(deg)": {
-          "value": 1,
+          "value": 0.6,
           "description": "圆盘整体对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -520,7 +520,7 @@
           "integer": false
         },
         "对齐/DISC_MATERIAL/角度死区(deg)": {
-          "value": 0.15,
+          "value": 0.100000001,
           "description": "圆盘物料对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -541,7 +541,7 @@
           "integer": false
         },
         "对齐/WORK_AREA/角度死区(deg)": {
-          "value": 0.15,
+          "value": 0.100000001,
           "description": "工作区对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -562,7 +562,7 @@
           "integer": false
         },
         "对齐/WORK_AREA_LOADED/角度死区(deg)": {
-          "value": 0.15,
+          "value": 0.1,
           "description": "载物工作区对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -583,7 +583,7 @@
           "integer": false
         },
         "对齐/CORNER/角度死区(deg)": {
-          "value": 0.4,
+          "value": 0.6,
           "description": "角点/归位对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -615,6 +615,20 @@
           "maximum": 5000.0,
           "integer": false
         },
+        "底盘/扫码接近轮速(RPM)": {
+          "value": 2000,
+          "description": "开局从启停区接近扫码区域时的最大轮速。",
+          "minimum": 1.0,
+          "maximum": 5000.0,
+          "integer": true
+        },
+        "底盘/扫码往返轮速(RPM)": {
+          "value": 300,
+          "description": "开局在扫码区域往返寻找任务码时的最大轮速。",
+          "minimum": 1.0,
+          "maximum": 5000.0,
+          "integer": true
+        },
         "底盘/节点导航平移加速度(mm/s²)": {
           "value": 2000.0,
           "description": "正式节点导航平移加速/减速规划上限，单位mm/s²，不是EMM位置模式加速度档位；下一条完整路径启动时生效。独立试跑使用自己的加速度。",
@@ -636,25 +650,11 @@
           "maximum": 720.0,
           "integer": false
         },
-        "底盘/扫码接近轮速(RPM)": {
-          "value": 2000,
-          "description": "开局从启停区接近扫码区域时的最大轮速。",
-          "minimum": 1.0,
-          "maximum": 5000.0,
-          "integer": true
-        },
-        "底盘/扫码往返轮速(RPM)": {
-          "value": 300,
-          "description": "开局在扫码区域往返寻找任务码时的最大轮速。",
-          "minimum": 1.0,
-          "maximum": 5000.0,
-          "integer": true
-        },
         "底盘/节点导航独立纠偏死区(°)": {
-          "value": 1,
+          "value": 1.0,
           "description": "停稳后独立角度修正的死区；范围内不单独转动。",
-          "minimum": 0,
-          "maximum": 8,
+          "minimum": 0.0,
+          "maximum": 8.0,
           "integer": false
         }
       }
@@ -703,38 +703,38 @@
       "description": "统一执行层的实车标定开关。视觉前的look、look2、look4在最终进站平移前一运动阶段开始展开；不按剩余距离触发。反馈替代等待保持关闭。",
       "parameters": {
         "运动执行/look末段提前量(mm)": {
-          "value": 1500,
+          "value": 1500.0,
           "description": "兼容旧配置保留，不再参与触发；look/look4在最终平移前一运动阶段开始展开。",
-          "minimum": 0,
-          "maximum": 3.4028234663852886e+38,
+          "minimum": 0.0,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "运动执行/look2末段提前量(mm)": {
-          "value": 1500,
+          "value": 1500.0,
           "description": "兼容旧配置保留，不再参与触发；look2在最终平移前一运动阶段开始展开。",
-          "minimum": 0,
-          "maximum": 3.4028234663852886e+38,
+          "minimum": 0.0,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "运动执行/机械臂反馈完成": {
           "value": 0,
           "description": "0使用原动作组等待时间；1以升降/伸缩位置和到位标志、舵机实测角度结束移动。仅在实车核验后启用，不自动降级计时。",
-          "minimum": 0,
-          "maximum": 1,
+          "minimum": 0.0,
+          "maximum": 1.0,
           "integer": true
         },
         "运动执行/反馈后夹持保持(ms)": {
           "value": 0,
           "description": "仅反馈模式生效：夹爪实测到位后的独立夹持保持时间。计时模式沿用动作组夹紧延时。",
-          "minimum": 0,
-          "maximum": 4294967295,
+          "minimum": 0.0,
+          "maximum": 4294967300.0,
           "integer": true
         },
         "运动执行/反馈后释放保持(ms)": {
           "value": 0,
           "description": "仅反馈模式生效：夹爪实测到位后的独立释放保持时间。计时模式沿用动作组松爪延时。",
-          "minimum": 0,
-          "maximum": 4294967295,
+          "minimum": 0.0,
+          "maximum": 4294967300.0,
           "integer": true
         }
       }
