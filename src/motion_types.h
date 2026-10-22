@@ -19,6 +19,7 @@ struct MotionRequest {
     float x=0,y=0,theta=0,speed=0,high=-1,length=-1,turret=-1,pawl=-1;
     bool force=false,automatic=false,debug=false,planned=false;
     bool startVision=false;
+    bool armPrepared=false; // 返航导航已完成 LOOK4，HOME_OBSERVE 只执行原有航向修正。
     uint8_t vision=0;
     // 应答文本按值复制，不能保存串口栈上 frame.fields 的指针。
     char category[8]={},command[24]={};

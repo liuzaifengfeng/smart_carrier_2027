@@ -34,11 +34,10 @@ void sequence() {
 }
 void join() {
     motion::Join j;int starts=0;
-    for(int i=0;i<10;++i)starts+=j.shouldStartArm(false,true,10,0);assert(starts==0);
-    starts+=j.shouldStartArm(false,false,10,30);assert(starts==0);
-    for(int i=0;i<20;++i)starts+=j.shouldStartArm(false,true,10,30);assert(starts==1);
-    j.armReady=true;assert(!j.complete());j.shouldStartArm(true,false,0,30);assert(j.complete());
-    j=motion::Join{};assert(j.shouldStartArm(true,false,0,0));assert(!j.complete());j.armReady=true;assert(j.complete());
+    for(int i=0;i<10;++i)starts+=j.shouldStartArm(false,false);assert(starts==0);
+    for(int i=0;i<20;++i)starts+=j.shouldStartArm(false,true);assert(starts==1);
+    j.armReady=true;assert(!j.complete());j.shouldStartArm(true,false);assert(j.complete());
+    j=motion::Join{};assert(j.shouldStartArm(true,false));assert(!j.complete());j.armReady=true;assert(j.complete());
 }
 void launch() {
     motion::LaunchGate gate;const uint32_t generation=gate.generation;gate.prepare(7,false);
@@ -82,6 +81,8 @@ struct Runtime : CompetitionIO {
         assert(!pending&&jobs.at(nextId).state==MotionState::DONE);
         if(mode==VisionStartMode::DISC||mode==VisionStartMode::WORK_AREA||mode==VisionStartMode::WORK_AREA_LOADED)
             assert(requests.back().kind==MotionKind::NAVIGATE&&jobs.at(nextId).chassisDone&&jobs.at(nextId).armReady);
+        if(mode==VisionStartMode::CORNER)
+            assert(requests.back().kind==MotionKind::HOME_OBSERVE&&requests.back().armPrepared);
         vision.push_back(mode);alignment=AutoAlignmentState::WAITING;visionPolls=0;
     }
     AutoAlignmentState visionStatus()override{return alignment;}
@@ -136,12 +137,19 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
     int paths=0,places=0,retrieves=0;
     MotionKind previous=MotionKind::ARM_POSE;
     for(const auto &request:r.requests) {
-        if(request.kind==MotionKind::NAVIGATE){++paths;if(request.endNode==0||request.endNode==4)assert(request.endNode==(zone==1?4:0));}
+        if(request.kind==MotionKind::NAVIGATE){
+            ++paths;
+            if(request.endNode==0||request.endNode==4) {
+                assert(request.endNode==(zone==1?4:0)&&request.observation==ArmObservation::LOOK4);
+                assert(previous==MotionKind::ARM_POSE); // 路径前 START 仍独立执行。
+            } else assert(request.observation==(request.endNode==14?ArmObservation::LOOK2:ArmObservation::LOOK));
+        }
         if(request.kind==MotionKind::NAVIGATE&&request.startNode==10)assert(previous==MotionKind::RETRIEVE_ROUND);
         if(request.kind==MotionKind::PLACE_ROUND){++places;assert(request.positions[0]==3&&request.positions[1]==1&&request.positions[2]==2);}
         if(request.kind==MotionKind::PLACE_ROUND)assert(request.layer==(places==4?2:1));
         if(request.kind==MotionKind::RETRIEVE_ROUND)++retrieves;
         if(request.kind==MotionKind::HOME_RETURN||request.kind==MotionKind::HOME_OBSERVE)assert(request.zone==zone);
+        if(request.kind==MotionKind::HOME_OBSERVE)assert(request.armPrepared&&previous==MotionKind::NAVIGATE);
         previous=request.kind;
     }
     assert(paths==7&&places==4&&retrieves==2);

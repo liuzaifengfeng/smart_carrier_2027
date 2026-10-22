@@ -485,56 +485,56 @@
       "description": "视觉闭环的容许误差与最大轮速。进入死区表示该方向误差已足够小。",
       "parameters": {
         "对齐/DISC/X死区": {
-          "value": 5.0,
+          "value": 8.0,
           "description": "圆盘整体对齐：X死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/DISC/Y死区": {
-          "value": 5.0,
+          "value": 8.0,
           "description": "圆盘整体对齐：Y死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/DISC/角度死区(deg)": {
-          "value": 0.3,
+          "value": 0.6,
           "description": "圆盘整体对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
           "integer": false
         },
         "对齐/DISC_MATERIAL/X死区": {
-          "value": 1.0,
-          "description": "圆盘单个物料对齐：X死区，单位沿用视觉输出。",
+          "value": 5.0,
+          "description": "圆盘物料对齐：X死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/DISC_MATERIAL/Y死区": {
-          "value": 1.0,
-          "description": "圆盘单个物料对齐：Y死区，单位沿用视觉输出。",
+          "value": 5.0,
+          "description": "圆盘物料对齐：Y死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/DISC_MATERIAL/角度死区(deg)": {
           "value": 0.100000001,
-          "description": "圆盘单个物料对齐：角度死区(deg)，单位为度。",
+          "description": "圆盘物料对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
           "integer": false
         },
         "对齐/WORK_AREA/X死区": {
-          "value": 1.0,
+          "value": 5.0,
           "description": "工作区对齐：X死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/WORK_AREA/Y死区": {
-          "value": 1.0,
+          "value": 5.0,
           "description": "工作区对齐：Y死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
@@ -548,21 +548,21 @@
           "integer": false
         },
         "对齐/WORK_AREA_LOADED/X死区": {
-          "value": 1.0,
+          "value": 6.0,
           "description": "载物工作区对齐：X死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/WORK_AREA_LOADED/Y死区": {
-          "value": 1.0,
+          "value": 6.0,
           "description": "载物工作区对齐：Y死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/WORK_AREA_LOADED/角度死区(deg)": {
-          "value": 0.100000001,
+          "value": 0.1,
           "description": "载物工作区对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -583,7 +583,7 @@
           "integer": false
         },
         "对齐/CORNER/角度死区(deg)": {
-          "value": 0.400000006,
+          "value": 0.6,
           "description": "角点/归位对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -700,18 +700,18 @@
       }
     },
     "运动执行": {
-      "description": "统一执行层的实车标定开关。默认关闭提前展开和反馈替代等待，保留已有动作节拍。",
+      "description": "统一执行层的实车标定开关。视觉前的look、look2、look4在最终进站平移前一运动阶段开始展开；不按剩余距离触发。反馈替代等待保持关闭。",
       "parameters": {
         "运动执行/look末段提前量(mm)": {
-          "value": 0,
-          "description": "最后平移段剩余距离小于此值时触发一次look。0保持到站后展开；须先验证机构和线路干涉。",
+          "value": 1500,
+          "description": "兼容旧配置保留，不再参与触发；look/look4在最终平移前一运动阶段开始展开。",
           "minimum": 0,
           "maximum": 3.4028234663852886e+38,
           "integer": false
         },
         "运动执行/look2末段提前量(mm)": {
-          "value": 0,
-          "description": "前往圆盘的look2展开提前量。0保持到站后展开；终点转向信息同时记录。",
+          "value": 1500,
+          "description": "兼容旧配置保留，不再参与触发；look2在最终平移前一运动阶段开始展开。",
           "minimum": 0,
           "maximum": 3.4028234663852886e+38,
           "integer": false

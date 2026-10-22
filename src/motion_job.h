@@ -12,13 +12,13 @@ struct LaunchGate {
         return id==releasedId||cancelled(submittedGeneration)||ota||aborted;
     }
 };
-// 路径和观察姿态是同一作业的两个完成条件；提前量为 0 时保持到站后展开。
+// 路径和观察姿态是同一作业的两个完成条件；从最终平移的前一运动阶段展开。
 struct Join {
     bool armStarted=false,chassisDone=false,armReady=false;
-    bool shouldStartArm(bool chassisFinished,bool lastTranslation,float remainingMm,float leadMm) {
+    bool shouldStartArm(bool chassisFinished,bool observationApproach) {
         chassisDone=chassisFinished;
         if(armStarted)return false;
-        if(!chassisFinished&&!(leadMm>0&&lastTranslation&&remainingMm<=leadMm))return false;
+        if(!chassisFinished&&!observationApproach)return false;
         armStarted=true;return true;
     }
     bool complete() const{return chassisDone&&armReady;}

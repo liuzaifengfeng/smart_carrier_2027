@@ -136,7 +136,7 @@ int main() {
     Sim cancelled;cancelled.cancel=true;error=run(route,settings,cancelled,result);
     CHECK(error&&strcmp(error,"STOPPED")==0&&cancelled.actions==0);
     // 与实车日志相同的1850mm+90度路线，加上串口查询/发令耗时作配置对比。
-    Node benchNodes[]={{{1200,240},0},{{1680,240},0},{{2090,240},0},{{2090,720},0},{{2090,1200},0}};
+    Node benchNodes[]={{{1200,240},0},{{1680,240},0},{{2050,240},0},{{2050,720},0},{{2050,1200},0}};
     cfg.count=5;cfg.startHeading=180;cfg.endHeading=90;
     CHECK(!route.build(benchNodes,cfg));
     Settings oldProfile=settings;oldProfile.speedMmS=400;
@@ -146,10 +146,10 @@ int main() {
     Settings newProfile;error=run(route,newProfile,upgraded,result);if(error)fprintf(stderr,"bench: %s\n",error);CHECK(!error);
     CHECK(upgraded.time<previous.time*.75f);
     CHECK(upgraded.peak<=node_position::rpmFor(2000,13.6f));
-    CHECK(norm(upgraded.location-Vec(2090,1200))<3&&fabsf(turn(upgraded.heading,90))<=1);
+    CHECK(norm(upgraded.location-Vec(2050,1200))<3&&fabsf(turn(upgraded.heading,90))<=1);
     Sim opposite;opposite.location={1200,240};opposite.heading=180;opposite.encoderPolarity[0]=opposite.encoderPolarity[2]=-1;
     error=run(route,newProfile,opposite,result);CHECK(!error&&opposite.zeroGroups==1);
-    CHECK(norm(opposite.location-Vec(2090,1200))<3);
+    CHECK(norm(opposite.location-Vec(2050,1200))<3);
     printf("serial model max transition gap=%ums\n",upgraded.maxGap);
     CHECK(upgraded.zeroGroups==1&&upgraded.maxGap<=120); // 逐轮反馈跨越到位时刻可再占一轮查询，加上目标ACK
     Node shortNodes[]={{{310,1200},0},{{410,1200},0}};cfg.count=2;cfg.startHeading=0;cfg.endHeading=0;
@@ -189,16 +189,16 @@ int main() {
     if(error)fprintf(stderr,"outer: %s\n",error);CHECK(!error);
     printf("outer end %.2f %.2f heading %.2f, actions=%d velocity=%d\n",drift.location.x,drift.location.y,drift.heading,drift.actions,drift.velocityUpdates);
     CHECK(drift.velocityUpdates>0&&drift.curveReports>0&&drift.updates==0&&drift.actions==1&&drift.halts==3);
-    CHECK(norm(drift.location-Vec(2090,1200))<15&&fabsf(turn(drift.heading,90))<=newProfile.headingDeadbandDeg);
+    CHECK(norm(drift.location-Vec(2050,1200))<15&&fabsf(turn(drift.heading,90))<=newProfile.headingDeadbandDeg);
     Sim noImu;noImu.location={1200,240};noImu.heading=180;noImu.missing=true;
     noImu.encoderPolarity[0]=noImu.encoderPolarity[3]=-1;
     Result noImuResult;noImuResult.heading=180;
     error=run(outer,newProfile,noImu,noImuResult);CHECK(!error&&noImu.velocityUpdates>0);
-    CHECK(norm(noImu.location-Vec(2090,1200))<15);
+    CHECK(norm(noImu.location-Vec(2050,1200))<15);
     Sim cancelCurve;cancelCurve.location={1200,240};cancelCurve.heading=180;cancelCurve.cancelAt=3000;
     error=run(outer,newProfile,cancelCurve,result);CHECK(error&&!strcmp(error,"STOPPED")&&!cancelCurve.velocityMode);
-    Node enterCenter[]={{{1200,240},0},{{1680,240},0},{{2090,240},0},{{2090,720},0},
-                         {{2090,1200},0},{{1680,1200},0},{{1200,1200},0}};
+    Node enterCenter[]={{{1200,240},0},{{1680,240},0},{{2050,240},0},{{2050,720},0},
+                         {{2050,1200},0},{{1680,1200},0},{{1200,1200},0}};
     mixed.count=7;mixed.endHeading=180;Route entering;
     CHECK(!entering.build(enterCenter,mixed));Sim enter;enter.location={1200,240};enter.heading=180;
     enter.encoderPolarity[1]=enter.encoderPolarity[3]=-1;
@@ -266,16 +266,16 @@ int main() {
     scanSettings.startOffset={-27.2f,35};
     error=run(scanRoute,scanSettings,logged,result);CHECK(!error);
     CHECK(norm(logged.location-Vec(310,1200))<3);
-    Node toDisc[]={{{1200,240},0},{{1680,240},0},{{2090,240},0},{{2090,720},0},{{2090,1200},0}};
+    Node toDisc[]={{{1200,240},0},{{1680,240},0},{{2050,240},0},{{2050,720},0},{{2050,1200},0}};
     CHECK(!scanRoute.build(toDisc,scanCfg));
     Sim discCar;discCar.location={1172.8f,275};discCar.heading=179.934f;
     CHECK(!run(scanRoute,scanSettings,discCar,result));
-    CHECK(norm(discCar.location-Vec(2090,1200))<3);
+    CHECK(norm(discCar.location-Vec(2050,1200))<3);
     // 起步第一笔微小反向反馈不能永久锁错方向，首段和后续转向/直行均须完成。
     Sim kicked;kicked.location={1052.87f,275};kicked.heading=179.842f;kicked.startupKick=true;
     scanSettings.startOffset={-147.13f,35};
     error=run(scanRoute,scanSettings,kicked,result);
     if(error)fprintf(stderr,"startup kick: %s\n",error);
-    CHECK(!error&&kicked.kickInjected&&norm(kicked.location-Vec(2090,1200))<3);
+    CHECK(!error&&kicked.kickInjected&&norm(kicked.location-Vec(2050,1200))<3);
     puts("fixed position targets, feedback gating, units, merging and faults OK");return 0;
 }

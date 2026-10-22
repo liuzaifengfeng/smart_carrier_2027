@@ -120,10 +120,10 @@ class CompetitionFlow {
             if(!ticket.id)io.materialStop();
             if(motion(pose(ArmObservation::START))==1)step=1;
         } else if(step==1) {
-            auto r=path(map.temp,homeZone==1?map.home1:map.home2);r.theta=map.homeHeading;
+            auto r=path(map.temp,homeZone==1?map.home1:map.home2,ArmObservation::LOOK4);r.theta=map.homeHeading;
             if(motion(r,STATE_ROUTE_FAILED)==1)step=2;
         } else if(step==2) {
-            MotionRequest r;r.kind=MotionKind::HOME_OBSERVE;r.zone=homeZone;
+            MotionRequest r;r.kind=MotionKind::HOME_OBSERVE;r.zone=homeZone;r.armPrepared=true;
             if(motion(r)==1){io.visionStart(VisionStartMode::CORNER);step=3;}
         } else if(step==3) {
             if(aligned(VisionStartMode::CORNER))step=4;

@@ -24,6 +24,11 @@ void Runner::fail(const char *reason) {error=reason;stage=FINISHED;io->halt();}
 void Runner::begin(const Route &path,const Settings &config,IO &hardware,Result &result) {
     *this=Runner{};route=&path;settings=&config;io=&hardware;output=&result;
     offset=config.startOffset;result.estimated=path.segments[0].start+offset;
+    // 最后一组连续平移前的转向阶段即开始准备观察姿态；单段路径从起步准备。
+    size_t finalBlock=path.segmentCount;
+    while(finalBlock&&path.segments[finalBlock-1].kind==ROTATE)--finalBlock;
+    while(finalBlock&&path.segments[finalBlock-1].kind!=ROTATE)--finalBlock;
+    observationIndex=finalBlock?finalBlock-1:0;
     stage=START;due=hardware.now();
 }
 uint32_t Runner::nextDelay() const {

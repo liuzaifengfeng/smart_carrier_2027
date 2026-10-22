@@ -24,12 +24,30 @@ void nodeTick() {
     while(chassis.active()||arm.active()) {
         const float before=result.s;chassis.tick();arm.tick();
         if(arm.active()&&result.s>before)++progressWhileArmWait;
-        starts+=joined.shouldStartArm(!chassis.active(),chassis.lastTranslation(),chassis.remainingDistance(),500);
+        starts+=joined.shouldStartArm(!chassis.active(),chassis.observationApproach());
         base.wait(1);assert(++ticks<100000);
     }
     assert(!chassis.failure()&&!arm.failure()&&io.issued==1&&starts==1&&progressWhileArmWait>0);
     assert(base.zeroGroups==1&&base.actions==2); // 两条共线段合并，一次终点转向。
     assert(norm(result.estimated-Vec(1200,1200))<3);
+    // 最终直线无论长短，都在它前面的转向阶段准备，不再等待距离阈值。
+    for(float endY:{1300.0f,2200.0f}) {
+        Node cornerPoints[]={{{310,1200},0},{{720,1200},0},{{720,endY},0}};
+        Route corner;assert(!corner.build(cornerPoints,cfg));
+        Sim car;Result measured;Runner runner;runner.begin(corner,settings,car,measured);
+        bool triggered=false;int cycles=0;
+        while(runner.active()) {
+            runner.tick();
+            if(!triggered&&runner.observationApproach()) {
+                assert(!runner.lastTranslation());
+                assert(norm(measured.estimated-Vec(720,1200))<3);
+                assert(fabsf(turn(car.heading,0))<3); // 进入转向前即触发。
+                triggered=true;
+            }
+            car.wait(1);assert(++cycles<100000);
+        }
+        assert(triggered&&!runner.failure());
+    }
 }
 void scanTick() {
     for(float direction:{1.0f,-1.0f}) {

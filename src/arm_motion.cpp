@@ -66,19 +66,21 @@ const char *transfer(const MotionRequest &r,Program &p) {
     return nullptr;
 }
 void observation(Program &p,ArmObservation pose,uint8_t zone) {
+    // 仅观察姿态按记录的指令高度估算：170 mm 对应 1500 ms。
+    const uint32_t liftWait=static_cast<uint32_t>(lroundf(fabsf(170.0f-currentArm.high)*1500.0f/170.0f));
     switch(pose) {
     case ArmObservation::START:
         arm(p,"INIT_LIFT",160,-1,-1,0,300,800);arm(p,"INIT_TURN",-1,-1,-55,-1,300,100);arm(p,"INIT_RETRACT",154,40,-1,0,300,500);break;
     case ArmObservation::LOOK:
-        arm(p,"LOOK_LIFT",170,0,-1,60,200,1500);arm(p,"LOOK_TURN",-1,0,90,80,200,100);arm(p,"LOOK_READY",170,-1,-1,80,200,1000);break;
+        arm(p,"LOOK_LIFT",170,0,-1,60,200,liftWait);arm(p,"LOOK_TURN",-1,0,90,80,200,100);arm(p,"LOOK_READY",170,-1,-1,80,200);break;
     case ArmObservation::LOOK2:
-        arm(p,"LOOK2_LIFT",170,0,-1,-1,200,1500);arm(p,"LOOK2_TURN",-1,0,90,80,200);break;
+        arm(p,"LOOK2_LIFT",170,0,-1,-1,200,liftWait);arm(p,"LOOK2_TURN",-1,0,90,80,200);break;
     case ArmObservation::LOOK3: {
-        arm(p,"LOOK3_LIFT",170,40,-1,-1,300,700);arm(p,"LOOK3_TURN",-1,-1,90,80,300);
+        arm(p,"LOOK3_LIFT",170,40,-1,-1,300,liftWait);arm(p,"LOOK3_TURN",-1,-1,90,80,300);
         Step s;s.kind=StepKind::TURRET_READY;s.name="LOOK3_MEASURED_READY";s.turret=90;s.waitMs=1500;p.append(s);break;
     }
     case ArmObservation::LOOK4:
-        arm(p,"LOOK4_LIFT",170,120,-1,-1,200,1000);arm(p,"LOOK4_TURN",-1,-1,90,80,200);
+        arm(p,"LOOK4_LIFT",170,120,-1,-1,200,liftWait);arm(p,"LOOK4_TURN",-1,-1,90,80,200);
         arm(p,"LOOK4_READY",-1,-1,zone==1?45:135,90,200,500);break;
     default: break;
     }
@@ -133,7 +135,9 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         }
         break;
     case MotionKind::HOME_OBSERVE:
-        position(p,0,0,NodeRouteTurn(currentPose.theta,180),80);observation(p,ArmObservation::LOOK4,r.zone);break;
+        position(p,0,0,NodeRouteTurn(currentPose.theta,180),80);
+        if(!r.armPrepared)observation(p,ArmObservation::LOOK4,r.zone);
+        break;
     case MotionKind::HOME_RETURN: {
         observation(p,ArmObservation::START,r.zone);
         Step s;s.kind=StepKind::GOTO;s.name="HOME_X";s.high=-70;s.length=0;s.turret=0;s.waitMs=1000;p.append(s);

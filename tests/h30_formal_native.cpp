@@ -33,7 +33,7 @@ static const char *H30UsbGetMotionSnapshot(H30Attitude &sample,float &heading,ui
 }
 static bool ChassisGetNodePosition(uint8_t n,float &x,float &y){
     if(n>=25)return false;
-    const float xs[]={310,720,1200,1680,2090},ys[]={240,720,1200,1680,2020};
+    const float xs[]={310,720,1200,1680,2050},ys[]={240,720,1200,1680,2020};
     int row=n/5,col=n%5;if(row%2)col=4-col;x=xs[col];y=ys[row];return true;
 }
 static bool adjacent(uint8_t a,uint8_t b){

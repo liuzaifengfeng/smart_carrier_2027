@@ -87,12 +87,23 @@ void poses() {
         MotionRequest r;r.kind=MotionKind::ARM_POSE;r.observation=pose;
         motion::Program p;assert(!BuildArmProgram(r,p));
         if(pose==ArmObservation::START)assert(p.steps[0].waitMs==800&&p.steps[1].waitMs==100&&p.steps[2].waitMs==500);
-        if(pose==ArmObservation::LOOK)assert(p.steps[0].waitMs==1500&&p.steps[1].waitMs==100&&p.steps[2].waitMs==1000);
+        if(pose==ArmObservation::LOOK)assert(p.steps[0].waitMs==1500&&p.steps[1].waitMs==100&&p.steps[2].waitMs==0);
         if(pose==ArmObservation::LOOK2)assert(p.steps[0].waitMs==1500&&p.count==2);
         if(pose==ArmObservation::LOOK3)assert(p.steps[p.count-1].kind==motion::StepKind::TURRET_READY&&p.steps[p.count-1].waitMs==1500);
     }
+    const float heights[]={0,85,170};const uint32_t waits[]={1500,750,0};
+    for(auto pose:{ArmObservation::LOOK,ArmObservation::LOOK2,ArmObservation::LOOK3,ArmObservation::LOOK4}) {
+        for(int i=0;i<3;++i) {
+            currentArm.high=heights[i];
+            MotionRequest r;r.kind=MotionKind::ARM_POSE;r.observation=pose;r.zone=1;
+            motion::Program p;assert(!BuildArmProgram(r,p));assert(p.steps[0].waitMs==waits[i]);
+        }
+    }
+    currentArm.high=0;
     MotionRequest r;r.kind=MotionKind::HOME_OBSERVE;r.zone=2;motion::Program p;assert(!BuildArmProgram(r,p));
     assert(p.steps[0].kind==motion::StepKind::POSITION&&p.steps[p.count-1].turret==135);
+    r.armPrepared=true;assert(!BuildArmProgram(r,p));
+    assert(p.count==1&&p.steps[0].kind==motion::StepKind::POSITION); // 已提前 LOOK4，只保留航向修正。
     r.kind=MotionKind::HOME_RETURN;r.zone=1;assert(!BuildArmProgram(r,p));
     assert(p.steps[p.count-2].high==-70&&p.steps[p.count-1].length==-200&&p.steps[p.count-1].waitMs==1000);
 }

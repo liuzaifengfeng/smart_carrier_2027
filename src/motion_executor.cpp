@@ -8,7 +8,8 @@
 #include "motor_bus.h"
 #include <float.h>
 
-float MOTION_LOOK_LEAD_MM=0,MOTION_LOOK2_LEAD_MM=0;
+// 保留旧参数注册位置以兼容上位机编号；观察姿态现按路径阶段提前触发。
+float MOTION_LOOK_LEAD_MM=1500,MOTION_LOOK2_LEAD_MM=1500;
 uint32_t ARM_FEEDBACK_ENABLED=0,ARM_GRIP_HOLD_MS=0,ARM_RELEASE_HOLD_MS=0;
 namespace {
 TaskHandle_t worker=nullptr;
@@ -217,8 +218,8 @@ void navigationTick() {
         }
     }
     auto &base=PositionNodeRunner();
-    const float lead=r.observation==ArmObservation::LOOK2?MOTION_LOOK2_LEAD_MM:MOTION_LOOK_LEAD_MM;
-    if(r.observation!=ArmObservation::NONE&&join.shouldStartArm(join.chassisDone,base.lastTranslation(),base.remainingDistance(),lead)) {
+    const bool visualPose=r.observation==ArmObservation::LOOK||r.observation==ArmObservation::LOOK2||r.observation==ArmObservation::LOOK4;
+    if(r.observation!=ArmObservation::NONE&&join.shouldStartArm(join.chassisDone,visualPose&&base.observationApproach())) {
         MotionRequest pose;pose.kind=MotionKind::ARM_POSE;pose.observation=r.observation;pose.zone=r.zone;
         if(!beginArm(pose))return;
     }

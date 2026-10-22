@@ -1243,8 +1243,9 @@ def field_node_at(x: float, y: float) -> tuple[int, float, float] | None:
 
 
 # 项目坐标 X 向右、Y 向上；与固件节点中心坐标一致。
+FIELD_NODE_X_MM = (240.0, 720.0, 1200.0, 1680.0, 2050.0)
 FIELD_NODES = tuple(
-    (node, 240.0 + 480.0 * node_grid_position(node)[1],
+    (node, FIELD_NODE_X_MM[node_grid_position(node)[1]],
      240.0 + 480.0 * node_grid_position(node)[0])
     for node in range(FIELD_NODE_COUNT)
 )
@@ -4229,11 +4230,14 @@ def run_self_test() -> None:
     assert FIELD_NODES[0] == (0, 240.0, 240.0)
     assert FIELD_NODES[9] == (9, 240.0, 720.0)
     assert FIELD_NODES[12] == (12, 1200.0, 1200.0)
-    assert FIELD_NODES[24] == (24, 2160.0, 2160.0)
+    assert FIELD_NODES[24] == (24, 2050.0, 2160.0)
     # 穷举所有节点对，用物理距离独立核对蛇形编号的相邻判断。
     for start, x1, y1 in FIELD_NODES:
         for end, x2, y2 in FIELD_NODES:
-            expected = abs(x1 - x2) + abs(y1 - y2) == 480.0
+            dx, dy = abs(x1 - x2), abs(y1 - y2)
+            expected = (dy == 0.0 and dx in (370.0, 480.0)) or (
+                dx == 0.0 and dy == 480.0
+            )
             try:
                 build_node_path_command(f"{start}-{end}")
                 accepted = True

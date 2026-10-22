@@ -27,7 +27,7 @@ int main() {
     for(int i=0;i<1000;++i)CHECK(fabsf(hold.update(1,4,1080+i*40,2,20))<=20);
     // 300RPM直行，注入持续偏转和短时3度扰动，共用控制器最终回正并惯性安静后完成。
     Config c;c.count=2;c.policy=2;c.startHeading=0;c.endHeading=0;c.maxRpm=300;
-    Node nodes[]={{{310,1200},0},{{2090,1200},0}};
+    Node nodes[]={{{310,1200},0},{{2050,1200},0}};
     CHECK(!route.build(nodes,c));Tracker tracker;tracker.begin(route,0);tracker.requireInertial=true;
     tracker.commit(WheelCommand{},1000);float actual=0,velocity=0;WheelCommand applied;
     bool finished=false,settled=false;uint32_t stamp=1000;float peak=0;

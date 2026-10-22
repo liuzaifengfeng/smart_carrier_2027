@@ -32,11 +32,11 @@ struct NodePosition {
 // 从底向上、从左到右：0~4、9~5、10~14、19~15、20~24。
 // 沿用项目 X 向右、Y 向上；中心间距 480 mm。
 NodePosition NODE_POSITIONS[FIELD_NODE_COUNT] = {
-    {310.0f, 240.0f}, {720.0f, 240.0f}, {1200.0f, 240.0f}, {1680.0f, 240.0f}, {2090.0f, 240.0f},
-    {2090.0f, 720.0f}, {1680.0f, 720.0f}, {1200.0f, 720.0f}, {720.0f, 720.0f}, {310.0f, 720.0f},
-    {310.0f, 1200.0f}, {720.0f, 1200.0f}, {1200.0f, 1200.0f}, {1680.0f, 1200.0f}, {2090.0f, 1200.0f},
-    {2090.0f, 1680.0f}, {1680.0f, 1680.0f}, {1200.0f, 1680.0f}, {720.0f, 1680.0f}, {310.0f, 1680.0f},
-    {310.0f, 2020.0f}, {720.0f, 2020.0f}, {1200.0f, 2020.0f}, {1680.0f, 2020.0f}, {2090.0f, 2020.0f},
+    {310.0f, 240.0f}, {720.0f, 240.0f}, {1200.0f, 240.0f}, {1680.0f, 240.0f}, {2050.0f, 240.0f},
+    {2050.0f, 720.0f}, {1680.0f, 720.0f}, {1200.0f, 720.0f}, {720.0f, 720.0f}, {310.0f, 720.0f},
+    {310.0f, 1200.0f}, {720.0f, 1200.0f}, {1200.0f, 1200.0f}, {1680.0f, 1200.0f}, {2050.0f, 1200.0f},
+    {2050.0f, 1680.0f}, {1680.0f, 1680.0f}, {1200.0f, 1680.0f}, {720.0f, 1680.0f}, {310.0f, 1680.0f},
+    {310.0f, 2020.0f}, {720.0f, 2020.0f}, {1200.0f, 2020.0f}, {1680.0f, 2020.0f}, {2050.0f, 2020.0f},
 };
 
 constexpr uint32_t MOTOR_PULSES_PER_REVOLUTION = 3200; // 16 细分时，电机转一圈的脉冲数
@@ -50,9 +50,9 @@ constexpr float ROUTE_ANGLE_EPSILON_DEG = 0.01f;       // 小于该角度时不�
 // 顺序对应 VisionStartMode；各行独立调整，X/Y 为视觉单位，角度为度。
 VisionAlignmentDeadzone ALIGN_DEADZONES[] = {
     {8.0f, 8.0f, 0.5f}, // DISC 圆盘对齐
-    {3.0f, 3.0f, 0.2f}, // DISC_MATERIAL 圆盘物料对齐
-    {3.0f, 3.0f, 0.2f}, // WORK_AREA
-    {3.0f, 3.0f, 0.2f}, // WORK_AREA_LOADED
+    {5.0f, 5.0f, 0.2f}, // DISC_MATERIAL 圆盘物料对齐
+    {5.0f, 5.0f, 0.2f}, // WORK_AREA
+    {5.0f, 5.0f, 0.2f}, // WORK_AREA_LOADED
     {6.0f, 6.0f, 0.4f}, // CORNER
 };
 AlignmentFrameWaiter s_alignmentWaiter;
@@ -461,7 +461,7 @@ static bool MoveArmInternal(float high, float length, float turret_angle, float 
         const uint32_t pulses = static_cast<uint32_t>(high * HEIGHT_PULSE);
         // RPM 写入协议的 16 位字段，在此完成数值饱和。
         const uint16_t rpm = speed >= UINT16_MAX / 15.0f ? UINT16_MAX : speed * 15.0f;
-        Emm_V5_Pos_Control(5, 1, rpm, 250, pulses, true, false);
+        Emm_V5_Pos_Control(5, 1, rpm, 252, pulses, true, false);
         vTaskDelay(pdMS_TO_TICKS(10));
         currentArm.high = high;
     }

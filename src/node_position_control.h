@@ -78,7 +78,7 @@ class Runner {
     IO *io=nullptr;
     Result *output=nullptr;
     const char *error=nullptr;
-    size_t index=0,after=0,curveBegin=0;
+    size_t index=0,after=0,curveBegin=0,observationIndex=0;
     continuous::Vec offset,end,start;
     float distance=0,targetHeading=0,baseS=0,delta=0,ppm=0,maximum=0,acceleration=0,startHeading=0;
     double unitsPerDistance=0,tolerance=0,hardLimit=0;
@@ -114,6 +114,7 @@ public:
     const char *failure() const { return error; }
     uint32_t nextDelay() const;
     bool lastTranslation() const { return finalTranslation&&stage==MOVE&&!rotating; }
+    bool observationApproach() const { return active()&&stage!=START&&stage!=QUIET&&index>=observationIndex; }
     float remainingDistance() const;
     bool hasTerminalTurn() const { return terminalTurn; }
     float progress() const {return output?output->s:0;}
