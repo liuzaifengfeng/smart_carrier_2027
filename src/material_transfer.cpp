@@ -142,7 +142,8 @@ void waitForArm(float durationMs = materialTransferLayout.motionWaitMs) {
 
 // 移动到目标上方
 bool moveAbove(const MaterialStationPose &pose, float clawAngle,
-               const MaterialApproachDelays &delays, const float *plannedAngle = nullptr) {
+               const MaterialApproachDelays &delays, const float *plannedAngle = nullptr,
+               uint16_t turretRampMs = 20) {
     // 升降、伸缩同时发令；等待后转向。两次等待分别保留，供上位机逐项调整。
     if (!MoveArm(materialTransferLayout.approachHeight, pose.length,
                  -1, clawAngle, materialMotionSteps.approachTranslateSpeed)) return false;
@@ -150,9 +151,9 @@ bool moveAbove(const MaterialStationPose &pose, float clawAngle,
     waitForArm(delays.settleMs);
     if (!(plannedAngle
             ? MoveArmPlanned(materialTransferLayout.approachHeight, pose.length,
-                             *plannedAngle, clawAngle, materialMotionSteps.approachRotateSpeed)
+                             *plannedAngle, clawAngle, materialMotionSteps.approachRotateSpeed, turretRampMs)
             : MoveArm(materialTransferLayout.approachHeight, pose.length,
-                      pose.turretAngle, clawAngle, materialMotionSteps.approachRotateSpeed))) return false;
+                      pose.turretAngle, clawAngle, materialMotionSteps.approachRotateSpeed, turretRampMs))) return false;
     waitForArm(delays.rotateMs);
     return true;
 }
@@ -161,9 +162,9 @@ bool moveAbove(const MaterialStationPose &pose, float clawAngle,
 bool pickAt(const MaterialStationPose &pose,
             const MaterialTransferDelays &delays = commonMaterialDelays,
             bool retractAfterGrip = false, bool retractWithLift = false,
-            const float *plannedAngle = nullptr) {
+            const float *plannedAngle = nullptr, uint16_t turretRampMs = 20) {
     // 载物台出料先抬升、等待后再缩回；工作区取回可同时抬升并缩回到 0。
-    if (!moveAbove(pose, materialTransferLayout.clawOpenAngle, delays.pickAbove, plannedAngle)) return false;
+    if (!moveAbove(pose, materialTransferLayout.clawOpenAngle, delays.pickAbove, plannedAngle, turretRampMs)) return false;
     if (!MoveArm(pose.high, -1, -1, materialTransferLayout.clawOpenAngle,
                  materialMotionSteps.pickDescendSpeed)) return false;
     waitForArm(delays.pickDescendMs);
@@ -183,17 +184,17 @@ bool pickAt(const MaterialStationPose &pose,
 //@param targetHeight 目标高度
 bool placeAt(const MaterialStationPose &pose, float targetHeight,
              const MaterialTransferDelays &delays = commonMaterialDelays,
-             bool fromRetracted = false, const float *plannedAngle = nullptr) {
+             bool fromRetracted = false, const float *plannedAngle = nullptr, uint16_t turretRampMs = 500) {
     if (fromRetracted) {
         // pickAt 已完成抬升和缩回；此处额外等待并稳定，再保持缩回转向。
         waitForArm(delays.placeAbove.translateMs);
         waitForArm(delays.placeAbove.settleMs);
         if (!(plannedAngle
-                ? MoveArmPlanned(-1, -1, *plannedAngle, -1, materialMotionSteps.approachRotateSpeed)
-                : MoveArm(-1, -1, pose.turretAngle, -1, materialMotionSteps.approachRotateSpeed))) return false;
+                ? MoveArmPlanned(-1, -1, *plannedAngle, -1, materialMotionSteps.approachRotateSpeed, turretRampMs)
+                : MoveArm(-1, -1, pose.turretAngle, -1, materialMotionSteps.approachRotateSpeed, turretRampMs))) return false;
         waitForArm(delays.placeAbove.rotateMs);
     } else if (!moveAbove(pose, materialTransferLayout.clawClosedAngle,
-                          delays.placeAbove, plannedAngle)) return false;
+                          delays.placeAbove, plannedAngle, turretRampMs)) return false;
     // 缩回后的搬运在转向后同时伸出、下降；其他放料仍沿用原先的垂直下降。
     if (!MoveArm(targetHeight, fromRetracted ? pose.length : -1.0f, -1,
                  materialTransferLayout.clawClosedAngle, materialMotionSteps.placeDescendSpeed)) return false;
@@ -256,8 +257,8 @@ bool executeWorkTransfer(const MaterialStationPose &source, const MaterialStatio
         angles = plan.anglesDeg;
     }
     // 使用局部规划，不污染普通 MoveArm 和圆盘流程；每次旋转由底层再次回读校验。
-    return pickAt(source, delays, !retrieve, retrieve, angles)
-        && placeAt(destination, height, delays, true, angles + 1);
+    return pickAt(source, delays, !retrieve, retrieve, angles, 20)
+        && placeAt(destination, height, delays, true, angles + 1, 500);
 }
 
 bool validateCodeArrays(const int *first, const int *second, bool firstIsMaterial) {
@@ -699,13 +700,13 @@ bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force) {
                  materialMotionSteps.discApproach.length,
                  materialMotionSteps.discApproach.turretAngle,
                  materialMotionSteps.discOpenAngle,
-                 materialMotionSteps.discApproachSpeed)) return false;
+                 materialMotionSteps.discApproachSpeed, 20)) return false;
     waitForArm(materialAuxiliaryDelays.discApproachMs);
     if (!MoveArm(materialMotionSteps.discApproach.high,
                  materialMotionSteps.discApproach.length,
                  materialMotionSteps.discApproach.turretAngle,
                  materialTransferLayout.clawClosedAngle,
-                 materialMotionSteps.discGripSpeed)) return false;
+                 materialMotionSteps.discGripSpeed, 20)) return false;
     waitForArm(commonMaterialDelays.pickGripMs);
     if (!MoveArm(materialTransferLayout.approachHeight, 0, -1, -1,
                  materialMotionSteps.discLiftSpeed)) return false;

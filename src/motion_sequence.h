@@ -11,6 +11,7 @@ struct Step {
     uint32_t waitMs=0,holdMs=0;
     uint8_t cargo=0,color=0;
     bool planned=false;
+    uint16_t turretRampMs=600; // 2号转台加速、减速各自时长；由动作阶段指定。
 };
 struct Program {
     // 整组三件最多 45 步；静态存储，运行中不申请堆内存。
