@@ -19,15 +19,16 @@ bool angleAvailable=true;
 bool ReadArmTurretAngle(float &angle){angle=170;return angleAvailable;}
 uint32_t SubmitMotion(const MotionRequest &,bool){return 1;}
 bool WaitMotion(uint32_t){return false;}
+bool MovePosition(float,float,float,float,bool (*)()){return true;}
 std::vector<motion::Step> issuedArm;
 std::vector<uint32_t> armWaits;
 void vTaskDelay(uint32_t ticks){armWaits.push_back(ticks);}
-bool MoveArm(float high,float length,float turret,float pawl,float speed) {
-    motion::Step s;s.high=high;s.length=length;s.turret=turret;s.pawl=pawl;s.speed=speed;
+bool MoveArm(float high,float length,float turret,float pawl,float speed,uint16_t ramp) {
+    motion::Step s;s.high=high;s.length=length;s.turret=turret;s.pawl=pawl;s.speed=speed;s.turretRampMs=ramp;
     issuedArm.push_back(s);return true;
 }
-bool MoveArmPlanned(float high,float length,float turret,float pawl,float speed) {
-    return MoveArm(high,length,turret,pawl,speed);
+bool MoveArmPlanned(float high,float length,float turret,float pawl,float speed,uint16_t ramp) {
+    return MoveArm(high,length,turret,pawl,speed,ramp);
 }
 float NODE_PATH_ACCEL_MM_S2=2000,NODE_PATH_TURN_DEG_S=300,NODE_PATH_TURN_ACCEL_DEG_S2=400,NODE_PATH_HEADING_DEADBAND_DEG=1;
 struct Entry {std::string name;void *address;bool integer;float minimum,maximum;};
@@ -50,6 +51,7 @@ void forward() {
         bool release=false,retract=false;int commits=0;
         for(size_t i=0;i<p.count;++i) {
             const auto &s=p.steps[i];
+            if(s.kind==motion::StepKind::ARM)assert(s.turretRampMs==(layer==1?500:20));
             if(!strcmp(s.name,"PICK_RETRACT")){assert(s.length==0);retract=true;}
             if(!strcmp(s.name,"PLACE_DESCEND"))assert(near(s.high,materialTransferLayout.workArea[w-1].high+(layer-1)*materialTransferLayout.secondLayerOffset));
             if(!strcmp(s.name,"PLACE_RELEASE")){assert(s.waitMs==delays.placeReleaseMs&&s.holdMs==41);release=true;}
@@ -64,6 +66,7 @@ void reverse() {
         cargoPlatforms[c-1].material=MATERIAL_NONE;
         MotionRequest r;r.kind=MotionKind::RETRIEVE;r.cargo=c;r.work=w;r.color=6;
         motion::Program p;assert(!BuildArmProgram(r,p));
+        for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretRampMs==20);
         assert(p.steps[0].waitMs==workAreaToCargoDelays[w-1][c-1].pickAbove.translateMs);
         bool lift=false;
         for(size_t i=0;i<p.count;++i)if(!strcmp(p.steps[i].name,"PICK_LIFT")){assert(p.steps[i].length==0);lift=true;}
@@ -76,7 +79,12 @@ void rounds() {
     const int positions[3]={3,1,2};for(int i=0;i<3;++i){r.positions[i]=positions[i];cargoPlatforms[i].material=MATERIAL_RED;}
     motion::Program p;assert(!BuildArmProgram(r,p));assert(p.count==42);
     int commits=0;for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::COMMIT){++commits;assert(p.steps[i].cargo==commits);}
-    assert(commits==3);angleAvailable=false;assert(BuildArmProgram(r,p));
+    assert(commits==3);
+    for(uint8_t layer:{1,2}) {
+        r.layer=layer;assert(!BuildArmProgram(r,p));
+        for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretRampMs==(layer==1?500:20));
+    }
+    angleAvailable=false;assert(BuildArmProgram(r,p));
     for(const auto &cargo:cargoPlatforms)assert(cargo.material==MATERIAL_RED);
 }
 void discs() {
@@ -106,9 +114,11 @@ void discs() {
         MotionRequest r;r.kind=MotionKind::DISC_GRAB;r.cargo=cargo;r.color=6;r.position=pos;
         motion::Program p;assert(!BuildArmProgram(r,p));
         checkTail(p,p.count-7,cargo);
+        for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretRampMs==20);
         assert(p.steps[p.count-9].waitMs==d.pickGripMs&&p.steps[p.count-9].holdMs==37);
         if(pos>=1&&pos<=3) {
             const float angle=pos==1?71:pos==2?90:102,length=pos==2?0:150;
+
             assert(p.steps[0].high==120&&p.steps[1].high==80&&p.steps[2].pawl==-8);
             assert(p.steps[0].waitMs==(pos==3?200:300)&&p.steps[1].waitMs==300);
             for(int i=0;i<3;++i)assert(p.steps[i].turret==angle&&p.steps[i].length==length&&p.steps[i].speed==armSpeed);
@@ -168,6 +178,8 @@ void poses() {
             currentArm.high=heights[i];
             MotionRequest r;r.kind=MotionKind::ARM_POSE;r.observation=pose;r.zone=1;
             motion::Program p;assert(!BuildArmProgram(r,p));assert(p.steps[0].waitMs==waits[i]);
+            if(pose==ArmObservation::LOOK2||pose==ArmObservation::LOOK3)assert(p.steps[0].turretRampMs==20);
+            if(pose==ArmObservation::LOOK)assert(p.steps[0].turretRampMs==20);
         }
     }
     currentArm.high=0;
@@ -177,6 +189,18 @@ void poses() {
     assert(p.count==1&&p.steps[0].kind==motion::StepKind::POSITION); // 已提前 LOOK4，只保留航向修正。
     r.kind=MotionKind::HOME_RETURN;r.zone=1;assert(!BuildArmProgram(r,p));
     assert(p.steps[p.count-2].high==-70&&p.steps[p.count-1].length==-200&&p.steps[p.count-1].waitMs==1000);
+    // 同步入口同样采用第一层放料全程慢、圆盘全程快。
+    cargoPlatforms[0].material=MATERIAL_RED;issuedArm.clear();
+    assert(MoveCargoToWorkArea(1,1));
+    assert(issuedArm[1].turretRampMs==500);
+    assert(issuedArm[6].turretRampMs==500);
+    issuedArm.clear();assert(MoveDiscToCargo(1,1));
+    assert(issuedArm[1].turretRampMs==20);
+    assert(issuedArm[5].turretRampMs==20);
+    issuedArm.clear();assert(StackCargoToWorkArea(1,1));
+    for(const auto &s:issuedArm)if(s.turret!=-1)assert(s.turretRampMs==20);
+    issuedArm.clear();assert(MoveWorkAreaToCargo(1,1,1));
+    for(const auto &s:issuedArm)if(s.turret!=-1)assert(s.turretRampMs==20);
 }
 void registry() {
     registrationTail();assert(entries.size()==244);

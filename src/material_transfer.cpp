@@ -142,7 +142,8 @@ void waitForArm(float durationMs = materialTransferLayout.motionWaitMs) {
 
 // 移动到目标上方
 bool moveAbove(const MaterialStationPose &pose, float clawAngle,
-               const MaterialApproachDelays &delays, const float *plannedAngle = nullptr) {
+               const MaterialApproachDelays &delays, const float *plannedAngle = nullptr,
+               uint16_t turretRampMs = 20) {
     // 升降、伸缩同时发令；等待后转向。两次等待分别保留，供上位机逐项调整。
     if (!MoveArm(materialTransferLayout.approachHeight, pose.length,
                  -1, clawAngle, materialMotionSteps.approachTranslateSpeed)) return false;
@@ -150,9 +151,9 @@ bool moveAbove(const MaterialStationPose &pose, float clawAngle,
     waitForArm(delays.settleMs);
     if (!(plannedAngle
             ? MoveArmPlanned(materialTransferLayout.approachHeight, pose.length,
-                             *plannedAngle, clawAngle, materialMotionSteps.approachRotateSpeed)
+                             *plannedAngle, clawAngle, materialMotionSteps.approachRotateSpeed, turretRampMs)
             : MoveArm(materialTransferLayout.approachHeight, pose.length,
-                      pose.turretAngle, clawAngle, materialMotionSteps.approachRotateSpeed))) return false;
+                      pose.turretAngle, clawAngle, materialMotionSteps.approachRotateSpeed, turretRampMs))) return false;
     waitForArm(delays.rotateMs);
     return true;
 }
@@ -161,9 +162,9 @@ bool moveAbove(const MaterialStationPose &pose, float clawAngle,
 bool pickAt(const MaterialStationPose &pose,
             const MaterialTransferDelays &delays = commonMaterialDelays,
             bool retractAfterGrip = false, bool retractWithLift = false,
-            const float *plannedAngle = nullptr) {
+            const float *plannedAngle = nullptr, uint16_t turretRampMs = 20) {
     // 载物台出料先抬升、等待后再缩回；工作区取回可同时抬升并缩回到 0。
-    if (!moveAbove(pose, materialTransferLayout.clawOpenAngle, delays.pickAbove, plannedAngle)) return false;
+    if (!moveAbove(pose, materialTransferLayout.clawOpenAngle, delays.pickAbove, plannedAngle, turretRampMs)) return false;
     if (!MoveArm(pose.high, -1, -1, materialTransferLayout.clawOpenAngle,
                  materialMotionSteps.pickDescendSpeed)) return false;
     waitForArm(delays.pickDescendMs);
@@ -183,17 +184,17 @@ bool pickAt(const MaterialStationPose &pose,
 //@param targetHeight 目标高度
 bool placeAt(const MaterialStationPose &pose, float targetHeight,
              const MaterialTransferDelays &delays = commonMaterialDelays,
-             bool fromRetracted = false, const float *plannedAngle = nullptr) {
+             bool fromRetracted = false, const float *plannedAngle = nullptr, uint16_t turretRampMs = 20) {
     if (fromRetracted) {
         // pickAt 已完成抬升和缩回；此处额外等待并稳定，再保持缩回转向。
         waitForArm(delays.placeAbove.translateMs);
         waitForArm(delays.placeAbove.settleMs);
         if (!(plannedAngle
-                ? MoveArmPlanned(-1, -1, *plannedAngle, -1, materialMotionSteps.approachRotateSpeed)
-                : MoveArm(-1, -1, pose.turretAngle, -1, materialMotionSteps.approachRotateSpeed))) return false;
+                ? MoveArmPlanned(-1, -1, *plannedAngle, -1, materialMotionSteps.approachRotateSpeed, turretRampMs)
+                : MoveArm(-1, -1, pose.turretAngle, -1, materialMotionSteps.approachRotateSpeed, turretRampMs))) return false;
         waitForArm(delays.placeAbove.rotateMs);
     } else if (!moveAbove(pose, materialTransferLayout.clawClosedAngle,
-                          delays.placeAbove, plannedAngle)) return false;
+                          delays.placeAbove, plannedAngle, turretRampMs)) return false;
     // 缩回后的搬运在转向后同时伸出、下降；其他放料仍沿用原先的垂直下降。
     if (!MoveArm(targetHeight, fromRetracted ? pose.length : -1.0f, -1,
                  materialTransferLayout.clawClosedAngle, materialMotionSteps.placeDescendSpeed)) return false;
@@ -248,7 +249,7 @@ bool planWorkTransfers(const int *workCodes, const int *cargoCodes,
 
 bool executeWorkTransfer(const MaterialStationPose &source, const MaterialStationPose &destination,
                          float height, const MaterialTransferDelays &delays, bool retrieve,
-                         const float *angles = nullptr) {
+                         const float *angles = nullptr, uint8_t layer = 1) {
     TurretPathPlan plan;
     if (!angles) {
         const float targets[] = {source.turretAngle, destination.turretAngle};
@@ -256,8 +257,9 @@ bool executeWorkTransfer(const MaterialStationPose &source, const MaterialStatio
         angles = plan.anglesDeg;
     }
     // 使用局部规划，不污染普通 MoveArm 和圆盘流程；每次旋转由底层再次回读校验。
-    return pickAt(source, delays, !retrieve, retrieve, angles)
-        && placeAt(destination, height, delays, true, angles + 1);
+    const uint16_t turretRampMs=retrieve||layer!=1?20:500;
+    return pickAt(source, delays, !retrieve, retrieve, angles, turretRampMs)
+        && placeAt(destination, height, delays, true, angles + 1, turretRampMs);
 }
 
 bool validateCodeArrays(const int *first, const int *second, bool firstIsMaterial) {
@@ -438,7 +440,7 @@ bool DemoStackCargoToWorkArea() {
                       i + 1, i + 1, releaseHeights[i]);
         const auto &delays = cargoToWorkAreaDelays[i][i];
         if (!executeWorkTransfer(materialTransferLayout.cargo[i], materialTransferLayout.workArea[i],
-                                 releaseHeights[i], delays, false, &plan.anglesDeg[2 * i])) return false;
+                                 releaseHeights[i], delays, false, &plan.anglesDeg[2 * i], 2)) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;
@@ -471,7 +473,7 @@ bool DemoStackCargoToWorkArea3() {
                       i + 1, i + 1, releaseHeights[i]);
         const auto &delays = cargoToWorkAreaDelays[i][i];
         if (!executeWorkTransfer(materialTransferLayout.cargo[i], materialTransferLayout.workArea[i],
-                                 releaseHeights[i], delays, false, &plan.anglesDeg[2 * i])) return false;
+                                 releaseHeights[i], delays, false, &plan.anglesDeg[2 * i], 3)) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;
@@ -562,7 +564,7 @@ bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
     Serial.printf("[Material] cargo %u -> work area %u layer 2, material %u\n",
                   cargoCode, workAreaCode, cargo.material);
     const auto &delays = cargoToWorkAreaDelays[cargoCode - 1][workAreaCode - 1];
-    if (!executeWorkTransfer(source, destination, secondLayerHeight, delays, false)) return false;
+    if (!executeWorkTransfer(source, destination, secondLayerHeight, delays, false, nullptr, 2)) return false;
     cargo.material = MATERIAL_NONE;
     return true;
 }
@@ -625,7 +627,7 @@ bool PlaceTaskCargoToWorkArea(
         const auto &delays = cargoToWorkAreaDelays[i][workAreaCode - 1];
         if (!executeWorkTransfer(materialTransferLayout.cargo[i],
                                  materialTransferLayout.workArea[workAreaCode - 1],
-                                 releaseHeights[i], delays, false, &plan.anglesDeg[2 * i])) return false;
+                                 releaseHeights[i], delays, false, &plan.anglesDeg[2 * i], layer)) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;
@@ -699,13 +701,13 @@ bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force) {
                  materialMotionSteps.discApproach.length,
                  materialMotionSteps.discApproach.turretAngle,
                  materialMotionSteps.discOpenAngle,
-                 materialMotionSteps.discApproachSpeed)) return false;
+                 materialMotionSteps.discApproachSpeed, 20)) return false;
     waitForArm(materialAuxiliaryDelays.discApproachMs);
     if (!MoveArm(materialMotionSteps.discApproach.high,
                  materialMotionSteps.discApproach.length,
                  materialMotionSteps.discApproach.turretAngle,
                  materialTransferLayout.clawClosedAngle,
-                 materialMotionSteps.discGripSpeed)) return false;
+                 materialMotionSteps.discGripSpeed, 20)) return false;
     waitForArm(commonMaterialDelays.pickGripMs);
     if (!MoveArm(materialTransferLayout.approachHeight, 0, -1, -1,
                  materialMotionSteps.discLiftSpeed)) return false;

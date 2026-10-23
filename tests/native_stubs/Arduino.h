@@ -16,3 +16,5 @@ struct NativeSerial {
 };
 extern NativeSerial Serial;
 inline void delay(uint32_t) {}
+inline uint32_t pdMS_TO_TICKS(uint32_t ms){return ms;}
+void vTaskDelay(uint32_t ticks);

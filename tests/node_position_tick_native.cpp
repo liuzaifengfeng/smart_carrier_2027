@@ -33,9 +33,10 @@ void nodeTick() {
     // 最终直线无论长短，都在它前面的转向阶段准备，不再等待距离阈值。
     for(float endY:{1300.0f,2200.0f}) {
         Node cornerPoints[]={{{310,1200},0},{{720,1200},0},{{720,endY},0}};
-        Route corner;assert(!corner.build(cornerPoints,cfg));
+        Config cornerConfig=cfg;cornerConfig.endHeading=180;
+        Route corner;assert(!corner.build(cornerPoints,cornerConfig));
         Sim car;Result measured;Runner runner;runner.begin(corner,settings,car,measured);
-        bool triggered=false;int cycles=0;
+        bool triggered=false,cornerTriggered=false;int cycles=0;
         while(runner.active()) {
             runner.tick();
             if(!triggered&&runner.observationApproach()) {
@@ -44,9 +45,15 @@ void nodeTick() {
                 assert(fabsf(turn(car.heading,0))<3); // 进入转向前即触发。
                 triggered=true;
             }
+            if(!cornerTriggered&&runner.finalTurnApproach()) {
+                assert(triggered); // 普通视觉已经提前展开，角点姿态仍等到末段直行完成。
+                assert(norm(measured.estimated-Vec(720,endY))<3);
+                assert(fabsf(turn(car.heading,90))<3); // 此时尚未开始最终90→180度旋转。
+                cornerTriggered=true;
+            }
             car.wait(1);assert(++cycles<100000);
         }
-        assert(triggered&&!runner.failure());
+        assert(triggered&&cornerTriggered&&!runner.failure());
     }
 }
 void scanTick() {

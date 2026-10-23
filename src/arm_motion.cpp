@@ -13,7 +13,7 @@ namespace {
  * @param hold 反馈完成后的夹持或释放保持时间(ms)。
  */
 void arm(Program &p,const char *name,float h,float l,float t,float claw,float speed,uint32_t wait=0,bool planned=false,uint32_t hold=0) {
-    Step s;s.kind=StepKind::ARM;s.name=name;s.high=h;s.length=l;s.turret=t;s.pawl=claw;s.speed=speed;s.waitMs=wait;s.planned=planned;s.holdMs=hold;p.append(s);
+    Step s;s.kind=StepKind::ARM;s.name=name;s.high=h;s.length=l;s.turret=t;s.pawl=claw;s.speed=speed;s.waitMs=wait;s.planned=planned;s.holdMs=hold;s.turretRampMs=20;p.append(s);
 }
 /**
  * @brief 向Program追加纯等待步骤，ms为等待毫秒数，不操作机构。
@@ -131,7 +131,9 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
     switch(r.kind) {
     case MotionKind::ARM_POSE: observation(p,r.observation,r.zone);break;
     case MotionKind::TRANSFER: case MotionKind::RETRIEVE: case MotionKind::PLACE_ROUND:
-    case MotionKind::RETRIEVE_ROUND: case MotionKind::DEMO_PLACE: case MotionKind::DEMO_RETRIEVE: return transfer(r,p);
+    case MotionKind::RETRIEVE_ROUND: case MotionKind::DEMO_PLACE: case MotionKind::DEMO_RETRIEVE: {
+        const char *error=transfer(r,p);if(error)return error;break;
+    }
     case MotionKind::HELD_DISC:
     case MotionKind::DISC_GRAB:
     case MotionKind::LOAD_ROUND: {
@@ -193,5 +195,19 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
     case MotionKind::VELOCITY: {Step s;s.kind=StepKind::VELOCITY;s.name="VELOCITY";s.cargo=r.position;s.speed=r.speed;s.color=r.force;p.append(s);break;}
     default: break;
     }
+    // 整段搬运使用同一曲线：第一层放料慢，收料和第二层叠放快；圆盘全程快。
+    uint16_t turretRampMs=20;
+    switch(r.kind) {
+    case MotionKind::DISC_GRAB: case MotionKind::LOAD_ROUND: case MotionKind::HELD_DISC:
+        turretRampMs=20;break;
+    case MotionKind::RETRIEVE: case MotionKind::RETRIEVE_ROUND: case MotionKind::DEMO_RETRIEVE:
+        turretRampMs=20;break;
+    case MotionKind::TRANSFER: case MotionKind::PLACE_ROUND:
+        turretRampMs=r.layer==1?500:20;break;
+    case MotionKind::DEMO_PLACE:
+        turretRampMs=500;break;
+    default: break;
+    }
+    for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==StepKind::ARM)p.steps[i].turretRampMs=turretRampMs;
     return nullptr;
 }

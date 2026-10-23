@@ -12,6 +12,7 @@ float turretMeasured=0,clawMeasured=0;
 uint8_t flags=3;
 bool motorAtTarget=true;
 int issued=0;
+uint16_t issuedRamp=0;
 uint32_t millis(){return clockMs;}
 volatile bool taskMotionAborted=false;
 uint32_t ARM_FEEDBACK_ENABLED=0,ARM_GRIP_HOLD_MS=0,ARM_RELEASE_HOLD_MS=0;
@@ -19,8 +20,8 @@ float HEIGHT_PULSE=80,LENGTH_PULSE=30.2f;
 ArmPose currentArm{100,20,90,50};
 CargoPlatform cargoPlatforms[3]={{MATERIAL_NONE},{MATERIAL_NONE},{MATERIAL_NONE}};
 bool cancelled(){return stop;}
-bool MoveArm(float,float,float,float,float){++issued;return true;}
-bool MoveArmPlanned(float,float,float,float,float){++issued;return true;}
+bool MoveArm(float,float,float,float,float,uint16_t ramp){++issued;issuedRamp=ramp;return true;}
+bool MoveArmPlanned(float,float,float,float,float,uint16_t ramp){++issued;issuedRamp=ramp;return true;}
 bool BeginPositionMove(float,float,float,float){++issued;return true;}
 void TickPositionMove(){}
 bool PositionMoveActive(){return false;}
@@ -58,6 +59,9 @@ void feedback() {
     motorAtTarget=true;turretMeasured=70;assert(!hardware.ready(s,done)&&!done);
     turretMeasured=90;clawMeasured=30;assert(!hardware.ready(s,done)&&!done);
     clawMeasured=50;assert(!hardware.ready(s,done)&&done);
+    s.turretRampMs=20;assert(!hardware.issue(s)&&issuedRamp==20);
+    s.planned=true;s.turretRampMs=500;assert(!hardware.issue(s)&&issuedRamp==500);
+    issued=0;
     stop=true;assert(hardware.issue(s)&&!issued);
     stop=false;s.kind=motion::StepKind::COMMIT;s.cargo=1;s.color=6;
     assert(!hardware.issue(s)&&cargoPlatforms[0].material==MATERIAL_LIGHT_BLUE);

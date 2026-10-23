@@ -231,6 +231,8 @@ public:
      * @brief 判断是否进入最终进站平移前的准备阶段，用于提前展开视觉观察姿态。
      */
     bool observationApproach() const { return active()&&stage!=START&&stage!=QUIET&&index>=observationIndex; }
+    /** @brief 最终平移完成、准备执行终点转向；角点观察姿态仅在这里同步展开。 */
+    bool finalTurnApproach() const { return active()&&action==FINAL&&stage==ALIGN; }
     /**
      * @brief 返回当前平移动作剩余距离(mm)；运行中由代表轮转速估算，结束时由四轮位置校准。
      */
