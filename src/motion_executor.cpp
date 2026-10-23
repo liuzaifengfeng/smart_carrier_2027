@@ -227,7 +227,8 @@ void scanTick() {
         if(pollTaskCode()){finish(MotionState::DONE);return;}
         if(scanAttempt==3){finish(MotionState::FAILED,"EXECUTION");return;}
         ++scanAttempt;scanDistance=direction*(scanAttempt%2?-400:400);scanStart=currentPose;
-        if(!ReadChassisEncoderPositions(scanBefore)||!BeginPositionMove(0,scanDistance,0,SCAN_SEARCH_SPEED_RPM)){finish(MotionState::FAILED,"EXECUTION");return;}
+        uint32_t speed = SCAN_SEARCH_SPEED_RPM > scanAttempt * 100 ? SCAN_SEARCH_SPEED_RPM - scanAttempt * 100 : 1;
+        if(!ReadChassisEncoderPositions(scanBefore)||!BeginPositionMove(0,scanDistance,0,speed)){finish(MotionState::FAILED,"EXECUTION");return;}
         stage=4;phase("SCAN_SEARCH");return;
     }
     if(stage==4) {
