@@ -49,7 +49,6 @@ void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelay
  * @brief 构建放料转向、下降、松爪及抬升序列；height为实际层高，retracted表示小臂已缩回。
  */
 void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle) {
-    const size_t start=p.count;
     if(retracted) {
         wait(p,"PLACE_TRANSLATE_WAIT",d.placeAbove.translateMs);wait(p,"PLACE_SETTLE",d.placeAbove.settleMs);
         arm(p,"PLACE_ROTATE",-1,-1,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,d.placeAbove.rotateMs,angle);
@@ -57,8 +56,6 @@ void place(Program &p,const MaterialStationPose &pose,float height,const Materia
     arm(p,"PLACE_DESCEND",height,retracted?pose.length:-1,-1,materialTransferLayout.clawClosedAngle,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
     arm(p,"PLACE_RELEASE",-1,-1,-1,materialTransferLayout.clawOpenAngle,materialMotionSteps.placeReleaseSpeed,d.placeReleaseMs,false,ARM_RELEASE_HOLD_MS);
     arm(p,"PLACE_LIFT",materialTransferLayout.approachHeight,-1,-1,-1,materialMotionSteps.placeLiftSpeed,d.placeLiftMs);
-    // 放料阶段转向时已夹持物料，使用500ms加减速减轻晃动。
-    for(size_t i=start;i<p.count;++i)if(p.steps[i].kind==StepKind::ARM)p.steps[i].turretRampMs=500;
 }
 /**
  * @brief 回读转台实际角度并规划整组多圈转向目标，减少累计转角；成功返回true。
@@ -198,17 +195,17 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
     case MotionKind::VELOCITY: {Step s;s.kind=StepKind::VELOCITY;s.name="VELOCITY";s.cargo=r.position;s.speed=r.speed;s.color=r.force;p.append(s);break;}
     default: break;
     }
-    // 显式随动作携带转台曲线，抓取和放料分别设置，观察姿态按区域选择。
-    uint16_t turretRampMs=600;
+    // 整段搬运使用同一曲线：第一层放料慢，收料和第二层叠放快；圆盘全程快。
+    uint16_t turretRampMs=20;
     switch(r.kind) {
     case MotionKind::DISC_GRAB: case MotionKind::LOAD_ROUND: case MotionKind::HELD_DISC:
-    case MotionKind::TRANSFER: case MotionKind::RETRIEVE: case MotionKind::PLACE_ROUND:
-    case MotionKind::RETRIEVE_ROUND: case MotionKind::DEMO_PLACE: case MotionKind::DEMO_RETRIEVE:
-        return nullptr; // 抓取20ms、放料500ms已由各自步骤设置，不覆盖整段流程。
-    case MotionKind::ARM_POSE:
-        if(r.observation==ArmObservation::LOOK2||r.observation==ArmObservation::LOOK3)turretRampMs=20;
-        else if(r.observation==ArmObservation::LOOK)turretRampMs=500;
-        break;
+        turretRampMs=20;break;
+    case MotionKind::RETRIEVE: case MotionKind::RETRIEVE_ROUND: case MotionKind::DEMO_RETRIEVE:
+        turretRampMs=20;break;
+    case MotionKind::TRANSFER: case MotionKind::PLACE_ROUND:
+        turretRampMs=r.layer==1?500:20;break;
+    case MotionKind::DEMO_PLACE:
+        turretRampMs=500;break;
     default: break;
     }
     for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==StepKind::ARM)p.steps[i].turretRampMs=turretRampMs;

@@ -184,7 +184,7 @@ bool pickAt(const MaterialStationPose &pose,
 //@param targetHeight 目标高度
 bool placeAt(const MaterialStationPose &pose, float targetHeight,
              const MaterialTransferDelays &delays = commonMaterialDelays,
-             bool fromRetracted = false, const float *plannedAngle = nullptr, uint16_t turretRampMs = 500) {
+             bool fromRetracted = false, const float *plannedAngle = nullptr, uint16_t turretRampMs = 20) {
     if (fromRetracted) {
         // pickAt 已完成抬升和缩回；此处额外等待并稳定，再保持缩回转向。
         waitForArm(delays.placeAbove.translateMs);
@@ -249,7 +249,7 @@ bool planWorkTransfers(const int *workCodes, const int *cargoCodes,
 
 bool executeWorkTransfer(const MaterialStationPose &source, const MaterialStationPose &destination,
                          float height, const MaterialTransferDelays &delays, bool retrieve,
-                         const float *angles = nullptr) {
+                         const float *angles = nullptr, uint8_t layer = 1) {
     TurretPathPlan plan;
     if (!angles) {
         const float targets[] = {source.turretAngle, destination.turretAngle};
@@ -257,8 +257,9 @@ bool executeWorkTransfer(const MaterialStationPose &source, const MaterialStatio
         angles = plan.anglesDeg;
     }
     // 使用局部规划，不污染普通 MoveArm 和圆盘流程；每次旋转由底层再次回读校验。
-    return pickAt(source, delays, !retrieve, retrieve, angles, 20)
-        && placeAt(destination, height, delays, true, angles + 1, 500);
+    const uint16_t turretRampMs=retrieve||layer!=1?20:500;
+    return pickAt(source, delays, !retrieve, retrieve, angles, turretRampMs)
+        && placeAt(destination, height, delays, true, angles + 1, turretRampMs);
 }
 
 bool validateCodeArrays(const int *first, const int *second, bool firstIsMaterial) {
@@ -439,7 +440,7 @@ bool DemoStackCargoToWorkArea() {
                       i + 1, i + 1, releaseHeights[i]);
         const auto &delays = cargoToWorkAreaDelays[i][i];
         if (!executeWorkTransfer(materialTransferLayout.cargo[i], materialTransferLayout.workArea[i],
-                                 releaseHeights[i], delays, false, &plan.anglesDeg[2 * i])) return false;
+                                 releaseHeights[i], delays, false, &plan.anglesDeg[2 * i], 2)) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;
@@ -472,7 +473,7 @@ bool DemoStackCargoToWorkArea3() {
                       i + 1, i + 1, releaseHeights[i]);
         const auto &delays = cargoToWorkAreaDelays[i][i];
         if (!executeWorkTransfer(materialTransferLayout.cargo[i], materialTransferLayout.workArea[i],
-                                 releaseHeights[i], delays, false, &plan.anglesDeg[2 * i])) return false;
+                                 releaseHeights[i], delays, false, &plan.anglesDeg[2 * i], 3)) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;
@@ -563,7 +564,7 @@ bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
     Serial.printf("[Material] cargo %u -> work area %u layer 2, material %u\n",
                   cargoCode, workAreaCode, cargo.material);
     const auto &delays = cargoToWorkAreaDelays[cargoCode - 1][workAreaCode - 1];
-    if (!executeWorkTransfer(source, destination, secondLayerHeight, delays, false)) return false;
+    if (!executeWorkTransfer(source, destination, secondLayerHeight, delays, false, nullptr, 2)) return false;
     cargo.material = MATERIAL_NONE;
     return true;
 }
@@ -626,7 +627,7 @@ bool PlaceTaskCargoToWorkArea(
         const auto &delays = cargoToWorkAreaDelays[i][workAreaCode - 1];
         if (!executeWorkTransfer(materialTransferLayout.cargo[i],
                                  materialTransferLayout.workArea[workAreaCode - 1],
-                                 releaseHeights[i], delays, false, &plan.anglesDeg[2 * i])) return false;
+                                 releaseHeights[i], delays, false, &plan.anglesDeg[2 * i], layer)) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
     return true;

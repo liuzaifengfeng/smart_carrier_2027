@@ -159,7 +159,7 @@ bool ReadArmTurretAngle(float &angle);
 // 其他三轴仍以 -1 跳过；速度、计时、保护和返回值含义与 MoveArm 相同。
 /**
  * @brief 按已规划的多圈绝对转台目标发令，不再选择最近等效角；其他轴的-1仍表示跳过。
- * @param turretRampMs 转台加速、减速各自时长(ms)，抓取20，放料500。
+ * @param turretRampMs 转台加速、减速各自时长(ms)，第一层放料全程500，收料、第二层叠放及圆盘全程20。
  * @return true 指令下发成功，不表示实测到位。
  */
 bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed, uint16_t turretRampMs=600);

@@ -271,8 +271,10 @@ void navigationTick() {
         }
     }
     auto &base=PositionNodeRunner();
-    const bool visualPose=r.observation==ArmObservation::LOOK||r.observation==ArmObservation::LOOK2||r.observation==ArmObservation::LOOK4;
-    if(r.observation!=ArmObservation::NONE&&join.shouldStartArm(join.chassisDone,visualPose&&base.observationApproach())) {
+    const bool visualPose=r.observation==ArmObservation::LOOK||r.observation==ArmObservation::LOOK2;
+    // 返家LOOK4等最后平移结束，在终点旋转前展开；其他视觉姿态仍提前准备。
+    const bool prepareArm=r.observation==ArmObservation::LOOK4?base.finalTurnApproach():visualPose&&base.observationApproach();
+    if(r.observation!=ArmObservation::NONE&&join.shouldStartArm(join.chassisDone,prepareArm)) {
         MotionRequest pose;pose.kind=MotionKind::ARM_POSE;pose.observation=r.observation;pose.zone=r.zone;
         if(!beginArm(pose))return;
     }
