@@ -97,14 +97,14 @@
           "integer": false
         },
         "搬运/工作区2/伸出(mm)": {
-          "value": 5.0,
+          "value": 7.0,
           "description": "工作区2：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区2/转台(deg)": {
-          "value": 84.1999969,
+          "value": 85.0,
           "description": "工作区2：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -118,14 +118,14 @@
           "integer": false
         },
         "搬运/载物台3/伸出(mm)": {
-          "value": 21.8999996,
+          "value": 23.0,
           "description": "载物台3：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/载物台3/转台(deg)": {
-          "value": 299.5,
+          "value": 300.0,
           "description": "载物台3：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -146,7 +146,7 @@
           "integer": false
         },
         "搬运/工作区3/转台(deg)": {
-          "value": 123.199997,
+          "value": 123.0,
           "description": "工作区3：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -170,7 +170,7 @@
           "value": 300.0,
           "description": "上位机单轴试动作的默认速度；自动抓放流程使用下方各步骤独立速度。升降/伸缩驱动速度为value*3；舵机时间参数为(300-value)*10。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/夹爪张开(deg)": {
@@ -233,77 +233,77 @@
           "value": 400.0,
           "description": "圆盘抓取第1步：升降、伸缩、转台和张爪共用的 MoveArm 速度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/圆盘夹紧": {
           "value": 300.0,
           "description": "圆盘抓取第2步：夹紧夹爪的 MoveArm 速度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/圆盘提起": {
           "value": 400.0,
           "description": "圆盘抓取第3步：升至圆盘提起高度的 MoveArm 速度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/移至工位平移": {
           "value": 300.0,
           "description": "每次取料/放料前：升至安全高度、伸向目标并设置夹爪角度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/移至工位转向": {
           "value": 250.0,
           "description": "每次取料/放料前：在安全高度转向目标工位。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/取料下降": {
           "value": 300.0,
           "description": "从载物台或工作区取料：下降到工位高度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/取料夹紧": {
           "value": 250.0,
           "description": "从载物台或工作区取料：夹紧夹爪。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/取料提起": {
           "value": 300.0,
           "description": "从载物台或工作区取料：升至安全高度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/放料下降": {
           "value": 300.0,
           "description": "放入载物台或工作区：下降到目标高度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/放料松爪": {
           "value": 250.0,
           "description": "放入载物台或工作区：张开夹爪。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         },
         "搬运/速度/放料提起": {
           "value": 300.0,
           "description": "放入载物台或工作区：升至安全高度。",
           "minimum": 1.0,
-          "maximum": 3.4028234663852886e+38,
+          "maximum": 3.40282347e+38,
           "integer": false
         }
       }
@@ -480,7 +480,7 @@
           "integer": false
         }
       }
-    },   
+    },
     "对齐": {
       "description": "视觉闭环的容许误差与最大轮速。进入死区表示该方向误差已足够小。",
       "parameters": {
@@ -499,7 +499,7 @@
           "integer": false
         },
         "对齐/DISC/角度死区(deg)": {
-          "value": 0.6,
+          "value": 0.600000024,
           "description": "圆盘整体对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -562,7 +562,7 @@
           "integer": false
         },
         "对齐/WORK_AREA_LOADED/角度死区(deg)": {
-          "value": 0.1,
+          "value": 0.100000001,
           "description": "载物工作区对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -583,7 +583,7 @@
           "integer": false
         },
         "对齐/CORNER/角度死区(deg)": {
-          "value": 0.6,
+          "value": 0.600000024,
           "description": "角点/归位对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
@@ -727,14 +727,14 @@
           "value": 0,
           "description": "仅反馈模式生效：夹爪实测到位后的独立夹持保持时间。计时模式沿用动作组夹紧延时。",
           "minimum": 0.0,
-          "maximum": 4294967295,
+          "maximum": 4294967300.0,
           "integer": true
         },
         "运动执行/反馈后释放保持(ms)": {
           "value": 0,
           "description": "仅反馈模式生效：夹爪实测到位后的独立释放保持时间。计时模式沿用动作组松爪延时。",
           "minimum": 0.0,
-          "maximum": 4294967295,
+          "maximum": 4294967300.0,
           "integer": true
         }
       }
