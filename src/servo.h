@@ -49,6 +49,7 @@
 #define FSUS_CMD_SET_ANGLE_MTURN    0x0D// 多圈绝对角度控制
 #define FSUS_CMD_SET_ANGLE_MTURN_INTERVAL 0x0E // 高级多圈角度控制（基于时间）
 #define FSUS_CMD_RESET_TURNS        0x11// 重置当前累计圈数（不转动）
+#define FSUS_CMD_SET_ORIGIN        0x17// 将当前位置设置为舵机原点
 #define FSUS_CMD_STOP              0x18// 停止/释放/保持锁力
 
 // 状态返回值
@@ -124,6 +125,8 @@ bool Servo_QueryAngleMTurn(uint8_t servoId, float &currentAngle, uint32_t timeou
 // 先释放锁力，再重置累计圈数，随后在当前位置恢复锁力并回读。
 // 仅改变舵机的多圈计数，不下发旋转目标；返回 true 表示回读成功。
 bool Servo_ResetTurnCount(uint8_t servoId, float &newAngle);
+/** @brief 发送设置当前位置为原点指令(0x17，reset=0)，返回是否已下发，不代表舵机确认。 */
+bool Servo_SetOrigin(uint8_t servoId);
 
 /**
  * @brief 检测舵机是否在线 (Ping)

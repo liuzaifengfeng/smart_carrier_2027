@@ -93,7 +93,11 @@ void traceVisionFirstFrame(VisionStartMode){}
 void traceVision(VisionStartMode,bool){}
 bool updateDisplay(const char *,const char *,const char *){return true;}
 void sendPoseQueryReply(){++poseQueries;Serial.println("{RSP,POSE,GET,OK,0,0,0,0,0,0,0}");}
+uint8_t originId=255;
+bool Servo_SetOrigin(uint8_t id){originId=id;return true;}
 void CalibrateH30MapHeading(float){++calibrations;}
+bool headingCollecting=false;
+bool H30UsbHeadingAverageActive(){return headingCollecting;}
 const char *H30UsbGetAttitude(H30Attitude &,uint32_t &age){age=0;return nullptr;}
 const char *H30UsbGetHeading(float &heading,uint32_t &age){heading=180;age=0;return nullptr;}
 bool LedPwm_IsReady(){return true;}
@@ -154,6 +158,9 @@ void positions() {
     dispatch("{CMD,CHASSIS,MOVE,0,0,1}");assert(!active&&cancels==1&&!roundProgress);
 }
 void maintenance() {
+    dispatch("{CMD,ARM,SERVO_ZERO,2}");assert(originId==2);
+    assert(Serial.text.find("{RSP,ARM,SERVO_ZERO,ISSUED,2}")!=std::string::npos);
+
     dispatch("{CMD,ARM,INIT_START}");assert(captured.kind==MotionKind::ARM_POSE&&active);
     dispatch("{CMD,IMU,GET}");dispatch("{CMD,POSE,GET}");dispatch("{CMD,CFG,GET,7}");assert(active&&poseQueries==1&&configQueries==1);
     dispatch("{CMD,ARM,DEMO1}");assert(submissions==1&&Serial.text.find("ERR,BUSY")!=std::string::npos);
@@ -165,12 +172,14 @@ void maintenance() {
     assert(captured.vision==static_cast<uint8_t>(VisionStartMode::WORK_AREA_LOADED));
 }
 void lidar() {
+    headingCollecting=true;serialDebugMode=false;dispatch("{CMD,VISION,LIDAR_POSE}");
+    assert(!active&&submissions==0);headingCollecting=false;
     serialDebugMode=false;dispatch("{CMD,VISION,LIDAR_POSE}");
-    assert(active&&submissions==1&&calibrations==1&&captured.kind==MotionKind::LIDAR_POSE);
+    assert(active&&submissions==1&&calibrations==0&&captured.kind==MotionKind::LIDAR_POSE);
     assert(SubmitLidarPoseAction(false,false)==result.id&&submissions==1); // 主流程接续同一作业。
     dispatch("{CMD,POSE,GET}");assert(poseQueries==1);
     finish();CompleteLidarPose(true,false);
-    dispatch("{CMD,VISION,LIDAR_POSE}");assert(submissions==1&&calibrations==1);
+    dispatch("{CMD,VISION,LIDAR_POSE}");assert(submissions==1&&calibrations==0);
     assert(Serial.text.find("LIDAR_POSE_DONE")!=std::string::npos);
 }
 void trial() {

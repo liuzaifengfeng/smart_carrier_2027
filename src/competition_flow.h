@@ -31,6 +31,10 @@ struct CompetitionIO {
      * @brief 读取当前选择的起始区号；主流程在启动准备时锁定返家区号。
      */
     virtual uint8_t zone()=0;
+    /** @brief 开始机械臂初始化后的静置3秒及采集3秒航向标定，不阻塞主流程。 */
+    virtual void beginHeadingCalibration()=0;
+    /** @brief 查询标定窗口是否结束；成功时由运行层闪灯两次。 */
+    virtual bool headingCalibrationDone()=0;
     /**
      * @brief 查询正式比赛启动许可，许可到达后开始计时并进入扫码。
      */
@@ -106,7 +110,7 @@ struct CompetitionIO {
 // 对外 RobotState 保持原编号和日志名称；下面的 Phase 把每个大状态展开为可直接阅读的小阶段。
 class CompetitionFlow {
     enum class Phase {
-        START_PREPARE_ARM, START_WAIT_ZONE, START_PREPARE_LIDAR, START_WAIT_PERMISSION,
+        START_PREPARE_ARM, START_CALIBRATE_HEADING, START_WAIT_ZONE, START_PREPARE_LIDAR, START_WAIT_PERMISSION,
         SCAN_TASK,
         DISC_NAVIGATE, DISC_ALIGN, DISC_PREPARE_GRAB, DISC_GRAB_MATERIALS,
         COARSE_NAVIGATE, COARSE_ALIGN, COARSE_PLACE,
@@ -222,7 +226,14 @@ public:
         switch(phase) {
         // ---------- 启动准备：收臂、锁定起始区、准备扫码姿态、等待启动 ----------
         case Phase::START_PREPARE_ARM:
-            if(motion(pose(ArmObservation::START))==1) { // 提交收臂动作，完成后才等待起始区。
+            if(motion(pose(ArmObservation::START))==1) { // 收臂程序完成后先静置3秒，再采集3秒Yaw。
+                io.beginHeadingCalibration();
+                phase=Phase::START_CALIBRATE_HEADING;
+                io.display("IMU CALIBRATING");
+            }
+            break;
+        case Phase::START_CALIBRATE_HEADING:
+            if(io.headingCalibrationDone()) {
                 phase=Phase::START_WAIT_ZONE;
                 io.display("WAIT start_zone");
             }

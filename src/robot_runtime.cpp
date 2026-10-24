@@ -222,14 +222,15 @@ uint32_t SubmitLidarPoseAction(bool fromCommand,bool allowRepeat) {
         if(fromCommand)Serial.println("{RSP,VISION,LIDAR_POSE,ERR,BUSY}");
         xSemaphoreGive(xLidarPoseMutex);return fromCommand?0:releasePoseId;
     }
-    if(MotionExecutorActive()){if(fromCommand)Serial.println("{RSP,VISION,LIDAR_POSE,ERR,BUSY}");xSemaphoreGive(xLidarPoseMutex);return 0;}
+    // 采样期间复用忙碌应答，保持底盘静止；退出前释放姿态互斥量。
+    if(H30UsbHeadingAverageActive()||MotionExecutorActive()){if(fromCommand)Serial.println("{RSP,VISION,LIDAR_POSE,ERR,BUSY}");xSemaphoreGive(xLidarPoseMutex);return 0;}
     if(!allowRepeat&&!releasePoseInitialized) {
         switch(currentStartZone) {
         case START_ZONE_1: currentPose={2250,150,START_ZONE_HEADING};break;
         case START_ZONE_2: currentPose={150,150,START_ZONE_HEADING};break;
         default: xSemaphoreGive(xLidarPoseMutex);return 0;
         }
-        CalibrateH30MapHeading(currentPose.theta);releasePoseInitialized=true;
+        releasePoseInitialized=true; // 保留初始化后的3秒平均航向参考。
     }
     MotionRequest request;request.kind=MotionKind::LIDAR_POSE;request.zone=static_cast<uint8_t>(currentStartZone);request.debug=allowRepeat;
     strcpy(request.category,"VISION");strcpy(request.command,"LIDAR_POSE");

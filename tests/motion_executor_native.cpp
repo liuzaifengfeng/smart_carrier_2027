@@ -64,6 +64,9 @@ struct Runtime : CompetitionIO {
     void state(RobotState value)override{current=value;}
     bool aborted()override{return abort;}
     uint8_t zone()override{return startZone;}
+    bool calibrationStarted=false,calibrationReady=true;
+    void beginHeadingCalibration()override{assert(!pending);calibrationStarted=true;}
+    bool headingCalibrationDone()override{return calibrationReady;}
     bool permission()override{return runPermission;}
     int progress()override{return progressValue;}
     void clearProgress()override{progressValue=0;}
@@ -158,11 +161,21 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
     }
     assert(paths==7&&places==4&&retrieves==2);
 }
+void calibrationWait() {
+    Runtime r;r.startZone=1;r.calibrationReady=false;
+    CompetitionFlow flow(r,CompetitionMap{});
+    flow.tick();assert(!r.calibrationStarted);r.complete();flow.tick();
+    assert(r.calibrationStarted&&r.requests.size()==1);
+    for(int i=0;i<600;++i){r.time+=10;flow.tick();assert(r.requests.size()==1&&r.starts==0);}
+    r.calibrationReady=true;
+    for(int i=0;i<3;++i)flow.tick();
+    assert(r.requests.size()==2&&r.requests.back().kind==MotionKind::LIDAR_POSE);
+}
 void failedStartupDoesNotStart() {
     if(STARTUP_LIDAR_SCAN_ENABLED)return;
     for(uint8_t zone:{1,2}) {
         Runtime r;r.startZone=zone;CompetitionFlow flow(r,CompetitionMap{});
-        flow.tick();r.complete();flow.tick();flow.tick();flow.tick();
+        flow.tick();r.complete();flow.tick();flow.tick();flow.tick();flow.tick();
         assert(r.requests.back().kind==MotionKind::LIDAR_POSE&&r.starts==0);
         r.complete(false);flow.tick();
         assert(r.current==STATE_TRANSFER_FAILED&&r.starts==0&&!r.runPermission);
@@ -174,7 +187,7 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"join"))join();
     else if(!strcmp(argv[1],"launch"))launch();
     else if(!strcmp(argv[1],"polling"))polling();
-    else if(!strcmp(argv[1],"startup"))failedStartupDoesNotStart();
+    else if(!strcmp(argv[1],"startup")){calibrationWait();failedStartupDoesNotStart();}
     else if(!strcmp(argv[1],"rounds")){fullFlow(1);fullFlow(2);}
     else if(!strcmp(argv[1],"failures")) {
         for(auto kind:{MotionKind::ARM_POSE,MotionKind::SCAN_TASK,MotionKind::NAVIGATE,MotionKind::PLACE_ROUND,

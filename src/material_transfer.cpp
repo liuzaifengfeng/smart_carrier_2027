@@ -197,7 +197,7 @@ bool placeAt(const MaterialStationPose &pose, float targetHeight,
                           delays.placeAbove, plannedAngle, turretRampMs)) return false;
     // 缩回后的搬运在转向后同时伸出、下降；其他放料仍沿用原先的垂直下降。
     if (!MoveArm(targetHeight, fromRetracted ? pose.length : -1.0f, -1,
-                 materialTransferLayout.clawClosedAngle, materialMotionSteps.placeDescendSpeed)) return false;
+                 materialTransferLayout.clawClosedAngle, materialMotionSteps.placeDescendSpeed, turretRampMs, turretRampMs==500)) return false;
     waitForArm(delays.placeDescendMs);
     if (!MoveArm(-1, -1, -1, materialTransferLayout.clawOpenAngle, materialMotionSteps.placeReleaseSpeed)) return false;
     waitForArm(delays.placeReleaseMs);

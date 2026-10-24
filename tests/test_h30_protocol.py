@@ -12,6 +12,10 @@ class H30ProtocolTests(unittest.TestCase):
     def test_heading_reference_at_compile_time(self):
         self.compile_fixture("h30_heading_compile.cpp")
 
+    def test_three_second_circular_heading_average(self):
+        from native_support import build_native, run_native
+        run_native(build_native("heading-average", ["tests/h30_heading_average_native.cpp"]))
+
     def compile_fixture(self, fixture):
         root = Path(__file__).resolve().parents[1]
         compiler = Path(os.environ.get("PLATFORMIO_CORE_DIR", Path.home() / ".platformio")) / (

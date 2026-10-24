@@ -333,3 +333,13 @@ void Servo_Stop(uint8_t servoId) {
         Servo_SetDamping(servoId, 500);
     }
 }
+
+// 厂商设置原点指令：ID、reset=0；与重置多圈圈数(0x11)不同。
+bool Servo_SetOrigin(uint8_t servoId) {
+    ServoBusGuard guard;
+    if(!guard.locked)return false;
+    const uint8_t content[2]={servoId,0};
+    sendPacket(FSUS_CMD_SET_ORIGIN,content,sizeof(content));
+    s_servoSerial->flush();
+    return true;
+}

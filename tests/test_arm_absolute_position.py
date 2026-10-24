@@ -21,7 +21,7 @@ class ArmAbsolutePositionTests(unittest.TestCase):
         names = ("ARM_HEIGHT_LIMIT_MM", "TURRET_CABLE_MIN_DEG", "TURRET_CABLE_MAX_DEG")
         limits = "\n".join(re.search(r"constexpr float " + name + r"\s*=[^;]+;",
                                       header).group() for name in names)
-        move = move.replace("uint16_t turretRampMs)", "uint16_t turretRampMs=600)")
+        move = move.replace("uint16_t turretRampMs, bool slowLower)", "uint16_t turretRampMs=600, bool slowLower=false)")
         harness = r'''
 #include <stdint.h>
 #include <float.h>
@@ -37,7 +37,7 @@ struct Log {
     template<class... A> constexpr void printf(const char*, A...) {}
 };
 struct Pose { float high=0, length=0, turret_angle=0, pawl_angle=0; };
-struct Command { uint8_t addr=0, dir=0; uint32_t pulses=0; bool absolute=false, sync=false; uint16_t rpm=0; };
+struct Command { uint8_t addr=0, dir=0; uint32_t pulses=0; bool absolute=false, sync=false; uint16_t rpm=0; uint8_t acceleration=0; };
 struct Run {
     bool taskMotionAborted=false;
     Log Serial;
@@ -49,9 +49,9 @@ struct Run {
     constexpr void Servo_SetAngleMTurn(int, float, float, int) {}
     constexpr void Servo_SetAngleMTurnByInterval(int, float, uint32_t,
                                                 uint16_t, uint16_t, uint16_t) {}
-    constexpr void Emm_V5_Pos_Control(uint8_t addr, uint8_t dir, uint16_t rpm, uint8_t,
+    constexpr void Emm_V5_Pos_Control(uint8_t addr, uint8_t dir, uint16_t rpm, uint8_t acceleration,
                                       uint32_t pulses, bool absolute, bool sync) {
-        commands[count++]={addr, dir, pulses, absolute, sync, rpm};
+        commands[count++]={addr, dir, pulses, absolute, sync, rpm, acceleration};
     }
     MOVE_ARM
 };
@@ -92,6 +92,15 @@ constexpr bool speedWithoutArtificialLimit() {
     return large.MoveArm(10, 10, -1, -1, FLT_MAX) && large.count==2
         && large.commands[0].rpm==UINT16_MAX && large.commands[1].rpm==UINT16_MAX;
 }
+constexpr bool gentlePlacement() {
+    Run normal, slow;
+    if(!normal.MoveArm(2.5f,61,-1,-1,250,500) || !slow.MoveArm(2.5f,61,-1,-1,250,500,true))return false;
+    return slow.commands[0].rpm==normal.commands[0].rpm/2
+        && normal.commands[0].acceleration==252 && slow.commands[0].acceleration==248
+        && slow.commands[1].rpm==normal.commands[1].rpm
+        && slow.commands[0].pulses==normal.commands[0].pulses;
+}
+static_assert(gentlePlacement(), "only placement lift axis halves RPM and physical acceleration");
 static_assert(speedWithoutArtificialLimit(), "valid speed maps directly to protocol RPM");
 static_assert(cacheIndependent(), "descending/repeated/stale-cache absolute targets");
 static_assert(zeroAndSkip(), "absolute zero, sentinel and travel limits");

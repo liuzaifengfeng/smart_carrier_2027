@@ -13,6 +13,13 @@ from upper_computer import (
 
 
 class FrameTests(unittest.TestCase):
+    def test_servo_origin_command(self):
+        self.assertEqual(build_debug_command("SERVO_ZERO", ["2"]), "{CMD,ARM,SERVO_ZERO,2}")
+        self.assertEqual(build_debug_command("SERVO_ZERO", ["1"]), "{CMD,ARM,SERVO_ZERO,1}")
+        for values in (["254"], ["1.5"], ["2", "0"]):
+            with self.assertRaises(ValueError):
+                build_debug_command("SERVO_ZERO", values)
+
     def test_alignment_feedback_status_does_not_claim_physical_arrival(self):
         app = UpperComputerApp.__new__(UpperComputerApp)
         app.vision_request_var = Mock()

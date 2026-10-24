@@ -6,6 +6,16 @@ from upper_computer import build_led_command, build_led_frequency_command, parse
 
 
 class LedTests(unittest.TestCase):
+    def test_calibration_lamp_flashes_twice_and_restores_brightness(self):
+        import re
+        from native_support import ROOT, build_native, run_native
+        cache = ROOT / ".pio/motion-native"
+        cache.mkdir(parents=True, exist_ok=True)
+        source = (ROOT / "src/led_pwm.h").read_text(encoding="utf-8") + "\n" + (ROOT / "src/led_pwm.cpp").read_text(encoding="utf-8")
+        source = re.sub(r"^#(?:include|pragma).*\n", "", source, flags=re.M)
+        (cache / "led_pwm_actual.inc").write_text(source, encoding="utf-8")
+        run_native(build_native("led-effects", ["tests/led_pwm_native.cpp"]))
+
     def test_commands_and_invalid_values(self):
         self.assertEqual(build_led_command(), "{CMD,LED,GET}")
         for value in (0, 1, 50, 99, 100):

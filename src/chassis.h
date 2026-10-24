@@ -146,8 +146,9 @@ void ResetAlignmentWait();
 // 返回值表示所请求的控制命令是否全部成功下发，不代表机构已物理到位。
 // 契约：目标在机械行程内，速度为正；RPM 在写入协议时饱和。
 // 串口和参数入口负责校验；-1 跳过对应轴。
+// slowLower仅将升降轴转速及实际加速度减半，伸缩、转台和夹爪保持原参数。
 // turretRampMs 为2号转台加速、减速各自时间(ms)，由动作阶段传入；不改变夹爪参数。
-bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed, uint16_t turretRampMs=600);
+bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed, uint16_t turretRampMs=600, bool slowLower=false);
 
 // 读取2号转台实际多圈角度并检查线缆范围；失败时不改写 angle，也不更新目标缓存。
 /**
@@ -162,7 +163,7 @@ bool ReadArmTurretAngle(float &angle);
  * @param turretRampMs 转台加速、减速各自时长(ms)，第一层放料全程500，收料、第二层叠放及圆盘全程20。
  * @return true 指令下发成功，不表示实测到位。
  */
-bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed, uint16_t turretRampMs=600);
+bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed, uint16_t turretRampMs=600, bool slowLower=false);
 
 // @brief 机械臂初始化归零位
 /**

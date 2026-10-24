@@ -38,3 +38,6 @@ uint32_t LedPwm_GetFrequency();
  * @brief 周期更新三连爆闪和渐强故障光效；fault=true时覆盖实际输出，故障解除后恢复设定亮度。
  */
 void LedPwm_UpdateFaultBlink(bool fault);
+
+/** @brief 标定成功后用补光灯闪两次，亮灭各200ms，结束恢复设定亮度；不阻塞。 */
+void LedPwm_BlinkCalibrationComplete();

@@ -37,14 +37,15 @@ class ServoMultiturnIntervalTests(unittest.TestCase):
         source = (ROOT / "src/servo.cpp").read_text(encoding="utf-8")
         header = (ROOT / "src/servo.h").read_text(encoding="utf-8")
         names = ("FSUS_PACK_REQ_HEADER", "FSUS_CMD_SET_ANGLE_MTURN",
-                 "FSUS_CMD_SET_ANGLE_MTURN_INTERVAL")
+                 "FSUS_CMD_SET_ANGLE_MTURN_INTERVAL", "FSUS_CMD_SET_ORIGIN")
         constants = "\n".join(re.search(r"(?m)^#define " + name + r"\s+0x[0-9A-Fa-f]+",
                                          header).group() for name in names)
         actual = "\n".join(function_source(source, signature) for signature in (
             "static void sendPacket(", "void Servo_SetAngleMTurn(",
-            "void Servo_SetAngleMTurnByInterval("))
+            "void Servo_SetAngleMTurnByInterval(", "bool Servo_SetOrigin("))
         actual = actual.replace("static void sendPacket(", "constexpr void sendPacket(")
         actual = actual.replace("void Servo_SetAngle", "constexpr void Servo_SetAngle")
+        actual = actual.replace("bool Servo_SetOrigin", "constexpr bool Servo_SetOrigin")
         # C++14 constexpr 要求局部数组初始化；运行时原函数会逐字节写满数组。
         actual = re.sub(r"uint8_t content\[(\d+)\];", r"uint8_t content[\1] = {};", actual)
         harness = r'''
@@ -54,6 +55,7 @@ struct ServoBusGuard { bool locked=true; };
 struct Port {
     uint8_t bytes[32]={};
     int count=0;
+    constexpr void flush() {}
     constexpr int available() const { return 0; }
     constexpr int read() { return -1; }
     constexpr void write(uint8_t b) { bytes[count++]=b; }
@@ -100,6 +102,12 @@ constexpr bool legacyClawPacket() {
     const uint8_t expected[]={0x12,0x4C,0x0D,0x0B,1,0xF4,1,0,0,0xF4,1,0,0,0,0,0x61};
     return matches(r.port, expected);
 }
+constexpr bool originPacket() {
+    Run r;if(!r.Servo_SetOrigin(2))return false;
+    const uint8_t expected[]={0x12,0x4C,0x17,0x02,0x02,0x00,0x79};
+    return matches(r.port,expected);
+}
+static_assert(originPacket(), "set origin ID2, reset=0 and checksum");
 static_assert(officialExample(), "official 0x0E example, length and checksum");
 static_assert(requestedExample(), "ID 2, 180 degrees, 1050/100/300 ms");
 static_assert(signedAngleAndWideTime(), "signed 32-bit angle and little-endian field widths");
@@ -118,7 +126,7 @@ static_assert(legacyClawPacket(), "ID 1 retains simple multiturn packet");
             "bool MoveArm(", "bool MoveArmPlanned("))
         actual = re.sub(r"(?:static )?bool (ReadArmTurretAngle|MoveArmInternal|MoveArm|MoveArmPlanned)\(",
                         r"constexpr bool \1(", actual)
-        actual = actual.replace("uint16_t turretRampMs)", "uint16_t turretRampMs=600)")
+        actual = actual.replace("uint16_t turretRampMs, bool slowLower)", "uint16_t turretRampMs=600, bool slowLower=false)")
         harness = r'''
 #include <stdint.h>
 LIMITS

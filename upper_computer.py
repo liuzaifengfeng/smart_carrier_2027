@@ -1494,6 +1494,7 @@ COMMAND_FIELDS = {
     "MoveArm_1": (("大臂高度", "-1"), ("伸缩距离", "-1"), ("速度", "80")),
     "MoveArm_2": (("舵盘角度", "-1"), ("夹爪角度", "-1"), ("速度", "80")),
     "SERVO": (("舵机 ID", "1"), ("角度", "0")),
+    "SERVO_ZERO": (("舵机 ID（1夹爪、2转台）", "2"),),
 }
 
 # WASD 键与 Movepose 方向参数的对应关系。
@@ -1597,12 +1598,13 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
         require_range_or_skip(0, TURRET_CABLE_MIN_DEG, TURRET_CABLE_MAX_DEG, "舵盘角度")
         require_range_or_skip(1, -360.0, 360.0, "夹爪角度")
         require_range(2, 1.0, 3.4028234663852886e38, "速度")
-    elif command == "SERVO":
+    elif command in ("SERVO", "SERVO_ZERO"):
         require_range(0, 0.0, 253.0, "舵机 ID")
-        require_range(1,
-                      TURRET_CABLE_MIN_DEG if values[0] == 2 else -135.0,
-                      TURRET_CABLE_MAX_DEG if values[0] == 2 else 135.0,
-                      "舵机角度")
+        if command == "SERVO":
+            require_range(1,
+                          TURRET_CABLE_MIN_DEG if values[0] == 2 else -135.0,
+                          TURRET_CABLE_MAX_DEG if values[0] == 2 else 135.0,
+                          "舵机角度")
         if not values[0].is_integer():
             raise ValueError("舵机 ID 必须是整数")
         integer_indexes = {0}
@@ -1616,6 +1618,7 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
         "MoveArm_1": ("ARM", "MOVE1"),
         "MoveArm_2": ("ARM", "MOVE2"),
         "SERVO": ("ARM", "SERVO"),
+        "SERVO_ZERO": ("ARM", "SERVO_ZERO"),
         "En_C": ("ARM", "ENABLE"),
     }[command]
     return build_frame("CMD", category, action, *tokens)
@@ -3097,6 +3100,16 @@ class UpperComputerApp:
             justify=tk.LEFT,
             wraplength=285,
         ).pack(anchor="w", pady=(7, 0))
+        zero_group = ttk.LabelFrame(arm_tab, text="舵机零点设置", padding=7)
+        zero_group.pack(fill=tk.X, pady=(10, 0))
+        zero_id = tk.StringVar(value="2")
+        self.command_vars["SERVO_ZERO"] = [zero_id]
+        ttk.Label(zero_group, text="舵机 ID（1夹爪、2转台）：").pack(anchor="w")
+        ttk.Entry(zero_group, textvariable=zero_id, width=8).pack(anchor="w", pady=3)
+        ttk.Button(zero_group, text="将当前位置设为零点",
+                   command=lambda: self.send_command("SERVO_ZERO")).pack(fill=tk.X)
+        ttk.Label(zero_group, text="仅Debug模式。将所选舵机当前位置定义为0°，会改变后续角度目标的基准。",
+                  wraplength=285).pack(anchor="w", pady=(5, 0))
         for variable in self.arm_vars.values():
             variable.trace_add("write", self.preview_arm_pose)
         self.preview_arm_pose()
@@ -4164,6 +4177,11 @@ class UpperComputerApp:
                     self.parameter_panel.disconnected()
                     self.led_status.set("设备启动或模式改变，请重新查询亮度")
                 self._accept_target_echo(text)
+                if fields is not None and fields[:3] == ("RSP", "ARM", "SERVO_ZERO"):
+                    if len(fields) == 5 and fields[3] == "ISSUED":
+                        self.arm_status_var.set(f"舵机{fields[4]}设置零点指令已下发，请回读实测角度确认。")
+                    elif len(fields) == 5 and fields[3] == "ERR":
+                        self.arm_status_var.set(f"设置零点失败：{fields[4]}（MODE需Debug模式，BUSY表示动作执行中）。")
                 self._accept_pose_response(text)
                 self._accept_imu_response(text)
             if kind == "ERROR":

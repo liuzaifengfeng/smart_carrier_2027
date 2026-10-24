@@ -48,12 +48,13 @@ void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelay
 /**
  * @brief 构建放料转向、下降、松爪及抬升序列；height为实际层高，retracted表示小臂已缩回。
  */
-void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle) {
+void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle,bool slowLower=false) {
     if(retracted) {
         wait(p,"PLACE_TRANSLATE_WAIT",d.placeAbove.translateMs);wait(p,"PLACE_SETTLE",d.placeAbove.settleMs);
         arm(p,"PLACE_ROTATE",-1,-1,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,d.placeAbove.rotateMs,angle);
     } else above(p,pose,materialTransferLayout.clawClosedAngle,d.placeAbove,angle);
     arm(p,"PLACE_DESCEND",height,retracted?pose.length:-1,-1,materialTransferLayout.clawClosedAngle,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+    p.steps[p.count-1].slowLower=slowLower;
     arm(p,"PLACE_RELEASE",-1,-1,-1,materialTransferLayout.clawOpenAngle,materialMotionSteps.placeReleaseSpeed,d.placeReleaseMs,false,ARM_RELEASE_HOLD_MS);
     arm(p,"PLACE_LIFT",materialTransferLayout.approachHeight,-1,-1,-1,materialMotionSteps.placeLiftSpeed,d.placeLiftMs);
 }
@@ -89,7 +90,7 @@ const char *transfer(const MotionRequest &r,Program &p) {
         const auto &source=retrieve?work:cargo,&destination=retrieve?cargo:work;
         const float height=destination.high+(retrieve?0:(r.layer-1)*materialTransferLayout.secondLayerOffset);
         pick(p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i]);
-        place(p,destination,height,d,true,&selected.anglesDeg[2*i+1]);
+        place(p,destination,height,d,true,&selected.anglesDeg[2*i+1],!retrieve&&r.layer==1);
         commit(p,cargos[i],retrieve?(demo?MATERIAL_RED:single?r.color:r.colors[i]):MATERIAL_NONE);
     }
     return nullptr;

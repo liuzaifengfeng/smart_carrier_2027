@@ -20,8 +20,8 @@ const char *MotionHardware::issue(const Step &s) {
     if(cancelled())return "STOPPED";
     switch(s.kind) {
     case StepKind::ARM:
-        return (s.planned?MoveArmPlanned(s.high,s.length,s.turret,s.pawl,s.speed,s.turretRampMs):
-            MoveArm(s.high,s.length,s.turret,s.pawl,s.speed,s.turretRampMs))?nullptr:"EXECUTION";
+        return (s.planned?MoveArmPlanned(s.high,s.length,s.turret,s.pawl,s.speed,s.turretRampMs,s.slowLower):
+            MoveArm(s.high,s.length,s.turret,s.pawl,s.speed,s.turretRampMs,s.slowLower))?nullptr:"EXECUTION";
     case StepKind::POSITION: return BeginPositionMove(s.high,s.length,s.turret,s.speed)?nullptr:"EXECUTION";
     case StepKind::GOTO: GotoPose(s.high,s.length,s.turret,true);break;
     case StepKind::TURRET_READY: turretStarted=millis();break;

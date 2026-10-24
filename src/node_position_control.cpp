@@ -324,7 +324,7 @@ void Runner::tick() {
         for(uint8_t id=2;id<=4;++id)if(travelPulses[id-1]>travelPulses[representative-1])representative=id;
         representativePulses=0;previousRepresentativeRpm=0;
         representativeMoved=representativeStopped=comparisonReported=false;
-        unitsPerDistance=ppm*65536/PULSES_PER_REV;tolerance=rotating?unitsPerDistance*.25:STRAIGHT_ARRIVAL_ENCODER_TOLERANCE;
+        unitsPerDistance=ppm*65536/PULSES_PER_REV;tolerance=rotating?unitsPerDistance*.4:STRAIGHT_ARRIVAL_ENCODER_TOLERANCE;
         hardLimit=rotating?unitsPerDistance*3:fmax(unitsPerDistance*10,2*STRAIGHT_ARRIVAL_ENCODER_TOLERANCE);
         stage=MOVE;break;
     case MOVE: moveTick();break;

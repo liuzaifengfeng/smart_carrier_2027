@@ -80,6 +80,12 @@ public:
      * @brief 读取当前选择的起始区号；主流程在启动准备时锁定返家区号。
      */
     uint8_t zone()override{return static_cast<uint8_t>(currentStartZone);}
+    void beginHeadingCalibration()override{H30UsbBeginHeadingAverage(START_ZONE_HEADING);}
+    bool headingCalibrationDone()override {
+        const int result=H30UsbPollHeadingAverage();
+        if(result==1)LedPwm_BlinkCalibrationComplete();
+        return result!=0;
+    }
     /**
      * @brief 查询正式比赛启动许可，许可到达后开始计时并进入扫码。
      */

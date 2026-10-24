@@ -93,7 +93,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"IMU", "GET"},
         {"IMU", "HEADING"},
         {"CHASSIS", "MOVE"}, {"CHASSIS", "MOVE_POSITION"},
-        {"ARM", "MOVE1"}, {"ARM", "MOVE2"}, {"ARM", "SERVO"},
+        {"ARM", "MOVE1"}, {"ARM", "MOVE2"}, {"ARM", "SERVO"}, {"ARM", "SERVO_ZERO"},
         {"ARM", "ENABLE"}, {"ARM", "DEMO1"}, {"ARM", "DEMO2"}, {"ARM", "DEMO3"},
         {"ARM", "DEMO4"}, {"ARM", "TRANSFER"}, {"ARM", "RETRIEVE"},
         {"ARM", "INIT_START"}, {"ARM", "INIT_LOOK"}, {"ARM", "INIT_LOOK2"},
@@ -498,7 +498,7 @@ static void serialDispatch(const SerialFrame &frame) {
         if (serialDebugMode) {
             currentPose = zone == 1 ? RobotPose{2250, 150, START_ZONE_HEADING}
                                    : RobotPose{150, 150, START_ZONE_HEADING};
-            CalibrateH30MapHeading(currentPose.theta);
+            // 只更新地图初始位姿，不覆盖初始化后的3秒平均航向参考。
         }
         Serial.printf("{RSP,NAV,START_ZONE,OK,%u}\n", static_cast<unsigned>(zone));
     } else if (frame.starts("NAV", "ROUTE")) {
@@ -687,6 +687,12 @@ static void serialDispatch(const SerialFrame &frame) {
         Serial.printf("{RSP,ARM,%s,ACK,%.3f,%.3f,%.3f}\n", frame.fields[2],
                       values[0], values[1], values[2]);
         LaunchMotion(id);
+    } else if (frame.is("ARM", "SERVO_ZERO", 1)) {
+        if (!serialDebugMode) { serialError(frame, "MODE"); return; }
+        uint32_t id=0;
+        if(!serialUInt(frame.fields[3],id,253)){serialError(frame,"RANGE");return;}
+        if(!Servo_SetOrigin(id)){serialError(frame,"SERVO_WRITE");return;}
+        Serial.printf("{RSP,ARM,SERVO_ZERO,ISSUED,%u}\n",static_cast<unsigned>(id));
     } else if (frame.is("ARM", "SERVO", 2)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         uint32_t id = 0;

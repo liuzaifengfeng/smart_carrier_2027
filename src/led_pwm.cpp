@@ -11,13 +11,16 @@ SemaphoreHandle_t pwmMutex = nullptr;
 bool faultBlink = false;
 uint8_t faultEffectBrightness = 0;
 uint32_t faultEffectStartMs = 0;
+bool calibrationBlink = false;
+uint32_t calibrationBlinkStartMs = 0;
+uint8_t calibrationEffectBrightness = 100;
 class PwmLock {
 public:
     PwmLock() { if (pwmMutex) xSemaphoreTake(pwmMutex, portMAX_DELAY); }
     ~PwmLock() { if (pwmMutex) xSemaphoreGive(pwmMutex); }
 };
 void applyBrightness() {
-    const uint32_t percent = faultBlink ? faultEffectBrightness : brightness;
+    const uint32_t percent = faultBlink ? faultEffectBrightness : calibrationBlink ? calibrationEffectBrightness : brightness;
     ledcWrite(LED_PWM_CHANNEL, (percent * maxDuty + 50) / 100);
 }
 
@@ -128,6 +131,12 @@ void LedPwm_UpdateFaultBlink(bool fault) {
     PwmLock lock;
     if (!ready) return;
     const uint32_t now = millis();
+    if(calibrationBlink) {
+        const uint32_t elapsed=now-calibrationBlinkStartMs;
+        if(fault||elapsed>=800)calibrationBlink=false;
+        else calibrationEffectBrightness=(elapsed/200)%2==0?100:0;
+        if(!fault){faultBlink=false;applyBrightness();return;}
+    }
     if (fault) {
         if (!faultBlink) {
             faultBlink = true;
@@ -142,4 +151,10 @@ void LedPwm_UpdateFaultBlink(bool fault) {
         faultEffectBrightness = 0;
         applyBrightness();
     }
+}
+
+void LedPwm_BlinkCalibrationComplete() {
+    PwmLock lock;
+    calibrationBlinkStartMs=millis();calibrationEffectBrightness=100;calibrationBlink=true;
+    applyBrightness();
 }

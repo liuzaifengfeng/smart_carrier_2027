@@ -8,6 +8,9 @@ portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 H30Attitude latest;
 H30HeadingReference headingReference; // 与 latest 共用 mux，标定与采样原子一致
 uint32_t headingReferenceVersion=0;
+H30HeadingAverage headingAverage;
+bool headingAverageActive=false,headingAverageSettling=false;
+float headingAverageMap=180;
 bool initialized = false, online = false, valid = false;
 usb_host_client_handle_t client = nullptr;
 usb_device_handle_t device = nullptr;
@@ -57,6 +60,7 @@ void received(usb_transfer_t *transfer) {
         if (valid && sample.receivedAtMs - latest.receivedAtMs > 200) {
             headingReference.reset();++headingReferenceVersion;
         }
+        if(headingAverageActive)headingAverage.add(sample);
         latest = sample;
         valid = true;
         portEXIT_CRITICAL(&mux);
@@ -337,4 +341,38 @@ const char *H30UsbGetMotionSnapshot(H30Attitude &sample,float &heading,uint32_t 
     if(!error&&(sample.fields&7)!=7)error="MOTION_FIELDS_REQUIRED";
     if(!error&&!headingReference.get(sample.yaw,heading))error="NOT_CALIBRATED";
     portEXIT_CRITICAL(&mux);return error;
+}
+
+void H30UsbBeginHeadingAverage(float mapHeading) {
+    portENTER_CRITICAL(&mux);
+    headingAverage.begin(millis(),3000);headingAverageMap=mapHeading;
+    headingAverageActive=headingAverageSettling=true;
+    headingReference.reset();++headingReferenceVersion;
+    portEXIT_CRITICAL(&mux);
+    Serial.println("{EVT,IMU,REFERENCE_SETTLE,BEGIN,3000}");
+}
+int H30UsbPollHeadingAverage() {
+    portENTER_CRITICAL(&mux);
+    const bool collecting=headingAverageSettling&&headingAverage.collecting(millis());
+    if(collecting)headingAverageSettling=false;
+    portEXIT_CRITICAL(&mux);
+    if(collecting)Serial.println("{EVT,IMU,REFERENCE_COLLECT,BEGIN,3000}");
+    portENTER_CRITICAL(&mux);
+    if(!headingAverage.elapsed(millis())){portEXIT_CRITICAL(&mux);return 0;}
+    headingAverageActive=false;
+    const uint32_t count=headingAverage.count();
+    const float yaw=headingAverage.yaw(),heading=headingAverageMap;
+    const bool ready=headingAverage.ready(millis());
+    uint32_t age=0;
+    const char *sourceError=headingSampleError(age);
+    const bool ok=!sourceError&&ready&&headingReference.calibrate(yaw,heading);
+    ++headingReferenceVersion;
+    portEXIT_CRITICAL(&mux);
+    Serial.printf("{EVT,IMU,REFERENCE_COLLECT,END,%lu,%.3f}\n",static_cast<unsigned long>(count),yaw);
+    if(ok)Serial.printf("{EVT,IMU,REFERENCE,OK,%.3f}\n",heading);
+    else Serial.printf("{EVT,IMU,REFERENCE,ERR,%s}\n",sourceError?sourceError:(count?"NOT_STATIONARY":"NO_STATIONARY_DATA"));
+    return ok?1:-1;
+}
+bool H30UsbHeadingAverageActive() {
+    portENTER_CRITICAL(&mux);const bool active=headingAverageActive;portEXIT_CRITICAL(&mux);return active;
 }
