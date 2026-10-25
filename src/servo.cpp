@@ -26,12 +26,12 @@ static HardwareSerial *s_servoSerial = &Serial2;
  * Byte 4 .. 4+ContentSize-1: Content
  * Byte Last: Checksum = (0x12 + 0x4C + CmdId + ContentSize + Sum(Content)) % 256
  */
-static void sendPacket(uint8_t cmdId, const uint8_t *content, uint8_t contentSize) {
+static void sendPacket(uint8_t cmdId, const uint8_t *content, uint8_t contentSize, uint16_t header = FSUS_PACK_REQ_HEADER) {
     ServoBusGuard guard;
     if (!guard.locked) return;
 
-    uint8_t headerLow = FSUS_PACK_REQ_HEADER & 0xFF;         // 0x12
-    uint8_t headerHigh = (FSUS_PACK_REQ_HEADER >> 8) & 0xFF; // 0x4C
+    uint8_t headerLow = header & 0xFF;
+    uint8_t headerHigh = (header >> 8) & 0xFF;
 
     uint16_t sum = headerLow + headerHigh + cmdId + contentSize;
     for (uint8_t i = 0; i < contentSize; i++) {
@@ -270,6 +270,36 @@ bool Servo_QueryAngleMTurn(uint8_t servoId, float &currentAngle, uint32_t timeou
                   static_cast<unsigned>(servoId), static_cast<unsigned>(res),
                   static_cast<unsigned>(rxLen));
     return false;
+}
+
+/** @brief 厂家进阶参数协议：13 4D帧头，C5读取ID及25字节参数块。 */
+static bool readPidBlock(uint8_t servoId, uint8_t block[32]) {
+    sendPacket(0xC5, &servoId, 1, 0x4D13);
+    uint8_t length=0;
+    return receivePacket(0xC5,block,&length,100)==FSUS_STATUS_SUCCESS
+        &&length==26&&block[0]==servoId;
+}
+
+bool Servo_ReadPid(uint8_t servoId, uint16_t values[7]) {
+    ServoBusGuard guard;if(!guard.locked)return false;
+    uint8_t block[32];if(!readPidBlock(servoId,block))return false;
+    for(uint8_t i=0;i<7;++i)values[i]=block[1+2*i]|(uint16_t(block[2+2*i])<<8);
+    return true;
+}
+
+bool Servo_WritePid(uint8_t servoId, const uint16_t values[7]) {
+    ServoBusGuard guard;if(!guard.locked)return false;
+    uint8_t block[32];if(!readPidBlock(servoId,block))return false;
+    for(uint8_t i=0;i<7;++i){block[1+2*i]=values[i]&0xFF;block[2+2*i]=values[i]>>8;}
+    // 沿用厂家调试工具的解锁顺序，未公开的11字节参数保持原值。
+    const uint8_t release[]={servoId,0x10,0,0};sendPacket(FSUS_CMD_STOP,release,4);
+    s_servoSerial->flush();vTaskDelay(pdMS_TO_TICKS(60));
+    sendPacket(0xC4,block,26,0x4D13);s_servoSerial->flush();
+    // 参数写入后留300ms，再恢复锁力并由串口命令回读，避免紧接着查询无应答。
+    vTaskDelay(pdMS_TO_TICKS(300));
+    const uint8_t hold[]={servoId,0x11,0,0};sendPacket(FSUS_CMD_STOP,hold,4);
+    s_servoSerial->flush();
+    return true;
 }
 
 bool Servo_ResetTurnCount(uint8_t servoId, float &newAngle) {

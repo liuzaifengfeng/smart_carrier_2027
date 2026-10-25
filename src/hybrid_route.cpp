@@ -124,6 +124,7 @@ const char *Route::buildHybrid(const Node *nodes,const Config &cfg) {
         if(norm(entry-cursor)>0.001f){
             if(segmentCount>=MAX_SEGMENTS)return "PATH_TOO_LONG";
             line(cursor,entry);segments[segmentCount-1].h0=segments[segmentCount-1].h1=heads[edge];
+            segments[segmentCount-1].middle=nodes[edge].middle||nodes[i].middle;
         }
         if(i+1<cfg.count) {
             if(trim[i]>0) {

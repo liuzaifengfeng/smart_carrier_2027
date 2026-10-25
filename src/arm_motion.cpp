@@ -15,6 +15,11 @@ namespace {
 void arm(Program &p,const char *name,float h,float l,float t,float claw,float speed,uint32_t wait=0,bool planned=false,uint32_t hold=0) {
     Step s;s.kind=StepKind::ARM;s.name=name;s.high=h;s.length=l;s.turret=t;s.pawl=claw;s.speed=speed;s.waitMs=wait;s.planned=planned;s.holdMs=hold;s.turretRampMs=20;p.append(s);
 }
+/** @brief 追加转台到位检查步骤，忽略旧旋转延时；其他轴仍只发令。 */
+void rotateArm(Program &p,const char *name,float h,float l,float t,float claw,float speed,bool planned=false) {
+    arm(p,name,h,l,t,claw,speed,0,planned);
+    p.steps[p.count-1].turretArrival=true;
+}
 /**
  * @brief 向Program追加纯等待步骤，ms为等待毫秒数，不操作机构。
  */
@@ -33,14 +38,14 @@ void position(Program &p,float x,float y,float theta,float speed){Step s;s.kind=
 void above(Program &p,const MaterialStationPose &pose,float claw,const MaterialApproachDelays &d,const float *angle) {
     arm(p,"APPROACH_TRANSLATE",materialTransferLayout.approachHeight,pose.length,-1,claw,materialMotionSteps.approachTranslateSpeed,d.translateMs);
     wait(p,"APPROACH_SETTLE",d.settleMs);
-    arm(p,"APPROACH_ROTATE",materialTransferLayout.approachHeight,pose.length,angle?*angle:pose.turretAngle,claw,materialMotionSteps.approachRotateSpeed,d.rotateMs,angle);
+    rotateArm(p,"APPROACH_ROTATE",materialTransferLayout.approachHeight,pose.length,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,angle);
 }
 /**
  * @brief 构建到位、下降、夹紧、抬升及可选缩回的取料序列；retract和together选择缩回衔接方式。
  */
 void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelays &d,bool retract,bool together,const float *angle) {
     above(p,pose,materialTransferLayout.clawOpenAngle,d.pickAbove,angle);
-    arm(p,"PICK_DESCEND",pose.high,-1,-1,materialTransferLayout.clawOpenAngle,materialMotionSteps.pickDescendSpeed,d.pickDescendMs);
+    arm(p,"PICK_DESCEND",pose.high,-1,-1,-1,materialMotionSteps.pickDescendSpeed,d.pickDescendMs);
     arm(p,"PICK_GRIP",-1,-1,-1,materialTransferLayout.clawClosedAngle,materialMotionSteps.pickGripSpeed,d.pickGripMs,false,ARM_GRIP_HOLD_MS);
     arm(p,"PICK_LIFT",materialTransferLayout.approachHeight,together?0:-1,-1,-1,materialMotionSteps.pickLiftSpeed,d.pickLiftMs);
     if(retract&&!together)arm(p,"PICK_RETRACT",-1,0,-1,-1,materialMotionSteps.pickLiftSpeed);
@@ -51,16 +56,16 @@ void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelay
 void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle,bool slowLower=false) {
     if(retracted) {
         wait(p,"PLACE_TRANSLATE_WAIT",d.placeAbove.translateMs);wait(p,"PLACE_SETTLE",d.placeAbove.settleMs);
-        arm(p,"PLACE_ROTATE",-1,-1,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,d.placeAbove.rotateMs,angle);
-    } else above(p,pose,materialTransferLayout.clawClosedAngle,d.placeAbove,angle);
+        rotateArm(p,"PLACE_ROTATE",-1,-1,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,angle);
+    } else above(p,pose,-1,d.placeAbove,angle); // 已夹紧物料，移位和下降不再重复操作夹爪。
     if(slowLower) {
-        arm(p,"PLACE_DESCEND_10",10,retracted?pose.length:-1,-1,materialTransferLayout.clawClosedAngle,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+        arm(p,"PLACE_DESCEND_10",10,retracted?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
         p.steps[p.count-1].slowLower=true;
         p.steps[p.count-1].timed=true; // 原下降延时结束后下发最后10mm，不查到位反馈。
         arm(p,"PLACE_DESCEND",0,-1,-1,-1,materialMotionSteps.placeDescendSpeed,100);
         p.steps[p.count-1].slowLower=true;
         p.steps[p.count-1].timed=true;
-    } else arm(p,"PLACE_DESCEND",height,retracted?pose.length:-1,-1,materialTransferLayout.clawClosedAngle,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+    } else arm(p,"PLACE_DESCEND",height,retracted?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
     if(slowLower) { // 仅工位第一层：先卸去夹紧力，300ms后再完全张开。
         arm(p,"PLACE_RELEASE_ZERO",-1,-1,-1,0,materialMotionSteps.placeReleaseSpeed,300);
         p.steps[p.count-1].timed=true;
@@ -113,18 +118,18 @@ void observation(Program &p,ArmObservation pose,uint8_t zone) {
     const uint32_t liftWait=static_cast<uint32_t>(lroundf(fabsf(170.0f-currentArm.high)*1500.0f/170.0f));
     switch(pose) {
     case ArmObservation::START:
-        arm(p,"INIT_LIFT",160,-1,-1,0,300,800);arm(p,"INIT_TURN",-1,-1,-55,-1,300,100);arm(p,"INIT_RETRACT",154,40,-1,0,300,500);break;
+        arm(p,"INIT_LIFT",160,-1,-1,0,300,800);rotateArm(p,"INIT_TURN",-1,-1,-55,-1,300);arm(p,"INIT_RETRACT",154,40,-1,0,300,500);break;
     case ArmObservation::LOOK:
-        arm(p,"LOOK_LIFT",170,0,-1,60,200,liftWait);arm(p,"LOOK_TURN",-1,0,90,80,200,100);arm(p,"LOOK_READY",170,-1,-1,80,200);break;
+        arm(p,"LOOK_LIFT",170,0,-1,60,200,liftWait);rotateArm(p,"LOOK_TURN",-1,0,90,80,200);arm(p,"LOOK_READY",170,-1,-1,80,200);break;
     case ArmObservation::LOOK2:
-        arm(p,"LOOK2_LIFT",170,0,-1,-1,200,liftWait);arm(p,"LOOK2_TURN",-1,0,90,80,200);break;
+        arm(p,"LOOK2_LIFT",170,0,-1,-1,200,liftWait);rotateArm(p,"LOOK2_TURN",-1,0,90,80,200);break;
     case ArmObservation::LOOK3: {
-        arm(p,"LOOK3_LIFT",170,40,-1,-1,300,liftWait);arm(p,"LOOK3_TURN",-1,-1,90,80,300);
+        arm(p,"LOOK3_LIFT",170,40,-1,-1,300,liftWait);rotateArm(p,"LOOK3_TURN",-1,-1,90,80,300);
         Step s;s.kind=StepKind::TURRET_READY;s.name="LOOK3_MEASURED_READY";s.turret=90;s.waitMs=1500;p.append(s);break;
     }
     case ArmObservation::LOOK4:
-        arm(p,"LOOK4_LIFT",170,120,-1,-1,200,liftWait);arm(p,"LOOK4_TURN",-1,-1,90,80,200);
-        arm(p,"LOOK4_READY",-1,-1,zone==1?45:135,90,200,500);break;
+        arm(p,"LOOK4_LIFT",170,120,-1,-1,200,liftWait);rotateArm(p,"LOOK4_TURN",-1,-1,90,80,200);
+        rotateArm(p,"LOOK4_READY",-1,-1,zone==1?45:135,90,200);break;
     default: break;
     }
 }
@@ -159,8 +164,7 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
             if(r.kind!=MotionKind::HELD_DISC) {
                 if(r.position>=1&&r.position<=3) {
                     const float length=r.position==2?0:150,angle=r.position==1?71:r.position==2?90:102;
-                    arm(p,"DISC_APPROACH",120,length,angle,80,armSpeed,r.position==3?200:300);
-                    arm(p,"DISC_DESCEND",80,length,angle,80,armSpeed,300);
+                    arm(p,"DISC_APPROACH",80,length,angle,80,armSpeed,r.position==3?400:500);
                     arm(p,"DISC_GRIP",80,length,angle,-8,armSpeed,commonMaterialDelays.pickGripMs,false,ARM_GRIP_HOLD_MS);
                     arm(p,"DISC_LIFT",materialTransferLayout.approachHeight,0,-1,-1,armSpeed,commonMaterialDelays.pickLiftMs);
                 } else if(r.position==4||r.kind==MotionKind::LOAD_ROUND)pick(p,materialTransferLayout.disc,commonMaterialDelays,false,true,nullptr);
@@ -182,7 +186,7 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         position(p,125,r.zone==1?100:-100,0,200);
         if(!STARTUP_LIDAR_SCAN_ENABLED)break; // 临时跳过雷达机械臂姿态，保留底盘斜移及其位姿更新。
         if(r.zone==1) {
-            arm(p,"LIDAR_LIFT",170,100,-1,-1,200);arm(p,"LIDAR_TURN",-1,-1,45,-1,200,materialAuxiliaryDelays.lidarZone1TurnMs);
+            arm(p,"LIDAR_LIFT",170,100,-1,-1,200);rotateArm(p,"LIDAR_TURN",-1,-1,45,-1,200);
             arm(p,"LIDAR_LOWER",0,100,-1,-1,200,materialAuxiliaryDelays.lidarZone1LiftMs);
         } else {
             arm(p,"LIDAR_LIFT",170,100,135,-1,200,materialAuxiliaryDelays.lidarZone2LiftMs);

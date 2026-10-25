@@ -270,6 +270,8 @@ bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float fi
     // 与正常扫码MovePosition一致：车身X用X_PULSE，车身Y用Y_PULSE。
     cfg.forwardPpm=Y_PULSE;cfg.lateralPpm=X_PULSE;
     formalSettings.speedMmS=speedMmS;formalSettings.accelMmS2=cfg.accel;
+    formalSettings.middleSpeedMmS=NODE_PATH_MIDDLE_SPEED_MM_S;
+    formalSettings.middleAccelMmS2=NODE_PATH_MIDDLE_ACCEL_MM_S2;
     formalSettings.turnDegS=NODE_PATH_TURN_DEG_S;
     formalSettings.turnAccelDegS2=NODE_PATH_TURN_ACCEL_DEG_S2;
     formalSettings.headingDeadbandDeg=NODE_PATH_HEADING_DEADBAND_DEG;
@@ -277,7 +279,8 @@ bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float fi
     for(size_t i=0;i<count&&!error;++i) {
         float x=0,y=0;
         if(!ChassisGetNodePosition(path[i],x,y))error="NODE";
-        else {nodes[i]=Node{};nodes[i].p={x,y};}
+        else {nodes[i]=Node{};nodes[i].p={x,y};
+            nodes[i].middle=path[i]==7||path[i]==11||path[i]==12||path[i]==13||path[i]==17;}
         if(i&&!adjacent(path[i-1],path[i]))error="NOT_ADJACENT";
         if(i&&!error) {
             Vec d=nodes[i].p-nodes[i-1].p;
@@ -297,6 +300,8 @@ bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float fi
     Serial.printf("[Route] Transition window: disabled; separate heading correction deadband: %.2f deg\n",formalSettings.headingDeadbandDeg);
     Serial.printf("[Route] Profile: %.1f mm/s, %.1f mm/s2, %.1f deg/s, %.1f deg/s2\n",
         formalSettings.speedMmS,formalSettings.accelMmS2,formalSettings.turnDegS,formalSettings.turnAccelDegS2);
+    Serial.printf("[Route] Middle profile (7/11/12/13/17): %.1f mm/s, %.1f mm/s2\n",
+        formalSettings.middleSpeedMmS,formalSettings.middleAccelMmS2);
     formalSettings.startOffset={};
     if(scanPosePending&&path[0]==SCAN_AREA_NODE) {
         formalSettings.startOffset=Vec(currentPose.x,currentPose.y)-nodes[0].p;

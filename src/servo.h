@@ -128,6 +128,11 @@ bool Servo_ResetTurnCount(uint8_t servoId, float &newAngle);
 /** @brief 先释放锁力、设置原点(0x17，reset=0)、再恢复锁力；返回是否已下发。 */
 bool Servo_SetOrigin(uint8_t servoId);
 
+/** @brief 查询内部调节参数，顺序为Kp、Kd、Ki、PwmBias、HoldKp、HoldKd、HoldPwmBias。 */
+bool Servo_ReadPid(uint8_t servoId, uint16_t values[7]);
+/** @brief 保留参数块其他字节，释放锁力后写入7个调节参数，等待300ms再恢复锁力。 */
+bool Servo_WritePid(uint8_t servoId, const uint16_t values[7]);
+
 /**
  * @brief 检测舵机是否在线 (Ping)
  * @param servoId 舵机 ID

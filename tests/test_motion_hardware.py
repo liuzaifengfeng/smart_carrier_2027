@@ -15,3 +15,6 @@ def build_motion_hardware():
 class MotionHardwareTests(unittest.TestCase):
     def test_feedback_requires_actual_position_flags_and_both_servo_angles(self):
         run_native(build_motion_hardware(), "feedback")
+
+    def test_rotation_finishes_on_measured_multiturn_target_only(self):
+        run_native(build_motion_hardware(), "turret")

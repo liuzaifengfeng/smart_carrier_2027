@@ -13,6 +13,21 @@ from upper_computer import (
 
 
 class FrameTests(unittest.TestCase):
+    def test_servo_pid_commands_and_readback(self):
+        self.assertEqual(build_debug_command("SERVO_PID_GET", ["2"]), "{CMD,ARM,SERVO_PID_GET,2}")
+        values = ["2", "100", "20", "3", "4", "50", "6", "7"]
+        self.assertEqual(build_debug_command("SERVO_PID_SET", values), "{CMD,ARM,SERVO_PID_SET,2,100,20,3,4,50,6,7}")
+        for value in ("-1", "65536", "1.5"):
+            with self.assertRaises(ValueError):
+                build_debug_command("SERVO_PID_SET", ["2", value, *values[2:]])
+        app = UpperComputerApp.__new__(UpperComputerApp)
+        app.servo_pid_id = Mock(); app.servo_pid_id.get.return_value = "2"
+        app.servo_pid_values = [Mock() for _ in range(7)]
+        app.servo_pid_status = Mock()
+        app._accept_servo_pid_response(("RSP", "ARM", "SERVO_PID_GET", "READBACK", *values))
+        for variable, value in zip(app.servo_pid_values, values[1:]):
+            variable.set.assert_called_once_with(value)
+
     def test_servo_origin_command(self):
         self.assertEqual(build_debug_command("SERVO_ZERO", ["2"]), "{CMD,ARM,SERVO_ZERO,2}")
         self.assertEqual(build_debug_command("SERVO_ZERO", ["1"]), "{CMD,ARM,SERVO_ZERO,1}")

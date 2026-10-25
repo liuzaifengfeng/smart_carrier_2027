@@ -49,6 +49,22 @@ void look3() {
     servoAvailable=false;clockMs=100;hardware.issue(s);clockMs=1599;assert(!hardware.ready(s,done)&&!done);
     clockMs=1600;assert(hardware.ready(s,done));
 }
+void turretArrival() {
+    MotionHardware hardware;hardware.configure(19,cancelled);
+    motion::Step s;s.kind=motion::StepKind::ARM;s.turretArrival=true;s.turret=350;
+    // 底层选择-10°等效目标，必须比较真实多圈值，而非请求的350°或最近目标缓存。
+    currentArm.turret_angle=-10;turretMeasured=-50;ARM_FEEDBACK_ENABLED=0;
+    assert(!hardware.issue(s)&&hardware.feedback(s));bool done=false;
+    assert(!hardware.ready(s,done)&&!done);
+    currentArm.turret_angle=99; // 发令后缓存变化不应改变本步骤保存的目标。
+    turretMeasured=-15.1f;assert(!hardware.ready(s,done)&&!done);
+    turretMeasured=-15;assert(!hardware.ready(s,done)&&done);
+    turretMeasured=-5;assert(!hardware.ready(s,done)&&done);
+    turretMeasured=-4.9f;assert(!hardware.ready(s,done)&&!done);
+    turretMeasured=350;assert(!hardware.ready(s,done)&&!done); // 不把错圈当作到位。
+    servoAvailable=false;assert(hardware.ready(s,done));servoAvailable=true;
+    stop=true;assert(hardware.ready(s,done));stop=false;
+}
 void feedback() {
     MotionHardware hardware;hardware.configure(1,cancelled);
     motion::Step s;s.kind=motion::StepKind::ARM;s.high=100;s.length=20;s.turret=90;s.pawl=50;s.speed=200;
@@ -68,5 +84,5 @@ void feedback() {
     assert(!hardware.issue(s)&&cargoPlatforms[0].material==MATERIAL_LIGHT_BLUE);
 }
 int main(int argc,char **argv) {
-    assert(argc==2);if(!strcmp(argv[1],"look3"))look3();else if(!strcmp(argv[1],"feedback"))feedback();else assert(false);
+    assert(argc==2);if(!strcmp(argv[1],"look3"))look3();else if(!strcmp(argv[1],"feedback"))feedback();else if(!strcmp(argv[1],"turret"))turretArrival();else assert(false);
 }

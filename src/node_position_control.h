@@ -7,6 +7,7 @@ constexpr float PULSES_PER_REV=3200; // 要求底盘驱动配置为16细分，�
 constexpr double STRAIGHT_ARRIVAL_ENCODER_TOLERANCE=5000; // 每轮65536单位/圈坐标中的允许误差
 struct Settings {
     float speedMmS=2000,accelMmS2=2000,turnDegS=200,turnAccelDegS2=400,headingDeadbandDeg=1;
+    float middleSpeedMmS=2000,middleAccelMmS2=2000;
     continuous::Vec startOffset; // 扫码停车位置相对首节点的偏移，并入首段四轮位置目标。
 };
 struct Motor {uint8_t flags=0;int64_t position=0;int16_t rpm=0;}; // 位置：65536单位/圈
@@ -231,8 +232,14 @@ public:
      * @brief 判断是否进入最终进站平移前的准备阶段，用于提前展开视觉观察姿态。
      */
     bool observationApproach() const { return active()&&stage!=START&&stage!=QUIET&&index>=observationIndex; }
-    /** @brief 最终平移完成、准备执行终点转向；角点观察姿态仅在这里同步展开。 */
-    bool finalTurnApproach() const { return active()&&action==FINAL&&stage==ALIGN; }
+    /** @brief 最后平移完成，在路径末尾转向或终点校角开始前同步展开角点观察姿态。 */
+    bool finalTurnApproach() const {
+        if(!active()||stage!=ALIGN)return false;
+        if(action==FINAL)return true;
+        if(action!=ROTATION)return false;
+        for(size_t i=after;i<route->segmentCount;++i)if(route->segments[i].kind!=continuous::ROTATE)return false;
+        return true;
+    }
     /**
      * @brief 返回当前平移动作剩余距离(mm)；运行中由代表轮转速估算，结束时由四轮位置校准。
      */

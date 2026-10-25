@@ -15,8 +15,8 @@ volatile bool taskMotionAborted=false;
 uint32_t ARM_FEEDBACK_ENABLED=0,ARM_GRIP_HOLD_MS=37,ARM_RELEASE_HOLD_MS=41;
 float MOTION_LOOK_LEAD_MM=0,MOTION_LOOK2_LEAD_MM=0;
 int armSpeed=500;
-bool angleAvailable=true;
-bool ReadArmTurretAngle(float &angle){angle=170;return angleAvailable;}
+bool angleAvailable=true;float measuredTurret=170;
+bool ReadArmTurretAngle(float &angle){angle=measuredTurret;return angleAvailable;}
 uint32_t SubmitMotion(const MotionRequest &,bool){return 1;}
 bool WaitMotion(uint32_t){return false;}
 bool MovePosition(float,float,float,float,bool (*)()){return true;}
@@ -25,12 +25,14 @@ std::vector<uint32_t> armWaits;
 void vTaskDelay(uint32_t ticks){armWaits.push_back(ticks);}
 bool MoveArm(float high,float length,float turret,float pawl,float speed,uint16_t ramp,bool slowLower) {
     motion::Step s;s.high=high;s.length=length;s.turret=turret;s.pawl=pawl;s.speed=speed;s.turretRampMs=ramp;s.slowLower=slowLower;
+    if(turret!=-1){currentArm.turret_angle=turret;measuredTurret=turret;}
     issuedArm.push_back(s);return true;
 }
 bool MoveArmPlanned(float high,float length,float turret,float pawl,float speed,uint16_t ramp,bool slowLower) {
     return MoveArm(high,length,turret,pawl,speed,ramp,slowLower);
 }
 float NODE_PATH_ACCEL_MM_S2=2000,NODE_PATH_TURN_DEG_S=300,NODE_PATH_TURN_ACCEL_DEG_S2=400,NODE_PATH_HEADING_DEADBAND_DEG=1;
+float NODE_PATH_MIDDLE_SPEED_MM_S=3000,NODE_PATH_MIDDLE_ACCEL_MM_S2=2000;
 struct Entry {std::string name;void *address;bool integer;float minimum,maximum;};
 std::vector<Entry> entries;
 void RegisterRuntimeFloat(const char *name,float &value,float minimum,float maximum){entries.push_back({name,&value,false,minimum,maximum});}
@@ -51,6 +53,8 @@ void forward() {
         bool release=false,retract=false;int commits=0,partialReleases=0;
         for(size_t i=0;i<p.count;++i) {
             const auto &s=p.steps[i];
+            if(!strcmp(s.name,"APPROACH_ROTATE")||!strcmp(s.name,"PICK_DESCEND")||!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_10"))assert(s.pawl==-1);
+            if(!strcmp(s.name,"APPROACH_ROTATE")||!strcmp(s.name,"PLACE_ROTATE"))assert(s.turretArrival&&s.waitMs==0);
             if(s.kind==motion::StepKind::ARM)assert(s.turretRampMs==(layer==1?500:20));
             assert(s.slowLower==((!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_10"))&&layer==1));
             if(s.slowLower)assert(s.timed);
@@ -108,13 +112,13 @@ void discs() {
     const auto &d=commonMaterialDelays;
     auto checkTail=[&](const motion::Program &p,size_t start,uint8_t cargo) {
         const char *names[]={"PLACE_TRANSLATE_WAIT","PLACE_SETTLE","PLACE_ROTATE","PLACE_DESCEND","PLACE_RELEASE","PLACE_LIFT","CARGO_COMMIT"};
-        const uint32_t waits[]={d.placeAbove.translateMs,d.placeAbove.settleMs,d.placeAbove.rotateMs,d.placeDescendMs,d.placeReleaseMs,d.placeLiftMs,0};
+        const uint32_t waits[]={d.placeAbove.translateMs,d.placeAbove.settleMs,0,d.placeDescendMs,d.placeReleaseMs,d.placeLiftMs,0};
         for(size_t i=0;i<7;++i){assert(!strcmp(p.steps[start+i].name,names[i]));assert(p.steps[start+i].waitMs==waits[i]);}
         const auto &lift=p.steps[start-1],&turn=p.steps[start+2],&down=p.steps[start+3];
         const auto &target=materialTransferLayout.cargo[cargo-1];
         assert(lift.high==165&&lift.length==0&&lift.turret==-1&&lift.pawl==-1&&lift.waitMs==d.pickLiftMs);
         assert(turn.high==-1&&turn.length==-1&&turn.pawl==-1&&near(turn.turret,target.turretAngle)&&!turn.planned);
-        assert(near(down.high,target.high)&&near(down.length,target.length)&&down.turret==-1);
+        assert(near(down.high,target.high)&&near(down.length,target.length)&&down.turret==-1&&down.pawl==-1);
         assert(p.steps[start+4].pawl==materialTransferLayout.clawOpenAngle&&p.steps[start+4].holdMs==41);
         assert(p.steps[start+5].high==165&&p.steps[start+5].length==-1);
         const auto &last=p.steps[start+6];assert(last.kind==motion::StepKind::COMMIT&&last.cargo==cargo&&last.color==6);
@@ -129,10 +133,11 @@ void discs() {
         if(pos>=1&&pos<=3) {
             const float angle=pos==1?71:pos==2?90:102,length=pos==2?0:150;
 
-            assert(p.steps[0].high==120&&p.steps[1].high==80&&p.steps[2].pawl==-8);
-            assert(p.steps[0].waitMs==(pos==3?200:300)&&p.steps[1].waitMs==300);
-            for(int i=0;i<3;++i)assert(p.steps[i].turret==angle&&p.steps[i].length==length&&p.steps[i].speed==armSpeed);
-            assert(p.steps[3].speed==armSpeed);
+            assert(p.count==10);
+            assert(p.steps[0].high==80&&p.steps[0].pawl==80&&p.steps[1].high==80&&p.steps[1].pawl==-8);
+            assert(p.steps[0].waitMs==(pos==3?400:500));
+            for(int i=0;i<2;++i)assert(p.steps[i].turret==angle&&p.steps[i].length==length&&p.steps[i].speed==armSpeed);
+            assert(p.steps[2].speed==armSpeed);
         } else if(pos==0) {
             assert(p.steps[0].high==materialMotionSteps.discApproach.high);
             assert(p.steps[0].waitMs==materialAuxiliaryDelays.discApproachMs);
@@ -155,11 +160,11 @@ void discs() {
         const size_t start=issuedArm.size()-5;
         assert(issuedArm[start].high==165&&issuedArm[start].length==0&&issuedArm[start].turret==-1&&issuedArm[start].pawl==-1);
         assert(issuedArm[start+1].high==-1&&issuedArm[start+1].length==-1&&near(issuedArm[start+1].turret,target.turretAngle));
-        assert(near(issuedArm[start+2].high,target.high)&&near(issuedArm[start+2].length,target.length)&&issuedArm[start+2].turret==-1);
+        assert(near(issuedArm[start+2].high,target.high)&&near(issuedArm[start+2].length,target.length)&&issuedArm[start+2].turret==-1&&issuedArm[start+2].pawl==-1);
         assert(issuedArm[start+3].pawl==materialTransferLayout.clawOpenAngle&&issuedArm[start+4].high==165);
-        const uint32_t waits[]={d.pickLiftMs,d.placeAbove.translateMs,d.placeAbove.settleMs,d.placeAbove.rotateMs,d.placeDescendMs,d.placeReleaseMs,d.placeLiftMs};
-        assert(armWaits.size()>=7);
-        for(int i=0;i<7;++i)assert(armWaits[armWaits.size()-7+i]==waits[i]);
+        const uint32_t waits[]={d.pickLiftMs,d.placeAbove.translateMs,d.placeAbove.settleMs,d.placeDescendMs,d.placeReleaseMs,d.placeLiftMs};
+        assert(armWaits.size()>=6);
+        for(int i=0;i<6;++i)assert(armWaits[armWaits.size()-6+i]==waits[i]);
         assert(cargoPlatforms[cargo-1].material==6);
     }
     commonMaterialDelays=saved;materialTransferLayout.approachHeight=savedHeight;
@@ -177,8 +182,8 @@ void poses() {
     for(auto pose:{ArmObservation::START,ArmObservation::LOOK,ArmObservation::LOOK2,ArmObservation::LOOK3}) {
         MotionRequest r;r.kind=MotionKind::ARM_POSE;r.observation=pose;
         motion::Program p;assert(!BuildArmProgram(r,p));
-        if(pose==ArmObservation::START)assert(p.steps[0].waitMs==800&&p.steps[1].waitMs==100&&p.steps[2].waitMs==500);
-        if(pose==ArmObservation::LOOK)assert(p.steps[0].waitMs==1500&&p.steps[1].waitMs==100&&p.steps[2].waitMs==0);
+        if(pose==ArmObservation::START)assert(p.steps[0].waitMs==800&&p.steps[1].waitMs==0&&p.steps[2].waitMs==500);
+        if(pose==ArmObservation::LOOK)assert(p.steps[0].waitMs==1500&&p.steps[1].waitMs==0&&p.steps[2].waitMs==0);
         if(pose==ArmObservation::LOOK2)assert(p.steps[0].waitMs==1500&&p.count==2);
         if(pose==ArmObservation::LOOK3)assert(p.steps[p.count-1].kind==motion::StepKind::TURRET_READY&&p.steps[p.count-1].waitMs==1500);
     }
@@ -205,7 +210,7 @@ void poses() {
     assert(issuedArm[1].turretRampMs==500);
     assert(issuedArm[6].turretRampMs==500);
     assert(issuedArm[7].slowLower);
-    assert(issuedArm[7].high==10&&issuedArm[8].high==0&&issuedArm[8].slowLower);
+    assert(issuedArm[7].high==10&&issuedArm[7].pawl==-1&&issuedArm[8].high==0&&issuedArm[8].slowLower);
     assert(issuedArm[9].pawl==0&&issuedArm[10].pawl==materialTransferLayout.clawOpenAngle);
     issuedArm.clear();assert(MoveDiscToCargo(1,1));
     assert(issuedArm[1].turretRampMs==20);
@@ -216,7 +221,7 @@ void poses() {
     for(const auto &s:issuedArm)if(s.turret!=-1)assert(s.turretRampMs==20);
 }
 void registry() {
-    registrationTail();assert(entries.size()==244);
+    registrationTail();assert(entries.size()==246);
     std::set<std::string> names;
     for(const auto &e:entries)assert(names.insert(e.name).second);
     assert(entries[0].address==&commonMaterialDelays.pickAbove.translateMs);
@@ -235,6 +240,7 @@ void registry() {
         }
     }
     assert(entries[239].address==&MOTION_LOOK_LEAD_MM&&entries[241].address==&ARM_FEEDBACK_ENABLED);
+    assert(entries[244].address==&NODE_PATH_MIDDLE_SPEED_MM_S&&entries[245].address==&NODE_PATH_MIDDLE_ACCEL_MM_S2);
 }
 int main(int argc,char **argv) {
     assert(argc==2);

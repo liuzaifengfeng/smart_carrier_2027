@@ -1495,6 +1495,8 @@ COMMAND_FIELDS = {
     "MoveArm_2": (("舵盘角度", "-1"), ("夹爪角度", "-1"), ("速度", "80")),
     "SERVO": (("舵机 ID", "1"), ("角度", "0")),
     "SERVO_ZERO": (("舵机 ID（1夹爪、2转台）", "2"),),
+    "SERVO_PID_GET": (("舵机 ID", "2"),),
+    "SERVO_PID_SET": (("舵机 ID", "2"),) + tuple((name, "") for name in ("Kp", "Kd", "Ki", "PwmBias", "HoldKp", "HoldKd", "HoldPwmBias")),
 }
 
 # WASD 键与 Movepose 方向参数的对应关系。
@@ -1598,7 +1600,7 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
         require_range_or_skip(0, TURRET_CABLE_MIN_DEG, TURRET_CABLE_MAX_DEG, "舵盘角度")
         require_range_or_skip(1, -360.0, 360.0, "夹爪角度")
         require_range(2, 1.0, 3.4028234663852886e38, "速度")
-    elif command in ("SERVO", "SERVO_ZERO"):
+    elif command in ("SERVO", "SERVO_ZERO", "SERVO_PID_GET", "SERVO_PID_SET"):
         require_range(0, 0.0, 253.0, "舵机 ID")
         if command == "SERVO":
             require_range(1,
@@ -1608,6 +1610,12 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
         if not values[0].is_integer():
             raise ValueError("舵机 ID 必须是整数")
         integer_indexes = {0}
+        if command == "SERVO_PID_SET":
+            for index in range(1, 8):
+                require_range(index, 0, 65535, "舵机PID参数")
+                if not values[index].is_integer():
+                    raise ValueError("舵机PID参数必须是整数")
+            integer_indexes = set(range(8))
 
     tokens = [str(int(value)) if index in integer_indexes else f"{value:g}"
               for index, value in enumerate(values)]
@@ -1619,6 +1627,8 @@ def build_debug_command(command: str, raw_values: list[str]) -> str:
         "MoveArm_2": ("ARM", "MOVE2"),
         "SERVO": ("ARM", "SERVO"),
         "SERVO_ZERO": ("ARM", "SERVO_ZERO"),
+        "SERVO_PID_GET": ("ARM", "SERVO_PID_GET"),
+        "SERVO_PID_SET": ("ARM", "SERVO_PID_SET"),
         "En_C": ("ARM", "ENABLE"),
     }[command]
     return build_frame("CMD", category, action, *tokens)
@@ -3110,6 +3120,22 @@ class UpperComputerApp:
                    command=lambda: self.send_command("SERVO_ZERO")).pack(fill=tk.X)
         ttk.Label(zero_group, text="仅Debug模式。将所选舵机当前位置定义为0°，会改变后续角度目标的基准。",
                   wraplength=285).pack(anchor="w", pady=(5, 0))
+        pid_group = ttk.LabelFrame(arm_tab, text="舵机内部 PID", padding=7)
+        pid_group.pack(fill=tk.X, pady=(10, 0))
+        self.servo_pid_id = tk.StringVar(value="2")
+        self.servo_pid_values = [tk.StringVar() for _ in range(7)]
+        self.servo_pid_status = tk.StringVar(value="1夹爪、2转台；查询后修改，写入后显示实测回读值。")
+        self.command_vars["SERVO_PID_GET"] = [self.servo_pid_id]
+        self.command_vars["SERVO_PID_SET"] = [self.servo_pid_id, *self.servo_pid_values]
+        ttk.Label(pid_group, text="舵机 ID").grid(row=0, column=0, sticky="w")
+        ttk.Entry(pid_group, textvariable=self.servo_pid_id, width=9).grid(row=0, column=1, sticky="w")
+        for index, (name, value) in enumerate(zip(
+                ("Kp", "Kd", "Ki", "PwmBias", "HoldKp", "HoldKd", "HoldPwmBias"), self.servo_pid_values), 1):
+            ttk.Label(pid_group, text=name).grid(row=index, column=0, sticky="w")
+            ttk.Entry(pid_group, textvariable=value, width=12).grid(row=index, column=1, sticky="ew", pady=1)
+        ttk.Button(pid_group, text="查询 PID", command=lambda: self.send_command("SERVO_PID_GET")).grid(row=8, column=0, sticky="ew", pady=5)
+        ttk.Button(pid_group, text="写入并回读", command=lambda: self.send_command("SERVO_PID_SET")).grid(row=8, column=1, sticky="ew", pady=5)
+        ttk.Label(pid_group, textvariable=self.servo_pid_status, wraplength=285).grid(row=9, column=0, columnspan=2, sticky="w")
         for variable in self.arm_vars.values():
             variable.trace_add("write", self.preview_arm_pose)
         self.preview_arm_pose()
@@ -3466,9 +3492,22 @@ class UpperComputerApp:
             messagebox.showerror("命令未发送", str(exc), parent=self.root)
             return False
         self.append_log("TX", line)
+        if command in ("SERVO_PID_GET", "SERVO_PID_SET"):
+            self.servo_pid_status.set("正在查询……" if command == "SERVO_PID_GET" else "正在写入并回读……")
         if command == "MovePosition":
             self.position_move_status.set("位置移动已发送，等待小车接令；回显不代表实际到位。")
         return True
+
+    def _accept_servo_pid_response(self, fields) -> None:
+        """显示指定舵机的实测PID参数；修改输入框后不把旧舵机的迟到回复套用到新ID。"""
+        if len(fields) == 12 and fields[3] == "READBACK":
+            if fields[4] == self.servo_pid_id.get().strip():
+                for variable, value in zip(self.servo_pid_values, fields[5:]):
+                    variable.set(value)
+            action = "写入后回读" if fields[2] == "SERVO_PID_SET" else "查询"
+            self.servo_pid_status.set(f"舵机{fields[4]}{action}：" + "，".join(fields[5:]))
+        elif len(fields) == 5 and fields[3] == "ERR":
+            self.servo_pid_status.set(f"操作失败：{fields[4]}（MODE需Debug，BUSY表示动作执行中）。")
 
     def send_vision_start_request(self, mode: str) -> None:
         self._send_vision_request(mode, True)
@@ -4177,6 +4216,8 @@ class UpperComputerApp:
                     self.parameter_panel.disconnected()
                     self.led_status.set("设备启动或模式改变，请重新查询亮度")
                 self._accept_target_echo(text)
+                if fields is not None and fields[:3] in (("RSP", "ARM", "SERVO_PID_GET"), ("RSP", "ARM", "SERVO_PID_SET")):
+                    self._accept_servo_pid_response(fields)
                 if fields is not None and fields[:3] == ("RSP", "ARM", "SERVO_ZERO"):
                     if len(fields) == 7 and fields[3] == "READBACK":
                         self.arm_status_var.set(f"舵机{fields[4]}设零后实测：单圈{fields[5]}°，多圈{fields[6]}°。")

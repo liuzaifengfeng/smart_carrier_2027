@@ -36,6 +36,8 @@ constexpr uint32_t ALIGN_LOG_INTERVAL_MS = 500;
 constexpr uint32_t AUTO_ALIGN_TIMEOUT_MS = 15000; // 包含等待首帧的时间。
 extern float NODE_PATH_SPEED_MM_S; // 正式节点路径平移速度，mm/s；不是电机RPM。
 extern float NODE_PATH_ACCEL_MM_S2; // 正式节点导航平移加速度，mm/s²；启动整条路径时冻结。
+extern float NODE_PATH_MIDDLE_SPEED_MM_S; // 中间道路平移速度，mm/s。
+extern float NODE_PATH_MIDDLE_ACCEL_MM_S2; // 中间道路平移加减速度，mm/s²。
 extern float NODE_PATH_TURN_DEG_S;
 extern float NODE_PATH_TURN_ACCEL_DEG_S2;
 extern float NODE_PATH_HEADING_DEADBAND_DEG;

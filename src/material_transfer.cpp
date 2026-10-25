@@ -70,19 +70,19 @@ MaterialAuxiliaryDelays materialAuxiliaryDelays = {300, 340, 300, 1360, 680, 136
 // 九组初值复制当前公共默认值，之后各自独立调整、保存。
 MaterialTransferDelays workAreaToCargoDelays[MATERIAL_STATION_COUNT][MATERIAL_STATION_COUNT] = {
     {
-        {{100, 0, 1000}, 700, 500, 200, {200, 0, 1150}, 550, 200, 300}, // 工作区1 -> 载物台1
-        {{100, 0, 600}, 700, 500, 200, {200, 0, 800}, 600, 200, 300}, // 工作区1 -> 载物台2
-        {{100, 0, 600}, 700, 500, 200, {200, 0, 800}, 600, 200, 300}, // 工作区1 -> 载物台3
+        {{100, 0, 1000}, 600, 400, 200, {200, 0, 1150}, 400, 100, 200}, // 工作区1 -> 载物台1
+        {{100, 0, 600}, 600, 400, 200, {200, 0, 800}, 400, 100, 200}, // 工作区1 -> 载物台2
+        {{100, 0, 600}, 600, 400, 200, {200, 0, 800}, 400, 100, 200}, // 工作区1 -> 载物台3
     },
     {
-        {{100, 0, 600}, 700, 500, 200, {200, 0, 800}, 600, 200, 300}, // 工作区2 -> 载物台1
-        {{100, 0, 1000}, 700, 500, 200, {200, 0, 1150}, 550, 200, 300}, // 工作区2 -> 载物台2
-        {{100, 0, 600}, 700, 500, 200, {200, 0, 800}, 600, 200, 300}, // 工作区2 -> 载物台3
+        {{100, 0, 600}, 600, 400, 200, {200, 0, 800}, 400, 100, 200}, // 工作区2 -> 载物台1
+        {{100, 0, 1000}, 600, 400, 200, {200, 0, 1150}, 400, 100, 200}, // 工作区2 -> 载物台2
+        {{100, 0, 600}, 600, 400, 200, {200, 0, 800}, 400, 100, 200}, // 工作区2 -> 载物台3
     },
     {
-        {{100, 0, 600}, 700, 500, 200, {200, 0, 800}, 600, 200, 300}, // 工作区3 -> 载物台1
-        {{100, 0, 600}, 700, 500, 200, {200, 0, 800}, 600, 200, 300}, // 工作区3 -> 载物台2
-        {{100, 0, 1000}, 700, 500, 200, {200, 0, 1150}, 550, 200, 300}, // 工作区3 -> 载物台3
+        {{100, 0, 600}, 600, 400, 200, {200, 0, 800}, 400, 100, 200}, // 工作区3 -> 载物台1
+        {{100, 0, 600}, 600, 400, 200, {200, 0, 800}, 400, 100, 200}, // 工作区3 -> 载物台2
+        {{100, 0, 1000}, 600, 400, 200, {200, 0, 1150}, 400, 100, 200}, // 工作区3 -> 载物台3
     },
 };
 // REVERSE_ACTION_GROUP_DELAYS_END
@@ -140,6 +140,17 @@ void waitForArm(float durationMs = materialTransferLayout.motionWaitMs) {
     vTaskDelay(pdMS_TO_TICKS(waitMs));
 }
 
+// 同步兼容入口也用实测多圈角度结束转向，不追加固定延时。
+bool waitForTurret() {
+    const float target=currentArm.turret_angle;
+    for(;;) {
+        if(taskMotionAborted)return false;
+        float measured=0;if(!ReadArmTurretAngle(measured))return false;
+        if(fabsf(measured-target)<=5.0f)return true;
+        waitForArm(50);
+    }
+}
+
 // 移动到目标上方
 bool moveAbove(const MaterialStationPose &pose, float clawAngle,
                const MaterialApproachDelays &delays, const float *plannedAngle = nullptr,
@@ -151,10 +162,10 @@ bool moveAbove(const MaterialStationPose &pose, float clawAngle,
     waitForArm(delays.settleMs);
     if (!(plannedAngle
             ? MoveArmPlanned(materialTransferLayout.approachHeight, pose.length,
-                             *plannedAngle, clawAngle, materialMotionSteps.approachRotateSpeed, turretRampMs)
+                             *plannedAngle, -1, materialMotionSteps.approachRotateSpeed, turretRampMs)
             : MoveArm(materialTransferLayout.approachHeight, pose.length,
-                      pose.turretAngle, clawAngle, materialMotionSteps.approachRotateSpeed, turretRampMs))) return false;
-    waitForArm(delays.rotateMs);
+                      pose.turretAngle, -1, materialMotionSteps.approachRotateSpeed, turretRampMs))) return false;
+    if(!waitForTurret())return false;
     return true;
 }
 
@@ -165,7 +176,7 @@ bool pickAt(const MaterialStationPose &pose,
             const float *plannedAngle = nullptr, uint16_t turretRampMs = 20) {
     // 载物台出料先抬升、等待后再缩回；工作区取回可同时抬升并缩回到 0。
     if (!moveAbove(pose, materialTransferLayout.clawOpenAngle, delays.pickAbove, plannedAngle, turretRampMs)) return false;
-    if (!MoveArm(pose.high, -1, -1, materialTransferLayout.clawOpenAngle,
+    if (!MoveArm(pose.high, -1, -1, -1,
                  materialMotionSteps.pickDescendSpeed)) return false;
     waitForArm(delays.pickDescendMs);
     if (!MoveArm(-1, -1, -1, materialTransferLayout.clawClosedAngle,
@@ -192,19 +203,19 @@ bool placeAt(const MaterialStationPose &pose, float targetHeight,
         if (!(plannedAngle
                 ? MoveArmPlanned(-1, -1, *plannedAngle, -1, materialMotionSteps.approachRotateSpeed, turretRampMs)
                 : MoveArm(-1, -1, pose.turretAngle, -1, materialMotionSteps.approachRotateSpeed, turretRampMs))) return false;
-        waitForArm(delays.placeAbove.rotateMs);
-    } else if (!moveAbove(pose, materialTransferLayout.clawClosedAngle,
+        if(!waitForTurret())return false;
+    } else if (!moveAbove(pose, -1,
                           delays.placeAbove, plannedAngle, turretRampMs)) return false;
     if(turretRampMs==500) {
         // 第一段沿用原下降延时，最后10mm只等待100ms，不查到位反馈。
         if(!MoveArm(10,fromRetracted?pose.length:-1,-1,
-                    materialTransferLayout.clawClosedAngle,materialMotionSteps.placeDescendSpeed,turretRampMs,true))return false;
+                    -1,materialMotionSteps.placeDescendSpeed,turretRampMs,true))return false;
         waitForArm(delays.placeDescendMs);
         if(!MoveArm(0,-1,-1,-1,materialMotionSteps.placeDescendSpeed,turretRampMs,true))return false;
         waitForArm(100);
     } else {
         if(!MoveArm(targetHeight,fromRetracted?pose.length:-1,-1,
-                    materialTransferLayout.clawClosedAngle,materialMotionSteps.placeDescendSpeed,turretRampMs))return false;
+                    -1,materialMotionSteps.placeDescendSpeed,turretRampMs))return false;
         waitForArm(delays.placeDescendMs);
     }
     if(turretRampMs==500) { // 仅工位第一层放料，载物台和二层不分段松爪。
@@ -501,7 +512,7 @@ bool PrepareLidarScanPose(uint8_t startZoneCode) {
 
             if (!MoveArm(170, 100, -1, -1, 200)) return false;
             if (!MoveArm(-1, -1, 45, -1, 200)) return false;
-            waitForArm(materialAuxiliaryDelays.lidarZone1TurnMs);
+            if(!waitForTurret())return false;
             if (!MoveArm(0, 100, -1, -1, 200)) return false;
             waitForArm(materialAuxiliaryDelays.lidarZone1LiftMs);
             break;

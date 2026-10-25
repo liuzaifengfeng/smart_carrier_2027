@@ -49,7 +49,7 @@ inline Vec worldToBody(Vec v,float theta) {
 inline Vec bodyToWorld(Vec v,float theta) {
     float a=theta*PI_F/180; return {v.x*sinf(a)+v.y*cosf(a),-v.x*cosf(a)+v.y*sinf(a)};
 }
-struct Node { Vec p; float radius = 0; };
+struct Node { Vec p; float radius = 0; bool middle=false; }; // 正式路径按节点编号标记中间道路。
 struct Config {
     uint32_t id=0;
     uint8_t count=0;
@@ -62,6 +62,7 @@ struct Config {
 struct Pose { Vec p,tangent; float curvature=0; };
 enum SegmentKind { LINE=0, CUBIC=1, ROTATE=2 };
 struct Segment {
+    bool middle=false; // 平移段使用独立的中间道路速度和加速度。
     Vec start,end,center;
     float offset=0,length=0,radius=0,angle=0,sweep=0;
     uint8_t kind=LINE;

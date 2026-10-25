@@ -49,7 +49,7 @@ class ConfigTests(unittest.TestCase):
                     entry['minimum'], entry['maximum'], entry['integer'])
 
     def test_defaults_and_name_mapping(self):
-        self.assertEqual(len(self.parameters), 101)
+        self.assertEqual(len(self.parameters), 103)
         self.assertEqual(config_edits(self.data, self.parameters), {})
         p = next(p for p in self.parameters.values() if p.name == 'PID/视觉X/Kp')
         p.index = 999
@@ -67,7 +67,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(saved['groups']['PID']['parameters'][name]['value'], 0.025)
             self.assertEqual(saved['groups']['PID']['parameters']['PID/视觉X/Kp']['value'], shared)
             self.assertEqual(config_edits(saved, self.parameters), {p.index: '0.025'})
-            self.assertEqual(generate(source, header), 101)
+            self.assertEqual(generate(source, header), 103)
             self.assertIn(f'"{name}", 0.025', header.read_text(encoding='utf-8'))
 
     def test_map_coordinates_stay_out_of_json_defaults(self):
@@ -81,7 +81,7 @@ class ConfigTests(unittest.TestCase):
             source, header = folder/'settings.json', folder/'defaults.h'
             export_config(source, self.parameters, {999: '999'})
             self.assertNotIn('地图', load_config(source)['groups'])
-            self.assertEqual(generate(source, header), 101)
+            self.assertEqual(generate(source, header), 103)
             self.assertNotIn('地图/', header.read_text(encoding='utf-8'))
 
     def test_node_acceleration_exports_and_compiles_as_default(self):
@@ -92,8 +92,24 @@ class ConfigTests(unittest.TestCase):
             export_config(source, self.parameters, {p.index: '450.5'})
             saved = load_config(source)
             self.assertEqual(saved['groups']['底盘']['parameters'][name]['value'], 450.5)
-            self.assertEqual(generate(source, header), 101)
+            self.assertEqual(generate(source, header), 103)
             self.assertIn(f'"{name}", 450.5', header.read_text(encoding='utf-8'))
+
+    def test_middle_profiles_export_independently_of_outer_profiles(self):
+        names = ('底盘/节点导航中间路段速度(mm/s)', '底盘/节点导航中间路段平移加速度(mm/s²)')
+        edits = {next(p.index for p in self.parameters.values() if p.name == name): value
+                 for name, value in zip(names, ('1200', '800'))}
+        with temporary_folder() as folder:
+            source, header = folder/'settings.json', folder/'defaults.h'
+            export_config(source, self.parameters, edits)
+            parameters = load_config(source)['groups']['底盘']['parameters']
+            self.assertEqual(parameters[names[0]]['value'], 1200)
+            self.assertEqual(parameters[names[1]]['value'], 800)
+            self.assertEqual(parameters['底盘/节点导航速度(mm/s)']['value'], 3000)
+            self.assertEqual(parameters['底盘/节点导航平移加速度(mm/s²)']['value'], 2000)
+            self.assertEqual(generate(source, header), 103)
+            for name, value in zip(names, ('1200', '800')):
+                self.assertIn(f'"{name}", {value}', header.read_text(encoding='utf-8'))
 
     def test_device_range_wins_and_unknown_name_rejected(self):
         p = self.parameters[0]
@@ -130,7 +146,7 @@ class ConfigTests(unittest.TestCase):
             source, header = folder / 'robot.json', folder / 'generated.h'
             entry['value'] = 1500
             source.write_text(json.dumps(self.data, ensure_ascii=False), encoding='utf-8')
-            self.assertEqual(generate(source, header), 101)
+            self.assertEqual(generate(source, header), 103)
             self.assertIn('"搬运/等待时间(ms)", 1500', header.read_text(encoding='utf-8'))
             entry['value'] = 60001
             source.write_text(json.dumps(self.data, ensure_ascii=False), encoding='utf-8')

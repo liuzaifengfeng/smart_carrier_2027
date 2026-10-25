@@ -281,7 +281,7 @@ void Runner::tick() {
         action=STRAIGHT;end=phase.end;float length=phase.length;
         while(after<route->segmentCount) {
             const auto &next=route->segments[after];
-            if(next.kind!=LINE||fabsf(turn(phase.h0,next.h0))>.01f||dot(end-phase.start,next.end-next.start)<=0)break;
+            if(next.kind!=LINE||next.middle!=phase.middle||fabsf(turn(phase.h0,next.h0))>.01f||dot(end-phase.start,next.end-next.start)<=0)break;
             end=next.end;length+=next.length;++after;
         }
         scanExit=norm(offset)>0;const Vec direction=(end-phase.start)*(1/length);
@@ -315,8 +315,8 @@ void Runner::tick() {
         }
         if(failure)break;
         valid=false;io->beginAction();start=output->estimated;baseS=output->s;
-        maximum=rotating?settings->turnDegS:settings->speedMmS;
-        acceleration=rotating?settings->turnAccelDegS2:settings->accelMmS2;
+        maximum=rotating?settings->turnDegS:route->segments[index].middle?settings->middleSpeedMmS:settings->speedMmS;
+        acceleration=rotating?settings->turnAccelDegS2:route->segments[index].middle?settings->middleAccelMmS2:settings->accelMmS2;
         started=previous=io->now();lastReport=lastArrivalReport=0;
         deadline=static_cast<uint32_t>((fabsf(delta)/maximum+maximum/acceleration+5)*3000);
         sent=braking=quietSeen=false;quietCount=0;peakMeasuredRpm=0;headingGuard=HeadingGuard{};startHeading=output->heading;

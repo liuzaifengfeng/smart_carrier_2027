@@ -273,8 +273,12 @@ void navigationTick() {
     }
     auto &base=PositionNodeRunner();
     const bool visualPose=r.observation==ArmObservation::LOOK||r.observation==ArmObservation::LOOK2;
-    // 返家LOOK4等最后平移结束，在终点旋转前展开；其他视觉姿态仍提前准备。
-    const bool prepareArm=r.observation==ArmObservation::LOOK4?base.finalTurnApproach():visualPose&&base.observationApproach();
+    // 圆盘到粗加工横穿时保持载物台放料后的姿态，等末尾90度转向前再展开LOOK。
+    const bool coarseArrivalLook=r.observation==ArmObservation::LOOK
+        &&r.path[0]==DISC_AREA_NODE&&r.path[r.pathCount-1]==COARSE_AREA_NODE;
+    // 返家LOOK4同样与终点转向并行；其他视觉姿态仍提前准备。
+    const bool prepareArm=(r.observation==ArmObservation::LOOK4||coarseArrivalLook)
+        ?base.finalTurnApproach():visualPose&&base.observationApproach();
     if(r.observation!=ArmObservation::NONE&&join.shouldStartArm(join.chassisDone,prepareArm)) {
         MotionRequest pose;pose.kind=MotionKind::ARM_POSE;pose.observation=r.observation;pose.zone=r.zone;
         if(!beginArm(pose))return;

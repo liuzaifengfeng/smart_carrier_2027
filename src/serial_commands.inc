@@ -94,6 +94,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"IMU", "HEADING"},
         {"CHASSIS", "MOVE"}, {"CHASSIS", "MOVE_POSITION"},
         {"ARM", "MOVE1"}, {"ARM", "MOVE2"}, {"ARM", "SERVO"}, {"ARM", "SERVO_ZERO"},
+        {"ARM", "SERVO_PID_GET"}, {"ARM", "SERVO_PID_SET"},
         {"ARM", "ENABLE"}, {"ARM", "DEMO1"}, {"ARM", "DEMO2"}, {"ARM", "DEMO3"},
         {"ARM", "DEMO4"}, {"ARM", "TRANSFER"}, {"ARM", "RETRIEVE"},
         {"ARM", "INIT_START"}, {"ARM", "INIT_LOOK"}, {"ARM", "INIT_LOOK2"},
@@ -687,6 +688,21 @@ static void serialDispatch(const SerialFrame &frame) {
         Serial.printf("{RSP,ARM,%s,ACK,%.3f,%.3f,%.3f}\n", frame.fields[2],
                       values[0], values[1], values[2]);
         LaunchMotion(id);
+    } else if (frame.is("ARM", "SERVO_PID_GET", 1)||frame.is("ARM", "SERVO_PID_SET", 8)) {
+        if(!serialDebugMode){serialError(frame,"MODE");return;}
+        uint32_t id=0;
+        if(!serialUInt(frame.fields[3],id,253)){serialError(frame,"RANGE");return;}
+        uint16_t values[7];
+        if(strcmp(frame.fields[2],"SERVO_PID_SET")==0) {
+            for(uint8_t i=0;i<7;++i){uint32_t value=0;
+                if(!serialUInt(frame.fields[4+i],value,UINT16_MAX)){serialError(frame,"RANGE");return;}
+                values[i]=value;
+            }
+            if(!Servo_WritePid(id,values)){serialError(frame,"SERVO_WRITE");return;}
+        }
+        if(!Servo_ReadPid(id,values)){serialError(frame,"SERVO_READ");return;}
+        Serial.printf("{RSP,ARM,%s,READBACK,%u,%u,%u,%u,%u,%u,%u,%u}\n",frame.fields[2],
+            static_cast<unsigned>(id),values[0],values[1],values[2],values[3],values[4],values[5],values[6]);
     } else if (frame.is("ARM", "SERVO_ZERO", 1)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         uint32_t id=0;

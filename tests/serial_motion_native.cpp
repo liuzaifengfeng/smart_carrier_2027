@@ -97,6 +97,9 @@ uint8_t originId=255;
 bool Servo_SetOrigin(uint8_t id){originId=id;return true;}
 bool Servo_QueryAngle(uint8_t,float &angle,uint32_t){angle=0;return true;}
 bool Servo_QueryAngleMTurn(uint8_t,float &angle,uint32_t){angle=0;return true;}
+uint16_t pidValues[7]={100,20,3,4,50,6,7};uint8_t pidId=255;
+bool Servo_ReadPid(uint8_t id,uint16_t values[7]){pidId=id;for(int i=0;i<7;++i)values[i]=pidValues[i];return true;}
+bool Servo_WritePid(uint8_t id,const uint16_t values[7]){pidId=id;for(int i=0;i<7;++i)pidValues[i]=values[i];return true;}
 void CalibrateH30MapHeading(float){++calibrations;}
 bool headingCollecting=false;
 bool H30UsbHeadingAverageActive(){return headingCollecting;}
@@ -160,10 +163,15 @@ void positions() {
     dispatch("{CMD,CHASSIS,MOVE,0,0,1}");assert(!active&&cancels==1&&!roundProgress);
 }
 void maintenance() {
+    dispatch("{CMD,ARM,SERVO_PID_GET,2}");assert(pidId==2);
+    assert(Serial.text.find("{RSP,ARM,SERVO_PID_GET,READBACK,2,100,20,3,4,50,6,7}")!=std::string::npos);
+    dispatch("{CMD,ARM,SERVO_PID_SET,1,200,30,5,6,70,8,9}");assert(pidId==1&&pidValues[0]==200&&pidValues[6]==9);
+    assert(Serial.text.find("{RSP,ARM,SERVO_PID_SET,READBACK,1,200,30,5,6,70,8,9}")!=std::string::npos);
     dispatch("{CMD,ARM,SERVO_ZERO,2}");assert(originId==2);
     assert(Serial.text.find("{RSP,ARM,SERVO_ZERO,READBACK,2,0.000,0.000}")!=std::string::npos);
 
     dispatch("{CMD,ARM,INIT_START}");assert(captured.kind==MotionKind::ARM_POSE&&active);
+    dispatch("{CMD,ARM,SERVO_PID_SET,2,1,2,3,4,5,6,7}");assert(pidValues[0]==200);
     dispatch("{CMD,IMU,GET}");dispatch("{CMD,POSE,GET}");dispatch("{CMD,CFG,GET,7}");assert(active&&poseQueries==1&&configQueries==1);
     dispatch("{CMD,ARM,DEMO1}");assert(submissions==1&&Serial.text.find("ERR,BUSY")!=std::string::npos);
     dispatch("{CMD,NAV,STOP}");finish();

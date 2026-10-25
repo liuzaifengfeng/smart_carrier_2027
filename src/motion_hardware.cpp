@@ -20,8 +20,10 @@ const char *MotionHardware::issue(const Step &s) {
     if(cancelled())return "STOPPED";
     switch(s.kind) {
     case StepKind::ARM:
-        return (s.planned?MoveArmPlanned(s.high,s.length,s.turret,s.pawl,s.speed,s.turretRampMs,s.slowLower):
-            MoveArm(s.high,s.length,s.turret,s.pawl,s.speed,s.turretRampMs,s.slowLower))?nullptr:"EXECUTION";
+        if(!(s.planned?MoveArmPlanned(s.high,s.length,s.turret,s.pawl,s.speed,s.turretRampMs,s.slowLower):
+             MoveArm(s.high,s.length,s.turret,s.pawl,s.speed,s.turretRampMs,s.slowLower)))return "EXECUTION";
+        if(s.turretArrival)turretTarget=currentArm.turret_angle;
+        return nullptr;
     case StepKind::POSITION: return BeginPositionMove(s.high,s.length,s.turret,s.speed)?nullptr:"EXECUTION";
     case StepKind::GOTO: GotoPose(s.high,s.length,s.turret,true);break;
     case StepKind::TURRET_READY: turretStarted=millis();break;
@@ -38,7 +40,7 @@ const char *MotionHardware::issue(const Step &s) {
  */
 bool MotionHardware::feedback(const Step &s) {
     return s.kind==StepKind::POSITION||s.kind==StepKind::TURRET_READY||
-        (s.kind==StepKind::ARM&&ARM_FEEDBACK_ENABLED&&!s.timed);
+        (s.kind==StepKind::ARM&&(s.turretArrival||ARM_FEEDBACK_ENABLED)&&!s.timed);
 }
 /**
  * @brief 检查位置移动、转台或机械臂实测到位条件，并通过 done 返回本次结果。
@@ -51,6 +53,13 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
         float angle=0;
         if(Servo_QueryAngleMTurn(2,angle,100)&&isfinite(angle)&&fabsf(angle-s.turret)<=5){done=true;return nullptr;}
         return millis()-turretStarted>=s.waitMs?"EXECUTION":nullptr;
+    }
+    if(s.turretArrival) {
+        float measured=0;if(!ReadArmTurretAngle(measured))return "EXECUTION";
+        done=fabsf(measured-turretTarget)<=5.0f;
+        if(done)Serial.printf("{EVT,MOTION,TURRET_ARRIVED,%lu,%.3f,%.3f}\n",
+            static_cast<unsigned long>(job),turretTarget,measured);
+        return nullptr; // 此处只检查转台，不等待升降、伸缩或夹爪反馈。
     }
     // 反馈模式需在实车核验驱动器到位标志及编码器单位后显式开启。
     // currentArm 仅保存目标，只有下列实读反馈才能结束动作。

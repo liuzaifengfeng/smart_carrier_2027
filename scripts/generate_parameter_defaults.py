@@ -34,6 +34,8 @@ def supported_names():
     names.add("对齐/最大轮速(RPM)")
     names.add("底盘/停车稳定时间(ms)")
     names.add("底盘/节点导航平移加速度(mm/s²)")
+    names.add("底盘/节点导航中间路段速度(mm/s)")
+    names.add("底盘/节点导航中间路段平移加速度(mm/s²)")
     names.add("底盘/节点导航转向速度(°/s)")
     names.add("底盘/节点导航转向加速度(°/s²)")
     names.add("底盘/节点导航独立纠偏死区(°)")

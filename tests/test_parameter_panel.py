@@ -40,6 +40,8 @@ class ValidationTests(unittest.TestCase):
         for stage in ("底盘导航与标定", "圆盘抓取（两轮）", "粗加工（两轮）", "暂存第一层", "暂存第二层", "返航归位"):
             self.assertTrue(parameter_matches_stage("底盘/节点导航平移加速度(mm/s²)", stage))
             self.assertTrue(parameter_matches_stage("底盘/节点导航速度(mm/s)", stage))
+            self.assertTrue(parameter_matches_stage("底盘/节点导航中间路段速度(mm/s)", stage))
+            self.assertTrue(parameter_matches_stage("底盘/节点导航中间路段平移加速度(mm/s²)", stage))
             self.assertTrue(parameter_matches_stage("底盘/节点导航转向速度(°/s)", stage))
             self.assertTrue(parameter_matches_stage("底盘/节点导航转向加速度(°/s²)", stage))
             self.assertTrue(parameter_matches_stage("底盘/节点导航独立纠偏死区(°)", stage))
@@ -398,10 +400,10 @@ class ActionGroupPanelTests(unittest.TestCase):
         self.choose("工作区1到载物台1")
         third = self.enter("放料下降", 300)
         self.choose("工作区1到载物台2")
-        fourth = self.enter("放料下降", 400)
+        fourth = self.enter("放料下降", 401) # 当前原值为400；这里需要验证一次实际修改。
         self.assertTrue(self.panel.edit())
         self.assertEqual(self.controller.edits, {first.index: "100", second.index: "200",
-                                               third.index: "300", fourth.index: "400"})
+                                               third.index: "300", fourth.index: "401"})
 
     def test_trial_waits_for_readback_and_matching_result(self):
         self.read()

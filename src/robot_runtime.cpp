@@ -2,12 +2,15 @@
 #include "alignment_start_policy.h"
 #include "h30_usb.h"
 #include "motion_executor.h"
+#include "led_pwm.h"
 
 // ================= 基础配置 =================
 
 uint32_t ALIGN_PID_MAX_SPEED_RPM = 50;       // 视觉PID对齐轮速上限，单位RPM；原20，提高到2.5倍。
 float NODE_PATH_SPEED_MM_S = 2500.0f;        // 正式节点路径的最大平移速度，单位mm/s。
 float NODE_PATH_ACCEL_MM_S2 = 2000.0f;       // 正式节点路径的平移加减速度，单位mm/s²，并换算为驱动器加速度档位。
+float NODE_PATH_MIDDLE_SPEED_MM_S = 3000.0f; // 经过7、11、12、13、17节点的平移速度上限。
+float NODE_PATH_MIDDLE_ACCEL_MM_S2 = 2000.0f; // 中间道路独立平移加减速度。
 float NODE_PATH_TURN_DEG_S = 300.0f;         // 节点路径原地转向的最大角速度，单位°/s。
 float NODE_PATH_TURN_ACCEL_DEG_S2 = 400.0f;  // 节点路径原地转向的角加减速度，单位°/s²，并换算为驱动器加速度档位。
 float NODE_PATH_HEADING_DEADBAND_DEG = 1.0f; // 停稳后独立航向修正的允许误差，单位°；误差在此范围内不再转动。
@@ -69,6 +72,10 @@ uint32_t autoAlignmentStartedMs = 0;
 uint32_t alignmentGeneration = 0; // 受运动锁保护，丢弃跨启停周期的已出队帧。
 
 namespace {
+/** @brief 对齐或圆盘识别任一开启时补光10%，全部关闭时关灯。 */
+void updateVisionLight() {
+    LedPwm_SetBrightness(alignmentEnabled||discMaterialActive?10:0);
+}
 const char *visionNames[]={"DISC","DISC_MATERIAL","WORK_AREA","WORK_AREA_LOADED","CORNER"};
 bool visionSpanActive[5]={},visionFirstFrame[5]={};
 portMUX_TYPE visionTraceMux=portMUX_INITIALIZER_UNLOCKED;
@@ -150,6 +157,7 @@ void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic, VisionSt
         autoAlignmentState = automatic ? AutoAlignmentState::WAITING : AutoAlignmentState::IDLE;
         autoAlignmentStartedMs = millis();
         alignmentEnabled = enable;
+        updateVisionLight();
         if(enable)traceVision(alignmentOwner,true);
         xSemaphoreGive(xAlignmentMotionMutex);
     }
@@ -229,6 +237,7 @@ void TickVisualAlignment() {
     if(autoAlignmentState==AutoAlignmentState::WAITING&&millis()-autoAlignmentStartedMs>=AUTO_ALIGN_TIMEOUT_MS) {
         OmniMove(0,0,0,0);ResetDiscAlignmentPid();ResetAlignmentWait();
         traceVision(alignmentOwner,false);alignmentEnabled=false;autoAlignmentState=AutoAlignmentState::FAILED;
+        updateVisionLight();
         Serial.println("{EVT,VISION,ALIGN_FAILED,TIMEOUT}");
     }
     if(!alignmentEnabled){alignedReported=false;lastFeedbackMs=0;xSemaphoreGive(xAlignmentMotionMutex);return;}
@@ -289,6 +298,7 @@ static void requestVisionFunction(VisionStartMode mode, bool start) {
     if (mode == VisionStartMode::DISC_MATERIAL) {
         discMessageResumeRequested = false;
         discMaterialActive = start;
+        updateVisionLight();
         traceVision(mode,start);
         discMaterialColor = 0;
     }

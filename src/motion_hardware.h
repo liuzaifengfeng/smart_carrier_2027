@@ -3,6 +3,7 @@
 
 class MotionHardware : public motion::SequenceIO {
     uint32_t job=0,turretStarted=0;
+    float turretTarget=0; // 保存本次发令后实际选择的等效多圈目标。
     bool (*cancel)()=nullptr;
 public:
     /**

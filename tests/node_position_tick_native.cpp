@@ -2,6 +2,15 @@
 #include "motion_sequence.h"
 #include "motion_job.h"
 #include <assert.h>
+#include <vector>
+struct ProfileSim : Sim {
+    std::vector<uint16_t> speeds;
+    std::vector<uint8_t> accelerations;
+    const char *target(uint8_t id,bool positive,uint16_t speed,uint8_t acceleration,uint32_t count)override {
+        if(id==1){speeds.push_back(speed);accelerations.push_back(acceleration);}
+        return Sim::target(id,positive,speed,acceleration,count);
+    }
+};
 struct ArmClock : motion::SequenceIO {
     Sim &base;int issued=0;
     explicit ArmClock(Sim &clock):base(clock){}
@@ -31,29 +40,51 @@ void nodeTick() {
     assert(base.zeroGroups==1&&base.actions==2); // 两条共线段合并，一次终点转向。
     assert(norm(result.estimated-Vec(1200,1200))<3);
     // 最终直线无论长短，都在它前面的转向阶段准备，不再等待距离阈值。
-    for(float endY:{1300.0f,2200.0f}) {
-        Node cornerPoints[]={{{310,1200},0},{{720,1200},0},{{720,endY},0}};
+    for(bool explicitTurn:{false,true})for(float endY:{1300.0f,2020.0f}) {
+        Node cornerPoints[]={{{310,1200},0},{{2100,1200},0},{{2100,endY},0}};
         Config cornerConfig=cfg;cornerConfig.endHeading=180;
         Route corner;assert(!corner.build(cornerPoints,cornerConfig));
+        assert(corner.segments[corner.segmentCount-1].kind==ROTATE);
+        if(!explicitTurn)--corner.segmentCount; // 同时覆盖显式末尾转向和路径结束后的隐式校角。
         Sim car;Result measured;Runner runner;runner.begin(corner,settings,car,measured);
         bool triggered=false,cornerTriggered=false;int cycles=0;
         while(runner.active()) {
             runner.tick();
             if(!triggered&&runner.observationApproach()) {
                 assert(!runner.lastTranslation());
-                assert(norm(measured.estimated-Vec(720,1200))<3);
+                assert(norm(measured.estimated-Vec(2100,1200))<3);
                 assert(fabsf(turn(car.heading,0))<3); // 进入转向前即触发。
                 triggered=true;
             }
             if(!cornerTriggered&&runner.finalTurnApproach()) {
                 assert(triggered); // 普通视觉已经提前展开，角点姿态仍等到末段直行完成。
-                assert(norm(measured.estimated-Vec(720,endY))<3);
+                assert(norm(measured.estimated-Vec(2100,endY))<3);
                 assert(fabsf(turn(car.heading,90))<3); // 此时尚未开始最终90→180度旋转。
                 cornerTriggered=true;
             }
             car.wait(1);assert(++cycles<100000);
         }
         assert(triggered&&cornerTriggered&&!runner.failure());
+    }
+}
+void middleProfile() {
+    for(bool reverse:{false,true}) {
+        Node points[]={{{310,1200},0},{{600,1200},0},{{900,1200},0,true},{{1200,1200},0}};
+        if(reverse)for(int i=0;i<2;++i){Node temp=points[i];points[i]=points[3-i];points[3-i]=temp;}
+        Config cfg;cfg.policy=2;cfg.count=4;cfg.startHeading=cfg.endHeading=reverse?180:0;
+        Route path;assert(!path.build(points,cfg));
+        assert(path.segments[0].middle==reverse&&path.segments[1].middle&&path.segments[2].middle!=reverse);
+        Settings settings;settings.speedMmS=400;settings.accelMmS2=2000;
+        settings.middleSpeedMmS=150;settings.middleAccelMmS2=500;
+        ProfileSim car;car.heading=cfg.startHeading;car.location=points[0].p;
+        Result result;assert(!run(path,settings,car,result));
+        // 同速区间可合并，跨内外层边界不可把整条共线道路当成同一种曲线。
+        assert(car.actions==2&&car.speeds.size()==2);
+        for(int i=0;i<2;++i){bool middle=reverse?i==0:i==1;
+            assert(car.speeds[i]==rpmFor(middle?150:400,cfg.forwardPpm));
+            assert(car.accelerations[i]==driverAccelerationFor(middle?500:2000,cfg.forwardPpm));
+        }
+        assert(norm(result.estimated-points[3].p)<3);
     }
 }
 void scanTick() {
@@ -91,4 +122,4 @@ void representativePolling() {
     for(int i=0;i<30&&verify.active();++i){verify.tick();initialZero.wait(1);}
     assert(verify.active()&&initialZero.passedComparisons==0);
 }
-int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"representative"))representativePolling();else nodeTick();}
+int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"middle"))middleProfile();else if(!strcmp(argv[1],"representative"))representativePolling();else nodeTick();}

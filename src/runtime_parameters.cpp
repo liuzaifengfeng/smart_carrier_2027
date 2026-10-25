@@ -12,6 +12,8 @@
 extern uint32_t ALIGN_PID_MAX_SPEED_RPM;
 extern float NODE_PATH_SPEED_MM_S;
 extern float NODE_PATH_ACCEL_MM_S2;
+extern float NODE_PATH_MIDDLE_SPEED_MM_S;
+extern float NODE_PATH_MIDDLE_ACCEL_MM_S2;
 extern float NODE_PATH_TURN_DEG_S;
 extern float NODE_PATH_TURN_ACCEL_DEG_S2;
 extern float NODE_PATH_HEADING_DEADBAND_DEG;
@@ -164,6 +166,9 @@ void initialize() {
     RegisterRuntimeUInt("运动执行/机械臂反馈完成",ARM_FEEDBACK_ENABLED,0,1);
     RegisterRuntimeUInt("运动执行/反馈后夹持保持(ms)",ARM_GRIP_HOLD_MS,0,UINT32_MAX);
     RegisterRuntimeUInt("运动执行/反馈后释放保持(ms)",ARM_RELEASE_HOLD_MS,0,UINT32_MAX);
+    // 追加独立中间道路参数，保留已有上位机参数编号。
+    RegisterRuntimeFloat("底盘/节点导航中间路段速度(mm/s)",NODE_PATH_MIDDLE_SPEED_MM_S,10,5000);
+    RegisterRuntimeFloat("底盘/节点导航中间路段平移加速度(mm/s²)",NODE_PATH_MIDDLE_ACCEL_MM_S2,1,4000);
 }
 
 bool parseUnsigned(const char *text, uint32_t &value) {
