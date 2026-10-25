@@ -114,21 +114,6 @@ bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t 
  */
 void OmniMove(float xVelocity, float yVelocity, float rotationVelocity, uint16_t speedRpm);
 
-/**
- * @brief 使用一帧视觉误差更新连续 PID 对齐速度。
- *
- * 摄像头与车身约呈 90°，因此视觉 Y 映射到底盘 X，视觉 X 映射到底盘 Y；
- * 三个 PID 输出会在同一周期合成为全向运动速度。
- *
- * @param angleErrorDeg 视觉角度偏差 (deg)
- * @param visualXError  视觉 X 偏差
- * @param visualYError  视觉 Y 偏差
- * @param dtSeconds     与上一视觉帧的时间间隔 (s)
- * @param speedRpm      PID 满输出时的最大轮速 (RPM)
- * @return true 三个误差均进入允许范围；false 仍在对齐
- */
-bool AlignToDiscContinuous(float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);
-
 // 清除连续对齐 PID 的积分/微分历史；不会自行发送停车命令。
 void ResetDiscAlignmentPid();
 
@@ -164,28 +149,6 @@ bool ReadArmTurretAngle(float &angle);
  * @return true 指令下发成功，不表示实测到位。
  */
 bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed, uint16_t turretRampMs=600, bool slowLower=false);
-
-// @brief 机械臂初始化归零位
-/**
- * @brief 同步提交并等待START收臂姿态，供旧调试入口调用。
- */
-bool InitArm_start();
-/**
- * @brief 同步提交并等待工位视觉前LOOK姿态，供旧调试入口调用。
- */
-bool InitArm_look();
-/**
- * @brief 同步提交并等待圆盘整体对齐前LOOK2姿态。
- */
-bool InitArm_look2();
-/**
- * @brief 同步提交并等待圆盘单件识别前LOOK3姿态及转台实测就绪。
- */
-bool InitArm_look3();
-/**
- * @brief 同步提交并等待返家角点视觉前LOOK4姿态。
- */
-bool InitArm_look4();
 
 /**
  * @brief 按0~24节点导航：全部路段位置模式，到节点停车转向，不漂移切弯。

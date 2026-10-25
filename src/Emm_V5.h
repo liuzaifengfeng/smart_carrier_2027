@@ -6,8 +6,6 @@
 #define SERIAL1_TXD_PIN 17
 #define SERIAL1_RXD_PIN 18
 
-#define    ABS(x)    ((x) > 0 ? (x) : -(x)) 
-
 typedef enum {
   S_VER   = 0,      /* 读取固件版本和对应的硬件版本 */
   S_RL    = 1,      /* 读取读取相电阻和相电感 */

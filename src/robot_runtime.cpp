@@ -58,35 +58,6 @@ portMUX_TYPE nodePathMux = portMUX_INITIALIZER_UNLOCKED;
 uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH] = {0};
 size_t nodePathLen = 0;
 
-static bool executeNodePathWithStatus(const uint8_t *path, size_t count, float finalHeading = NAN) {
-    Serial.println("{EVT,NAV,ROUTE_RUNNING}");
-    if (!isfinite(finalHeading) && path != nullptr && count > 0) {
-        switch (path[count - 1]) {
-            case DISC_AREA_NODE: finalHeading = DISC_AREA_HEADING; break;
-            case COARSE_AREA_NODE: finalHeading = COARSE_AREA_HEADING; break;
-            case TEMP_AREA_NODE: finalHeading = TEMP_AREA_HEADING; break;
-            default: break;
-        }
-    }
-    const bool success = MoveNodePath( path, count, NODE_PATH_SPEED_MM_S, 0, finalHeading);
-    // 四轮位置/转速/到位反馈与H30确认通过；世界XY仍未由视觉实测。
-    Serial.println(success ? "{EVT,NAV,ROUTE_DONE,ESTIMATED}" : "{EVT,NAV,ROUTE_FAILED,EXECUTION}");
-    return success;
-}
-
-/**
- * @brief 请求路径，等待接收并同步执行，成功后才返回 true。
- * 1. 等待时只阻塞主状态机，串口任务仍能接收命令。
- * 2. 收到后检查首尾节点，再执行全部路段。
- * 3. 调用者必须检查返回值，失败时不能继续用户代码。
- * 等待仍受现有总任务超时保护，不再固定等待 10 秒。
- */
-bool requestAndMoveNodePath(uint8_t startNode,uint8_t endNode,float finalHeading) {
-    MotionRequest request;request.kind=MotionKind::NAVIGATE;
-    request.startNode=startNode;request.endNode=endNode;request.theta=finalHeading;
-    return WaitMotion(SubmitMotion(request));
-}
-
 QueueHandle_t xAlignmentQueue = NULL;
 SemaphoreHandle_t xAlignmentMotionMutex = NULL;
 uint32_t alignmentFrameSequence = 0; // 受运动锁保护，用于发现最新帧队列覆盖造成的丢帧。
@@ -240,29 +211,19 @@ uint32_t SubmitLidarPoseAction(bool fromCommand,bool allowRepeat) {
     if(!fromCommand&&id)Serial.println("{EVT,VISION,LIDAR_POSE_RUNNING}");
     xSemaphoreGive(xLidarPoseMutex);return id;
 }
-/**
- * @brief 同步兼容入口：提交起始区扫码姿态并等待结果。
- * @return true 作业成功，false 未提交或执行失败。
- */
-bool runLidarPoseAction(bool fromCommand,bool allowRepeat){
-    const uint32_t id=SubmitLidarPoseAction(fromCommand,allowRepeat);
-    // 成功缓存独立于最近八个作业的历史，不能因历史淘汰而重复相对移动。
-    return (!allowRepeat&&releasePoseCompleted)||WaitMotion(id);
-}
-
 // ================= 视觉闭环对齐任务 =================
 /**
  * @brief 处理最新视觉反馈并推进一次底盘对齐闭环；由统一运动任务调用。
  */
 void TickVisualAlignment() {
-    static bool alignedReported=false,feedbackActive=false;
+    static bool alignedReported=false;
     static uint32_t lastFeedbackMs=0,lastLogMs=0,previousGeneration=0,previousFrameSequence=0;
     if(!xAlignmentMotionMutex)return;
     xSemaphoreTake(xAlignmentMotionMutex,portMAX_DELAY);
     const uint32_t generation=alignmentGeneration;
     if(alignmentStopPending){OmniMove(0,0,0,0);alignmentStopPending=false;}
     if(generation!=previousGeneration) {
-        feedbackActive=alignedReported=false;lastFeedbackMs=0;
+        alignedReported=false;lastFeedbackMs=0;
         previousGeneration=generation;previousFrameSequence=0;
     }
     if(autoAlignmentState==AutoAlignmentState::WAITING&&millis()-autoAlignmentStartedMs>=AUTO_ALIGN_TIMEOUT_MS) {
@@ -270,13 +231,13 @@ void TickVisualAlignment() {
         traceVision(alignmentOwner,false);alignmentEnabled=false;autoAlignmentState=AutoAlignmentState::FAILED;
         Serial.println("{EVT,VISION,ALIGN_FAILED,TIMEOUT}");
     }
-    if(!alignmentEnabled){feedbackActive=alignedReported=false;lastFeedbackMs=0;xSemaphoreGive(xAlignmentMotionMutex);return;}
+    if(!alignmentEnabled){alignedReported=false;lastFeedbackMs=0;xSemaphoreGive(xAlignmentMotionMutex);return;}
     VisualAlignmentFrame_t alignment;
     // 串口/视觉接收只发布最新反馈；此处与导航在同一运动任务内下发底盘命令。
     if(xQueueReceive(xAlignmentQueue,&alignment,0)!=pdTRUE){xSemaphoreGive(xAlignmentMotionMutex);return;}
     const uint32_t now=millis();
     const float dt=lastFeedbackMs?(now-lastFeedbackMs)*.001f:.05f;
-    lastFeedbackMs=now;feedbackActive=true;
+    lastFeedbackMs=now;
     if((previousFrameSequence&&alignment.sequence!=previousFrameSequence+1)||dt>=ALIGN_FEEDBACK_TIMEOUT_MS*.001f)ResetAlignmentWait();
     previousFrameSequence=alignment.sequence;
     const auto mode=alignmentOwner==VisionStartMode::NONE?VisionStartMode::DISC:alignmentOwner;
@@ -285,22 +246,13 @@ void TickVisualAlignment() {
     if(aligned&&autoAlignmentState==AutoAlignmentState::WAITING)autoAlignmentState=AutoAlignmentState::DONE;
     if(aligned&&!alignedReported)Serial.println("{EVT,VISION,ALIGN_DONE}");
     alignedReported=aligned;
-    if(aligned)feedbackActive=false;
-    else if(now-lastLogMs>=ALIGN_LOG_INTERVAL_MS) {
+    if(!aligned&&now-lastLogMs>=ALIGN_LOG_INTERVAL_MS) {
         Serial.printf("[Align] running: angle=%.2f deg, x=%.1f, y=%.1f, dt=%.3f\n",alignment.angleDeg,alignment.visualX,alignment.visualY,dt);
         lastLogMs=now;
     }
     // 沿用项目当前设置：300ms 断流停车分支未启用，不扩大故障判定范围。
     xSemaphoreGive(xAlignmentMotionMutex);
 }
-/**
- * @brief 接收视觉反馈并发布最新数据；实际闭环发令由运动任务推进。
- */
-void Task_VisualAlignment(void *) {
-    // 兼容旧任务符号；正常启动不再创建第二个底盘发令任务。
-    for(;;){WakeMotionExecutor();vTaskDelay(pdMS_TO_TICKS(20));}
-}
-
 // 通过 Serial0 通知机载电脑显示。
 // 参数顺序：1. 命令类型 DISPLAY；2. 显示类型 TASK_CODE/DEBUG；3. 正文。
 /**

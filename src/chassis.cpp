@@ -2,15 +2,12 @@
 #include "Emm_V5.h"
 #include "servo.h"
 #include "runtime_parameters.h"
-#include "node_route_heading.h"
 #include "robot_runtime.h"
 #include "continuous_trial.h"
 #include "node_position_hardware.h"
 #include "position_move_timing.h"
 #include "motor_bus.h"
-#include "motion_executor.h"
 volatile bool taskMotionAborted = false;
-#include <float.h>
 
 // 理想位姿(由主控维护; 真实位姿的获取方案待定)
 //车体位姿——X坐标、Y坐标、Theta角度
@@ -39,11 +36,9 @@ NodePosition NODE_POSITIONS[FIELD_NODE_COUNT] = {
     {320.0f, 2020.0f}, {720.0f, 2020.0f}, {1200.0f, 2020.0f}, {1680.0f, 2020.0f}, {2050.0f, 2020.0f},
 };
 
-constexpr uint32_t MOTOR_PULSES_PER_REVOLUTION = 3200; // 16 细分时，电机转一圈的脉冲数
 constexpr uint32_t MOTOR_COMMAND_GAP_MS = 5;           // 连续发送两条电机命令的间隔
 constexpr double MOTOR_MOTION_TIME_MARGIN = 1.00;      // 运动估算增加 0% 等待余量
 uint32_t ROUTE_SETTLE_TIME_MS = 100;         // 每次运动结束后的停车稳定时间
-constexpr float ROUTE_ANGLE_EPSILON_DEG = 0.01f;       // 小于该角度时不再执行转向
 
 // ================= 连续视觉对齐 PID 参数 =================
 // 输出均为 -1~1 的归一化车身速度权重，实际轮速由调用方传入的 speedRpm 决定。
@@ -130,31 +125,6 @@ bool getNodePosition(uint8_t node, NodePosition &position) {
     return true;
 }
 
-// 5×5 蛇形图上下或左右相邻：0-9、4-5 相邻，4-9 不相邻。
-bool areAdjacentNodes(uint8_t first, uint8_t second) {
-    if (first >= FIELD_NODE_COUNT || second >= FIELD_NODE_COUNT) return false;
-    int firstRow = first / FIELD_GRID_SIZE;
-    int secondRow = second / FIELD_GRID_SIZE;
-    int firstColumn = first % FIELD_GRID_SIZE;
-    int secondColumn = second % FIELD_GRID_SIZE;
-    if (firstRow % 2) firstColumn = FIELD_GRID_SIZE - 1 - firstColumn;
-    if (secondRow % 2) secondColumn = FIELD_GRID_SIZE - 1 - secondColumn;
-    return abs(firstColumn - secondColumn) + abs(firstRow - secondRow) == 1;
-}
-
-// 判断 start -> middle -> end 是否是方向不变的一条直线。
-// 叉积为 0 代表三点共线，点积大于 0 代表没有掉头。
-// 例如 1-2-3 返回 true，而 1-2-1 返回 false。
-bool continuesStraight(const NodePosition &start, const NodePosition &middle, const NodePosition &end) {
-    float firstX = middle.x - start.x;
-    float firstY = middle.y - start.y;
-    float secondX = end.x - middle.x;
-    float secondY = end.y - middle.y;
-    float cross = firstX * secondY - firstY * secondX;
-    float dot = firstX * secondX + firstY * secondY;
-    return fabsf(cross) < 0.001f && dot > 0.0f;
-}
-
 // 把任意航向角换算到 0~360 度范围。
 float normalizeHeading(float heading) {
     heading = fmodf(heading, 360.0f);
@@ -162,164 +132,6 @@ float normalizeHeading(float heading) {
         heading += 360.0f;
     }
     return heading;
-}
-
-/**
- * EMM V5 说明书给出的加速规律：
- * 每增加 1 RPM 用时 (256 - acceleration) * 50 us。
- * 位置模式按对称加减速估算；短行程使用三角速度曲线。
- */
-uint32_t estimateMotionTimeMs(uint32_t pulses, uint16_t speedRpm, uint8_t acceleration) {
-    if (pulses == 0 || speedRpm == 0) {
-        return 0;
-    }
-
-    float revolutions =
-        static_cast<float>(pulses) / MOTOR_PULSES_PER_REVOLUTION;
-    float maximumSpeed = static_cast<float>(speedRpm) / 60.0f;
-    float durationSeconds = 0.0f;
-
-    if (acceleration == 0) {
-        // 加速度档位为 0：驱动器直接达到目标速度，不计算加减速过程。
-        durationSeconds = revolutions / maximumSpeed;
-    } else {
-        // 驱动器每增加 1 RPM 所需的秒数。
-        float secondsPerRpm =
-            static_cast<float>(256 - acceleration) * 50.0e-6f;
-        // 将 RPM/s 换算成 圈/s²，方便与脉冲圈数统一计算。
-        float accelerationRpmPerSecond = 1.0f / secondsPerRpm;
-        float accelerationRevPerSecondSquared =
-            accelerationRpmPerSecond / 60.0f;
-        // 从 0 加速到目标速度、再减速到 0 所需的总距离。
-        float accelerationAndDecelerationDistance =
-            maximumSpeed * maximumSpeed / accelerationRevPerSecondSquared;
-
-        if (revolutions >= accelerationAndDecelerationDistance) {
-            // 距离足够长：加速 -> 匀速 -> 减速，使用梯形速度曲线。
-            float rampTime =
-                2.0f * maximumSpeed / accelerationRevPerSecondSquared;
-            float cruiseTime =
-                (revolutions - accelerationAndDecelerationDistance)
-                / maximumSpeed;
-            durationSeconds = rampTime + cruiseTime;
-        } else {
-            // 距离较短：还未达到设定速度就要减速，使用三角速度曲线。
-            float peakSpeed =
-                sqrtf(revolutions * accelerationRevPerSecondSquared);
-            durationSeconds =
-                2.0f * peakSpeed / accelerationRevPerSecondSquared;
-        }
-    }
-
-    // 运动时间增加 30% 后向上取整，再加停车稳定时间，避免下一段过早开始。
-    return static_cast<uint32_t>(ceil(durationSeconds * 1000.0 * MOTOR_MOTION_TIME_MARGIN))
-           + ROUTE_SETTLE_TIME_MS;
-}
-
-// 按运动估算及等待余量阻塞当前 FreeRTOS 任务，实际到位仍需确认。
-// vTaskDelay 只阻塞调用本函数的任务，不会卡住串口等其他 FreeRTOS 任务。
-void waitForPhysicalMotion(uint32_t pulses, uint16_t speedRpm, uint8_t acceleration) {
-    uint32_t delayMs = estimateMotionTimeMs(pulses, speedRpm, acceleration);
-    if (delayMs > 0) {
-        Serial.printf("[Route] Waiting for motion to complete: %lu ms\n",
-                      static_cast<unsigned long>(delayMs));
-        vTaskDelay(pdMS_TO_TICKS(delayMs));
-    }
-}
-
-// 下发四轮同步原地旋转命令，然后等待车辆完全停稳。
-void commandSynchronizedRotation(float angle, uint16_t speedRpm, uint8_t acceleration) {
-    // 这里沿用现有 GotoPose 的旋转方向约定：负角度用方向 0，正角度用方向 1。
-    uint8_t direction = (angle < 0.0f) ? 0 : 1;
-    // 角度乘以旋转标定系数，得到每个电机需要运行的脉冲数。
-    uint32_t pulses =
-        static_cast<uint32_t>(lroundf(fabsf(angle) * THETA_PULSE));
-
-    // 同步标志设为 true：四条命令只装载参数，暂时不开始运动。
-    for (uint8_t motor = 1; motor <= 4; ++motor) {
-        Emm_V5_Pos_Control(
-            motor, direction, speedRpm, acceleration, pulses, false, true
-        );
-        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
-    }
-    // 广播同步触发命令，让四个轮子同时开始旋转。
-    Emm_V5_Synchronous_motion(0);
-    waitForPhysicalMotion(pulses, speedRpm, acceleration);
-}
-
-// 下发四轮同步车身 Y 轴直行命令；负距离为后退。
-void commandSynchronizedStraight(float distance, uint16_t speedRpm, uint8_t acceleration) {
-    // 沿用原前进标定 X_PULSE，后退仅反转四轮方向，不做横向平移。
-    uint32_t pulses =
-        static_cast<uint32_t>(lroundf(fabsf(distance) * X_PULSE));
-    // 与 MovePose(0, ...) 使用相同的“车头向前”电机方向。
-    constexpr uint8_t FORWARD_DIRECTIONS[4] = {1, 0, 1, 0};
-
-    // 先把相同的距离、速度和加速度装载到四个电机。
-    for (uint8_t motor = 1; motor <= 4; ++motor) {
-        Emm_V5_Pos_Control(
-            motor, distance < 0.0f ? 1 - FORWARD_DIRECTIONS[motor - 1]
-                                  : FORWARD_DIRECTIONS[motor - 1],
-            speedRpm, acceleration,
-            pulses, false, true
-        );
-        vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
-    }
-    // 四轮同步启动，避免逐个启动造成车身偏转。
-    Emm_V5_Synchronous_motion(0);
-    waitForPhysicalMotion(pulses, speedRpm, acceleration);
-}
-
-// 执行一段已经简化好的节点移动：选择转角较小的前进/后退朝向，再直行。
-bool executeNodeSegment(uint8_t startNode, uint8_t endNode, uint16_t speedRpm, uint8_t acceleration, float finalHeading = NAN) {
-    NodePosition start;
-    NodePosition end;
-    if (!getNodePosition(startNode, start) || !getNodePosition(endNode, end)) {
-        return false;
-    }
-
-    float deltaX = end.x - start.x;       // 目标相对起点的 X 距离
-    float deltaY = end.y - start.y;       // 目标相对起点的 Y 距离
-    float distance = hypotf(deltaX, deltaY); // 本段直线距离
-    // atan2 根据 X/Y 差值求出目标方向：+X 为 0 度，+Y 为 90 度。
-    const float travelHeading =
-        normalizeHeading(atan2f(deltaY, deltaX) * 180.0f / PI);
-    const bool finish = !isnan(finalHeading);
-    const auto plan = PlanNodeSegmentHeading(normalizeHeading(currentPose.theta),
-        travelHeading, finish, finish ? normalizeHeading(finalHeading) : 0.0f);
-    const float targetHeading = plan.heading;
-    const float turn = plan.turn;
-    const bool reverse = plan.reverse;
-
-    Serial.printf(
-        "[Route] Node %u -> %u, distance %.0f mm, target heading %.0f deg\n",
-        startNode, endNode, distance, targetHeading
-    );
-    Serial.printf("[Route] Current heading %.0f deg, commanded turn %.1f deg\n",
-                  currentPose.theta, turn);
-
-    // 第一步：车辆原地转到目标方向，并等待转向完全结束。
-    if (fabsf(turn) > ROUTE_ANGLE_EPSILON_DEG) {
-        Serial.printf("[Route] Rotating in place %.1f deg\n", turn);
-        commandSynchronizedRotation(turn, speedRpm, acceleration);
-    }
-    currentPose.theta = targetHeading;
-
-    // 第二步：只沿车身 Y 轴前进或后退，不使用麦克纳姆轮横向平移。
-    Serial.printf("[Route] Moving %s %.0f mm\n", reverse ? "backward" : "forward", distance);
-    commandSynchronizedStraight(reverse ? -distance : distance, speedRpm, acceleration);
-    // 当前没有外部定位反馈，因此运动结束后更新的是“理想位姿”。
-    currentPose.x = end.x;
-    currentPose.y = end.y;
-    if (finish) {
-        Serial.printf("[Route] Final heading %.0f deg, arrival turn %.1f deg\n",
-                      normalizeHeading(finalHeading), plan.finishTurn);
-        if (fabsf(plan.finishTurn) > ROUTE_ANGLE_EPSILON_DEG) {
-            commandSynchronizedRotation(plan.finishTurn, speedRpm, acceleration);
-        }
-        currentPose.theta = normalizeHeading(finalHeading);
-    }
-    return true;
 }
 
 } // namespace
@@ -894,19 +706,6 @@ void ResetDiscAlignmentPid() {
     resetPid(s_cornerAnglePid);
 }
 
-/**
- * @brief 根据连续视觉误差计算三个 PID 速度权重并进行全向闭环对齐。
- * @param angleErrorDeg 角度误差（度）
- * @param visualXError 视觉 X 误差（视觉输出值）
- * @param visualYError 视觉 Y 误差（视觉输出值）
- * @param dtSeconds 时间间隔（秒）
- * @param speedRpm 目标速度（RPM）
- * @return 是否成功对齐
- */
-bool AlignToDiscContinuous(float angleErrorDeg, float visualXError,  float visualYError, float dtSeconds,  uint16_t speedRpm) {
-    return AlignToVisionContinuous(VisionStartMode::DISC, angleErrorDeg,  visualXError, visualYError, dtSeconds, speedRpm);
-}
-
 void ResetAlignmentWait() {
     s_alignmentWaiter.reset();
 }
@@ -986,38 +785,4 @@ bool MoveNodePath(const uint8_t *path, size_t pathLength, float speedMmS, uint8_
     // acceleration是旧位置模式档位，新控制器使用独立mm/s²加速度限幅。
     (void)acceleration;
     return H30RunNodePath(path,pathLength,speedMmS,finalHeading);
-}
-
-/**
- * @brief 机械臂初始化归零位
- */
-namespace {
-bool waitObservation(ArmObservation pose) {
-    MotionRequest request;request.kind=MotionKind::ARM_POSE;request.observation=pose;
-    request.zone=static_cast<uint8_t>(currentStartZone);
-    return WaitMotion(SubmitMotion(request));
-}
-}
-/**
- * @brief 同步提交并等待START收臂姿态，供旧调试入口调用。
- */
-bool InitArm_start(){return waitObservation(ArmObservation::START);}
-/**
- * @brief 同步提交并等待工位视觉前LOOK姿态，供旧调试入口调用。
- */
-bool InitArm_look(){return waitObservation(ArmObservation::LOOK);}
-/**
- * @brief 同步提交并等待圆盘整体对齐前LOOK2姿态。
- */
-bool InitArm_look2(){return waitObservation(ArmObservation::LOOK2);}
-/**
- * @brief 同步提交并等待圆盘单件识别前LOOK3姿态及转台实测就绪。
- */
-bool InitArm_look3(){return waitObservation(ArmObservation::LOOK3);}
-/**
- * @brief 同步提交并等待返家角点视觉前LOOK4姿态。
- */
-bool InitArm_look4(){
-    MotionRequest r;r.kind=MotionKind::HOME_OBSERVE;r.zone=static_cast<uint8_t>(currentStartZone);
-    return WaitMotion(SubmitMotion(r));
 }

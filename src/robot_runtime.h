@@ -101,11 +101,6 @@ extern TimerHandle_t xHomeTimer;
 extern SemaphoreHandle_t xLidarPoseMutex;
 
 /**
- * @brief 请求起终点节点路径并同步等待导航作业；正式主状态机改用 SubmitMotion。
- * @return true 路径作业完成，false 请求或执行失败。
- */
-bool requestAndMoveNodePath(uint8_t startNode, uint8_t endNode, float finalHeading = NAN);
-/**
  * @brief 读取自动对齐状态，供主流程决定是否进入取放料阶段。
  */
 AutoAlignmentState getAutoAlignmentState();
@@ -118,11 +113,6 @@ AutoAlignmentState getAutoAlignmentState();
  * @param onlyOwner 是否仅允许匹配拥有者关闭。
  */
 void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false, VisionStartMode owner = VisionStartMode::NONE, bool onlyOwner = false);
-/**
- * @brief 同步兼容入口：提交起始区扫码姿态并等待结果。
- * @return true 作业成功，false 未提交或执行失败。
- */
-bool runLidarPoseAction(bool fromCommand = false, bool allowRepeat = false);
 /**
  * @brief 按起始区提交扫码准备姿态，正式模式复用已完成标志避免重复动作。
  * @param fromCommand true 表示串口显式请求。
@@ -170,10 +160,6 @@ void Task_Serial_CMD(void *pvParameters);
  * @brief 采样板载BOOT按钮并记录Release请求，实际切换由空闲串口任务处理。
  */
 void PollDebugBootButton(); // loop采样，Release由空闲的串口任务统一执行。
-/**
- * @brief 接收视觉反馈并发布最新数据；实际闭环发令由运动任务推进。
- */
-void Task_VisualAlignment(void *pvParameters);
 /**
  * @brief 比赛总计时器超时回调，执行既有停止、失败状态及主任务暂停处理。
  */
