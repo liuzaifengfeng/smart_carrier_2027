@@ -195,10 +195,22 @@ bool placeAt(const MaterialStationPose &pose, float targetHeight,
         waitForArm(delays.placeAbove.rotateMs);
     } else if (!moveAbove(pose, materialTransferLayout.clawClosedAngle,
                           delays.placeAbove, plannedAngle, turretRampMs)) return false;
-    // 缩回后的搬运在转向后同时伸出、下降；其他放料仍沿用原先的垂直下降。
-    if (!MoveArm(targetHeight, fromRetracted ? pose.length : -1.0f, -1,
-                 materialTransferLayout.clawClosedAngle, materialMotionSteps.placeDescendSpeed, turretRampMs, turretRampMs==500)) return false;
-    waitForArm(delays.placeDescendMs);
+    if(turretRampMs==500) {
+        // 第一段沿用原下降延时，最后10mm只等待100ms，不查到位反馈。
+        if(!MoveArm(10,fromRetracted?pose.length:-1,-1,
+                    materialTransferLayout.clawClosedAngle,materialMotionSteps.placeDescendSpeed,turretRampMs,true))return false;
+        waitForArm(delays.placeDescendMs);
+        if(!MoveArm(0,-1,-1,-1,materialMotionSteps.placeDescendSpeed,turretRampMs,true))return false;
+        waitForArm(100);
+    } else {
+        if(!MoveArm(targetHeight,fromRetracted?pose.length:-1,-1,
+                    materialTransferLayout.clawClosedAngle,materialMotionSteps.placeDescendSpeed,turretRampMs))return false;
+        waitForArm(delays.placeDescendMs);
+    }
+    if(turretRampMs==500) { // 仅工位第一层放料，载物台和二层不分段松爪。
+        if(!MoveArm(-1,-1,-1,0,materialMotionSteps.placeReleaseSpeed))return false;
+        waitForArm(300);
+    }
     if (!MoveArm(-1, -1, -1, materialTransferLayout.clawOpenAngle, materialMotionSteps.placeReleaseSpeed)) return false;
     waitForArm(delays.placeReleaseMs);
     if (!MoveArm(materialTransferLayout.approachHeight, -1, -1, -1, materialMotionSteps.placeLiftSpeed)) return false;

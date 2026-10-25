@@ -48,18 +48,25 @@ void forward() {
         const auto &delays=cargoToWorkAreaDelays[c-1][w-1];
         assert(p.steps[0].waitMs==delays.pickAbove.translateMs);
         assert(near(p.steps[0].length,materialTransferLayout.cargo[c-1].length));
-        bool release=false,retract=false;int commits=0;
+        bool release=false,retract=false;int commits=0,partialReleases=0;
         for(size_t i=0;i<p.count;++i) {
             const auto &s=p.steps[i];
             if(s.kind==motion::StepKind::ARM)assert(s.turretRampMs==(layer==1?500:20));
-            assert(s.slowLower==(!strcmp(s.name,"PLACE_DESCEND")&&layer==1));
+            assert(s.slowLower==((!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_10"))&&layer==1));
+            if(s.slowLower)assert(s.timed);
             if(!strcmp(s.name,"PICK_RETRACT")){assert(s.length==0);retract=true;}
-            if(!strcmp(s.name,"PLACE_DESCEND"))assert(near(s.high,materialTransferLayout.workArea[w-1].high+(layer-1)*materialTransferLayout.secondLayerOffset));
+            if(!strcmp(s.name,"PLACE_DESCEND_10")){assert(s.high==10&&s.waitMs==delays.placeDescendMs&&p.steps[i+1].high==0&&p.steps[i+1].waitMs==100);}
+            if(!strcmp(s.name,"PLACE_DESCEND"))assert(near(s.high,layer==1?0:materialTransferLayout.workArea[w-1].high+(layer-1)*materialTransferLayout.secondLayerOffset));
+            if(!strcmp(s.name,"PLACE_RELEASE_ZERO")){
+                assert(layer==1&&s.pawl==0&&s.waitMs==300&&s.timed);
+                assert(s.high==-1&&s.length==-1&&s.turret==-1);
+                assert(!strcmp(p.steps[i+1].name,"PLACE_RELEASE"));++partialReleases;
+            }
             if(!strcmp(s.name,"PLACE_RELEASE")){assert(s.waitMs==delays.placeReleaseMs&&s.holdMs==41);release=true;}
             if(s.kind==motion::StepKind::COMMIT){assert(release&&retract&&i==p.count-1&&s.cargo==c&&s.color==MATERIAL_NONE);++commits;}
             if(s.planned)assert(s.turret>=TURRET_CABLE_MIN_DEG&&s.turret<=TURRET_CABLE_MAX_DEG);
         }
-        assert(commits==1);
+        assert(commits==1&&partialReleases==(layer==1?1:0));
     }
 }
 void reverse() {
@@ -68,6 +75,7 @@ void reverse() {
         MotionRequest r;r.kind=MotionKind::RETRIEVE;r.cargo=c;r.work=w;r.color=6;
         motion::Program p;assert(!BuildArmProgram(r,p));
         for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretRampMs==20&&!p.steps[i].slowLower);
+        for(size_t i=0;i<p.count;++i)assert(strcmp(p.steps[i].name,"PLACE_RELEASE_ZERO"));
         assert(p.steps[0].waitMs==workAreaToCargoDelays[w-1][c-1].pickAbove.translateMs);
         bool lift=false;
         for(size_t i=0;i<p.count;++i)if(!strcmp(p.steps[i].name,"PICK_LIFT")){assert(p.steps[i].length==0);lift=true;}
@@ -83,6 +91,7 @@ void rounds() {
     assert(commits==3);
     for(uint8_t layer:{1,2}) {
         r.layer=layer;assert(!BuildArmProgram(r,p));
+        assert(p.count==(layer==1?48:42));
         for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretRampMs==(layer==1?500:20));
     }
     angleAvailable=false;assert(BuildArmProgram(r,p));
@@ -196,6 +205,8 @@ void poses() {
     assert(issuedArm[1].turretRampMs==500);
     assert(issuedArm[6].turretRampMs==500);
     assert(issuedArm[7].slowLower);
+    assert(issuedArm[7].high==10&&issuedArm[8].high==0&&issuedArm[8].slowLower);
+    assert(issuedArm[9].pawl==0&&issuedArm[10].pawl==materialTransferLayout.clawOpenAngle);
     issuedArm.clear();assert(MoveDiscToCargo(1,1));
     assert(issuedArm[1].turretRampMs==20);
     assert(issuedArm[5].turretRampMs==20);

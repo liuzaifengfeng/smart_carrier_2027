@@ -263,9 +263,14 @@ bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writab
         transaction = false;
         for (size_t i = 0; i < count; ++i) {
             const Parameter &p = parameters[i];
-            Serial.printf("{RSP,CFG,GET,VALUE,%lu,%u,%s,%.9g,%.9g,%.9g,%u}\n",
+            // 参数值保持便于阅读的9位精度；范围使用足够精度，避免上位机导出时
+            // 将 FLT_MAX 舍入成略大的数。uint32上限在float表中会舍入到2^32，回传时恢复准确边界。
+            const double minimum = static_cast<double>(p.minimum);
+            const double maximum = p.integer && static_cast<double>(p.maximum) > static_cast<double>(UINT32_MAX)
+                ? static_cast<double>(UINT32_MAX) : static_cast<double>(p.maximum);
+            Serial.printf("{RSP,CFG,GET,VALUE,%lu,%u,%s,%.9g,%.17g,%.17g,%u}\n",
                 static_cast<unsigned long>(id), static_cast<unsigned>(i), p.name,
-                readValue(p), p.minimum, p.maximum, p.integer ? 1 : 0);
+                readValue(p), minimum, maximum, p.integer ? 1 : 0);
             // 逐帧排空串口，避免扩充后的参数表连续发送时被 USB/UART 桥丢弃。
             Serial.flush();
             delay(2);

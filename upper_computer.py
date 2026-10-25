@@ -4178,7 +4178,10 @@ class UpperComputerApp:
                     self.led_status.set("设备启动或模式改变，请重新查询亮度")
                 self._accept_target_echo(text)
                 if fields is not None and fields[:3] == ("RSP", "ARM", "SERVO_ZERO"):
-                    if len(fields) == 5 and fields[3] == "ISSUED":
+                    if len(fields) == 7 and fields[3] == "READBACK":
+                        self.arm_status_var.set(f"舵机{fields[4]}设零后实测：单圈{fields[5]}°，多圈{fields[6]}°。")
+                        self.query_poses()
+                    elif len(fields) == 5 and fields[3] == "ISSUED":
                         self.arm_status_var.set(f"舵机{fields[4]}设置零点指令已下发，请回读实测角度确认。")
                     elif len(fields) == 5 and fields[3] == "ERR":
                         self.arm_status_var.set(f"设置零点失败：{fields[4]}（MODE需Debug模式，BUSY表示动作执行中）。")

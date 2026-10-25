@@ -48,12 +48,13 @@ constexpr float ROUTE_ANGLE_EPSILON_DEG = 0.01f;       // 小于该角度时不�
 // ================= 连续视觉对齐 PID 参数 =================
 // 输出均为 -1~1 的归一化车身速度权重，实际轮速由调用方传入的 speedRpm 决定。
 // 顺序对应 VisionStartMode；各行独立调整，X/Y 为视觉单位，角度为度。
+// 下列源码初值与 robot_parameters.json 保持一致；启动时仍由编译进固件的 JSON 默认值覆盖。
 VisionAlignmentDeadzone ALIGN_DEADZONES[] = {
-    {8.0f, 8.0f, 0.5f}, // DISC 圆盘对齐
-    {5.0f, 5.0f, 0.2f}, // DISC_MATERIAL 圆盘物料对齐
-    {5.0f, 5.0f, 0.2f}, // WORK_AREA
-    {5.0f, 5.0f, 0.2f}, // WORK_AREA_LOADED
-    {6.0f, 6.0f, 0.4f}, // CORNER
+    {10.0f, 10.0f, 0.3f}, // DISC 圆盘对齐
+    {5.0f, 5.0f, 0.1f},   // DISC_MATERIAL 圆盘物料对齐
+    {1.0f, 1.0f, 0.1f},   // WORK_AREA
+    {1.0f, 1.0f, 0.1f},   // WORK_AREA_LOADED
+    {8.0f, 8.0f, 0.3f},   // CORNER
 };
 AlignmentFrameWaiter s_alignmentWaiter;
 constexpr float ALIGN_DT_MIN_SECONDS = 0.02f;// 时间步长单位为秒
@@ -73,23 +74,23 @@ struct PidController {
 
 // 位置误差单位为视觉输出值；角度误差单位为度。
 PidController s_alignVisualXPid = {
-    0.01f, 0.0005f, 0.0f, 200.0f, 0.0f, 0.0f, false
+    0.01f, 0.0f, 0.0f, 300.0f, 0.0f, 0.0f, false
 };
 PidController s_alignVisualYPid = {
     0.01f, 0.0005f, 0.0f, 300.0f, 0.0f, 0.0f, false
 };
 PidController s_alignAnglePid = {
-    0.03f, 0.0005f, 0.0f, 20.0f, 0.0f, 0.0f, false
+    0.03f, 0.0005f, 0.0f, 30.0f, 0.0f, 0.0f, false
 };
 // CORNER 独立调参，并独立保存积分和微分历史。
 PidController s_cornerVisualXPid = {
-    0.01f, 0.0005f, 0.0f, 200.0f, 0.0f, 0.0f, false
+    0.005f, 0.0f, 0.0f, 200.0f, 0.0f, 0.0f, false
 };
 PidController s_cornerVisualYPid = {
-    0.01f, 0.0005f, 0.0f, 300.0f, 0.0f, 0.0f, false
+    0.005f, 0.0f, 0.0f, 300.0f, 0.0f, 0.0f, false
 };
 PidController s_cornerAnglePid = {
-    0.03f, 0.0005f, 0.0f, 20.0f, 0.0f, 0.0f, false
+    0.015f, 0.0f, 0.0f, 20.0f, 0.0f, 0.0f, false
 };
 
 float clampFloat(float value, float minimum, float maximum) {

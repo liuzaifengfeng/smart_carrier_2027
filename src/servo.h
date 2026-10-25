@@ -125,7 +125,7 @@ bool Servo_QueryAngleMTurn(uint8_t servoId, float &currentAngle, uint32_t timeou
 // 先释放锁力，再重置累计圈数，随后在当前位置恢复锁力并回读。
 // 仅改变舵机的多圈计数，不下发旋转目标；返回 true 表示回读成功。
 bool Servo_ResetTurnCount(uint8_t servoId, float &newAngle);
-/** @brief 发送设置当前位置为原点指令(0x17，reset=0)，返回是否已下发，不代表舵机确认。 */
+/** @brief 先释放锁力、设置原点(0x17，reset=0)、再恢复锁力；返回是否已下发。 */
 bool Servo_SetOrigin(uint8_t servoId);
 
 /**

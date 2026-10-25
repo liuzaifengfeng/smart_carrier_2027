@@ -13,18 +13,17 @@ void Emm_V5_Init(void)
   delay(100);
   Emm_V5_Reset_Clog_Pro(0);
   delay(10);
-  // 保留1~4号底盘清零，5、6号改为返回已保存的单圈零点。
+  // 保留1~4号底盘清零；5号升降轴只使能，不执行回零；6号伸缩轴返回已保存的单圈零点。
   for (uint8_t addr = 1; addr <= 4; ++addr) {
     Emm_V5_Reset_CurPos_To_Zero(addr);
     Serial1.flush();
     delay(10);
   }
   Serial.println("[Emm_V5] startup position zero issued to chassis motors 1-4");
-  // 5号升降、6号伸缩：使能后触发单圈就近回零，不重新设置零点。
+  // 5号升降轴只使能，不触发回零。
   Emm_V5_En_Control(5, true, false);
   delay(10);
-  Emm_V5_Origin_Trigger_Return(5, 0, false);
-  delay(10);
+  // 6号伸缩轴使能后触发单圈就近回零，不重新设置零点。
   Emm_V5_En_Control(6, true, false);
   delay(10);
   Emm_V5_Origin_Trigger_Return(6, 0, false);

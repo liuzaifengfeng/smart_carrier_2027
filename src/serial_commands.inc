@@ -404,7 +404,7 @@ static void serialDispatch(const SerialFrame &frame) {
         &&!frame.is("NAV","TRIAL_STATUS",1)&&!frame.is("NAV","TRIAL_STOP",1)&&!frame.is("NAV","STOP",0)
         &&!frame.starts("NAV","ROUTE")&&!frame.is("NAV","START_ZONE",1)
         &&!frame.is("SYS","HELLO",0)&&!frame.is("SYS","HELP",0)&&!frame.is("SYS","START",0)&&!frame.is("SYS","READY",0)
-        &&!frame.is("TASK","SET",1)&&!frame.is("VISION","ALIGN_DATA",3)
+        &&!frame.is("TASK","SET",1)&&!frame.is("VISION","ALIGN_DATA",3)&&!frame.is("VISION","LIDAR_POSE",0)
         &&!frame.is("VISION","COLOR",1)&&!frame.starts("VISION","DISC_POSITIONS")&&!frame.starts("VISION","GRAB")
         &&!frame.is("VISION","STOP_REQUEST",1)&&!frame.is("VISION","ALIGN_STOP",0)) {
         serialError(frame,"BUSY");return;
@@ -692,7 +692,13 @@ static void serialDispatch(const SerialFrame &frame) {
         uint32_t id=0;
         if(!serialUInt(frame.fields[3],id,253)){serialError(frame,"RANGE");return;}
         if(!Servo_SetOrigin(id)){serialError(frame,"SERVO_WRITE");return;}
-        Serial.printf("{RSP,ARM,SERVO_ZERO,ISSUED,%u}\n",static_cast<unsigned>(id));
+        float single=0,multi=0;
+        if(!Servo_QueryAngle(id,single,100)||!Servo_QueryAngleMTurn(id,multi,100)){
+            serialError(frame,"SERVO_READ");return;
+        }
+        if(id==1)currentArm.pawl_angle=multi;
+        if(id==2)currentArm.turret_angle=multi;
+        Serial.printf("{RSP,ARM,SERVO_ZERO,READBACK,%u,%.3f,%.3f}\n",static_cast<unsigned>(id),single,multi);
     } else if (frame.is("ARM", "SERVO", 2)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         uint32_t id = 0;

@@ -53,8 +53,18 @@ void place(Program &p,const MaterialStationPose &pose,float height,const Materia
         wait(p,"PLACE_TRANSLATE_WAIT",d.placeAbove.translateMs);wait(p,"PLACE_SETTLE",d.placeAbove.settleMs);
         arm(p,"PLACE_ROTATE",-1,-1,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,d.placeAbove.rotateMs,angle);
     } else above(p,pose,materialTransferLayout.clawClosedAngle,d.placeAbove,angle);
-    arm(p,"PLACE_DESCEND",height,retracted?pose.length:-1,-1,materialTransferLayout.clawClosedAngle,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
-    p.steps[p.count-1].slowLower=slowLower;
+    if(slowLower) {
+        arm(p,"PLACE_DESCEND_10",10,retracted?pose.length:-1,-1,materialTransferLayout.clawClosedAngle,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+        p.steps[p.count-1].slowLower=true;
+        p.steps[p.count-1].timed=true; // 原下降延时结束后下发最后10mm，不查到位反馈。
+        arm(p,"PLACE_DESCEND",0,-1,-1,-1,materialMotionSteps.placeDescendSpeed,100);
+        p.steps[p.count-1].slowLower=true;
+        p.steps[p.count-1].timed=true;
+    } else arm(p,"PLACE_DESCEND",height,retracted?pose.length:-1,-1,materialTransferLayout.clawClosedAngle,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+    if(slowLower) { // 仅工位第一层：先卸去夹紧力，300ms后再完全张开。
+        arm(p,"PLACE_RELEASE_ZERO",-1,-1,-1,0,materialMotionSteps.placeReleaseSpeed,300);
+        p.steps[p.count-1].timed=true;
+    }
     arm(p,"PLACE_RELEASE",-1,-1,-1,materialTransferLayout.clawOpenAngle,materialMotionSteps.placeReleaseSpeed,d.placeReleaseMs,false,ARM_RELEASE_HOLD_MS);
     arm(p,"PLACE_LIFT",materialTransferLayout.approachHeight,-1,-1,-1,materialMotionSteps.placeLiftSpeed,d.placeLiftMs);
 }

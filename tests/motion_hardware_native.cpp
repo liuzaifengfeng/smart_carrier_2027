@@ -53,6 +53,7 @@ void feedback() {
     MotionHardware hardware;hardware.configure(1,cancelled);
     motion::Step s;s.kind=motion::StepKind::ARM;s.high=100;s.length=20;s.turret=90;s.pawl=50;s.speed=200;
     assert(!hardware.feedback(s));ARM_FEEDBACK_ENABLED=1;assert(hardware.feedback(s));
+    s.timed=true;assert(!hardware.feedback(s));s.timed=false;
     bool done=false;turretMeasured=90;clawMeasured=50;flags=1;
     assert(!hardware.ready(s,done)&&!done); // 目标缓存相同，驱动器尚未到位。
     flags=3;motorAtTarget=false;assert(!hardware.ready(s,done)&&!done);

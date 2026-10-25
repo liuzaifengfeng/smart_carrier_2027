@@ -37,7 +37,7 @@ class ServoMultiturnIntervalTests(unittest.TestCase):
         source = (ROOT / "src/servo.cpp").read_text(encoding="utf-8")
         header = (ROOT / "src/servo.h").read_text(encoding="utf-8")
         names = ("FSUS_PACK_REQ_HEADER", "FSUS_CMD_SET_ANGLE_MTURN",
-                 "FSUS_CMD_SET_ANGLE_MTURN_INTERVAL", "FSUS_CMD_SET_ORIGIN")
+                 "FSUS_CMD_SET_ANGLE_MTURN_INTERVAL", "FSUS_CMD_SET_ORIGIN", "FSUS_CMD_STOP")
         constants = "\n".join(re.search(r"(?m)^#define " + name + r"\s+0x[0-9A-Fa-f]+",
                                          header).group() for name in names)
         actual = "\n".join(function_source(source, signature) for signature in (
@@ -51,6 +51,8 @@ class ServoMultiturnIntervalTests(unittest.TestCase):
         harness = r'''
 #include <stdint.h>
 CONSTANTS
+constexpr uint32_t pdMS_TO_TICKS(uint32_t value){return value;}
+constexpr void vTaskDelay(uint32_t){}
 struct ServoBusGuard { bool locked=true; };
 struct Port {
     uint8_t bytes[32]={};
@@ -104,7 +106,10 @@ constexpr bool legacyClawPacket() {
 }
 constexpr bool originPacket() {
     Run r;if(!r.Servo_SetOrigin(2))return false;
-    const uint8_t expected[]={0x12,0x4C,0x17,0x02,0x02,0x00,0x79};
+    const uint8_t expected[]={
+        0x12,0x4C,0x18,0x04,0x02,0x10,0x00,0x00,0x8C,
+        0x12,0x4C,0x17,0x02,0x02,0x00,0x79,
+        0x12,0x4C,0x18,0x04,0x02,0x11,0x00,0x00,0x8D};
     return matches(r.port,expected);
 }
 static_assert(originPacket(), "set origin ID2, reset=0 and checksum");

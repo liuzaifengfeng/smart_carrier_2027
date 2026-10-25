@@ -337,5 +337,7 @@ Release 自动流程继续使用 DISC 定位完成后开启 DISC_MATERIAL 的切
 设备时间为开机毫秒，编号 0 为业务/视觉。SPAN/STEP 可嵌套或并行，不得累计成总成绩；RUN_RESULT 缺失则本次计时不完整。未收到首帧便停止视觉时 ERROR 而不生成首帧 END。分析命令、完成策略及实车验收见 [统一运动执行](motion_executor.md)。
 
 ### 舵机当前位置设为零点
-机械臂页“舵机零点设置”发送 `{CMD,ARM,SERVO_ZERO,ID}`，仅Debug且运动空闲时执行。固件下发厂商0x17设置原点指令，内容为ID、reset=0；回复 `{RSP,ARM,SERVO_ZERO,ISSUED,ID}` 仅代表已下发，可通过位姿回读确认。该操作改变舵机后续角度目标的基准，不等于0x11重置圈数。
+机械臂页“舵机零点设置”发送 `{CMD,ARM,SERVO_ZERO,ID}`，仅Debug且运动空闲时执行。固件下发厂商0x17设置原点指令，内容为ID、reset=0；执行后回读并回复 `{RSP,ARM,SERVO_ZERO,READBACK,ID,单圈角度,多圈角度}`，界面显示实测角度。该操作改变舵机后续角度目标的基准，不等于0x11重置圈数。
 协议依据：https://fashionstar.com.cn/wiki/protocols/servo/uart-rs485/#22
+
+SERVO_ZERO补充：按厂商SDK要求先用0x18释放锁力，再发0x17设原点，之后0x18恢复当前位置锁力，帧间隔10ms。完成后读取0x0A单圈及0x10多圈角度，返回 `{RSP,ARM,SERVO_ZERO,READBACK,ID,单圈角度,多圈角度}`，界面显示实测结果；回读失败返回SERVO_READ。参考：https://fashionstar.com.cn/wiki/sdk/servo/arduino-esp32-sdk/

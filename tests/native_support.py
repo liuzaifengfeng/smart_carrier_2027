@@ -23,7 +23,8 @@ def build_native(name, sources):
     exe = cache / (name + (".exe" if os.name == "nt" else ""))
     env = dict(os.environ)
     env["PATH"] = str(Path(command[0]).parent) + os.pathsep + env.get("PATH", "")
-    result = subprocess.run(command + ["-std=c++14", "-O1", "-I", str(ROOT / "src"),
+    # Zig优化构建可能定义NDEBUG；原生测试必须保留assert及其中的执行调用。
+    result = subprocess.run(command + ["-std=c++14", "-O1", "-UNDEBUG", "-I", str(ROOT / "src"),
                             "-I", str(ROOT / "tests/native_stubs"), "-I", str(cache), *[str(ROOT / s) for s in sources],
                             "-o", str(exe)], capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     if result.returncode:

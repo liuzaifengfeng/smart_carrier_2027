@@ -338,8 +338,15 @@ void Servo_Stop(uint8_t servoId) {
 bool Servo_SetOrigin(uint8_t servoId) {
     ServoBusGuard guard;
     if(!guard.locked)return false;
+    // 厂商SDK要求失锁后才能设置原点；结束后从当前位置恢复锁力。
+    const uint8_t release[4]={servoId,0x10,0,0};
     const uint8_t content[2]={servoId,0};
+    const uint8_t hold[4]={servoId,0x11,0,0};
+    sendPacket(FSUS_CMD_STOP,release,sizeof(release));
+    s_servoSerial->flush();vTaskDelay(pdMS_TO_TICKS(10));
     sendPacket(FSUS_CMD_SET_ORIGIN,content,sizeof(content));
-    s_servoSerial->flush();
+    s_servoSerial->flush();vTaskDelay(pdMS_TO_TICKS(10));
+    sendPacket(FSUS_CMD_STOP,hold,sizeof(hold));
+    s_servoSerial->flush();vTaskDelay(pdMS_TO_TICKS(10));
     return true;
 }

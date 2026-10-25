@@ -95,6 +95,8 @@ bool updateDisplay(const char *,const char *,const char *){return true;}
 void sendPoseQueryReply(){++poseQueries;Serial.println("{RSP,POSE,GET,OK,0,0,0,0,0,0,0}");}
 uint8_t originId=255;
 bool Servo_SetOrigin(uint8_t id){originId=id;return true;}
+bool Servo_QueryAngle(uint8_t,float &angle,uint32_t){angle=0;return true;}
+bool Servo_QueryAngleMTurn(uint8_t,float &angle,uint32_t){angle=0;return true;}
 void CalibrateH30MapHeading(float){++calibrations;}
 bool headingCollecting=false;
 bool H30UsbHeadingAverageActive(){return headingCollecting;}
@@ -159,7 +161,7 @@ void positions() {
 }
 void maintenance() {
     dispatch("{CMD,ARM,SERVO_ZERO,2}");assert(originId==2);
-    assert(Serial.text.find("{RSP,ARM,SERVO_ZERO,ISSUED,2}")!=std::string::npos);
+    assert(Serial.text.find("{RSP,ARM,SERVO_ZERO,READBACK,2,0.000,0.000}")!=std::string::npos);
 
     dispatch("{CMD,ARM,INIT_START}");assert(captured.kind==MotionKind::ARM_POSE&&active);
     dispatch("{CMD,IMU,GET}");dispatch("{CMD,POSE,GET}");dispatch("{CMD,CFG,GET,7}");assert(active&&poseQueries==1&&configQueries==1);
@@ -181,6 +183,14 @@ void lidar() {
     finish();CompleteLidarPose(true,false);
     dispatch("{CMD,VISION,LIDAR_POSE}");assert(submissions==1&&calibrations==0);
     assert(Serial.text.find("LIDAR_POSE_DONE")!=std::string::npos);
+    // 自动START后已在扫码或等路径，重复握手仍须返回已完成，不能再次斜移。
+    active=true;
+    const size_t before=Serial.text.size();
+    dispatch("{CMD,VISION,LIDAR_POSE}");
+    const auto reply=Serial.text.substr(before);
+    assert(reply.find("{RSP,VISION,LIDAR_POSE,OK}")!=std::string::npos);
+    assert(reply.find("{EVT,VISION,LIDAR_POSE_DONE}")!=std::string::npos);
+    assert(reply.find("BUSY")==std::string::npos&&active&&submissions==1);
 }
 void trial() {
     dispatch("{CMD,NAV,TRIAL_START,42}");assert(active&&trialActive&&captured.kind==MotionKind::TRIAL);

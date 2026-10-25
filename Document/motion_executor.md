@@ -137,3 +137,7 @@ python -m unittest discover -s tests
 粗加工区两轮放料及暂存区第一层共9次工位放料，仅PLACE_DESCEND步骤设置slowLower：5号升降轴RPM减半、加速度档位252改248（EMM加速度约减半）；伸缩、夹爪、抬升、其他取放料及原步骤等待时间不变。
 
 开局START机械臂初始化程序完成后，先静置3秒让机构到位（REFERENCE_SETTLE），再连续采集3秒内每个新Yaw样本（REFERENCE_COLLECT）；整个6秒期间不执行开局斜移，以圆周平均值绑定地图180°，避免359°/0°跨界影响。采集结束输出REFERENCE_COLLECT样本数和平均Yaw，成功后输出REFERENCE OK，故障态使用的GPIO5补光灯闪两次（亮/灭各200ms）并恢复原设定亮度。采集与闪灯均不阻塞串口和OTA。启停区设置及开局斜移不再覆盖该参考；手动POSE SET仍可显式重标定。无采样数据时输出NO_DATA，保留维护通道，不额外等待或锁死。
+
+粗加工区及暂存区第一层工位放料，在PLACE_RELEASE前增加PLACE_RELEASE_ZERO：夹爪先给0°，按300ms固定计时后再张开到原clawOpenAngle。原松爪等待、释放保持及随后抬升不变。放入载物台、收料和第二层码放不增加该步骤。
+
+第一层工位放料下降改为PLACE_DESCEND_10（10mm）→PLACE_DESCEND（0mm），两段均使用现有半速/半加速度；降到10mm沿用原放料下降延时，最后10mm降到0mm固定等待100ms。两段均不查询到位反馈，即使开启全局ARM_FEEDBACK_ENABLED也使用延时。随后执行0°夹爪、300ms、完全张开。此路径最终目标为0mm；参数表的工作区高度仍用于取料及非第一层放料，载物台放料和二层码放不改变。

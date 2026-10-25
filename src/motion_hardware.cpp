@@ -38,7 +38,7 @@ const char *MotionHardware::issue(const Step &s) {
  */
 bool MotionHardware::feedback(const Step &s) {
     return s.kind==StepKind::POSITION||s.kind==StepKind::TURRET_READY||
-        (s.kind==StepKind::ARM&&ARM_FEEDBACK_ENABLED);
+        (s.kind==StepKind::ARM&&ARM_FEEDBACK_ENABLED&&!s.timed);
 }
 /**
  * @brief 检查位置移动、转台或机械臂实测到位条件，并通过 done 返回本次结果。
