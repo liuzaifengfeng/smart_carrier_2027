@@ -43,7 +43,7 @@ MaterialMotionSteps materialMotionSteps = {
 // 圆盘抓后：夹紧等待、抬升缩回等待，再使用放料六项控制转向、伸出下降及松爪抬升。
 // 延时顺序(ms)：取料平移、稳定、转向、下降、夹紧、抬升(圆盘同时缩回0)；放料旋转前等待、稳定、旋转、伸出下降、松爪、抬升。
 MaterialTransferDelays commonMaterialDelays =
-    {{100, 0, 900}, 700, 500, 300, {0, 0, 800}, 700, 200, 200};
+    {{100, 0, 900}, 700, 500, 300, {0, 0, 800}, 300, 100, 200};
 MaterialTransferDelays cargoToWorkAreaDelays[MATERIAL_STATION_COUNT][MATERIAL_STATION_COUNT] = {
     {
         {{100, 0, 1000}, 450, 500, 100, {100, 0, 1200}, 800, 200, 300}, // 1 -> 1

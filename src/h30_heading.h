@@ -59,23 +59,12 @@ private:
 };
 #undef H30_HEADING_CONSTEXPR
 
-/** @brief 固定3秒窗口内，仅对静止且通过圆周离群筛选的Yaw求平均。 */
+/** @brief 等待结束后，在固定3秒窗口内对每个新Yaw求圆周平均，不再筛选静止或离群样本。 */
 class H30HeadingAverage {
     uint32_t started_=0,count_=0;
     double sine_=0,cosine_=0;
-    H30MotionQuiet quiet_;
-    float seed_[5]={},center_=0;
-    uint8_t seedCount_=0;
     uint16_t sequence_=0;
     bool seen_=false;
-    uint32_t lastAccepted_=0,firstAccepted_=0;
-    static float distance(float a,float b){return fabsf(remainderf(a-b,360.0f));}
-    void clear(){count_=0;sine_=cosine_=0;seedCount_=0;}
-    void accumulate(float yaw,uint32_t now) {
-        if(!count_)firstAccepted_=now;
-        const double radians=yaw*0.017453292519943295;
-        sine_+=sin(radians);cosine_+=cos(radians);++count_;lastAccepted_=now;
-    }
 public:
     void begin(uint32_t now,uint32_t settleMs=0){*this=H30HeadingAverage{};started_=now+settleMs;}
     void add(const H30Attitude &sample) {
@@ -84,27 +73,12 @@ public:
         if(elapsed<0||elapsed>=3000)return;
         if(seen_&&sample.sequence==sequence_)return;
         seen_=true;sequence_=sample.sequence;
-        // 开局程序保证此阶段没有底盘运动指令；这里检查惯性安静，不宣称外部定位静止。
-        if(!quiet_.update(sample,true)){clear();return;}
         if(!isfinite(sample.yaw))return;
-        if(seedCount_<5) {
-            seed_[seedCount_++]=sample.yaw;
-            if(seedCount_<5)return;
-            float best=1e9f;
-            for(float candidate:seed_) {
-                float sum=0;for(float value:seed_)sum+=distance(value,candidate);
-                if(sum<best){best=sum;center_=candidate;}
-            }
-            for(float value:seed_)if(distance(value,center_)<=3)accumulate(value,now);
-            // 种子帧不能充当后续120ms的稳定观察时间。
-            firstAccepted_=now;
-            return;
-        }
-        if(distance(sample.yaw,center_)<=3)accumulate(sample.yaw,now);
+        const double radians=sample.yaw*0.017453292519943295;
+        sine_+=sin(radians);cosine_+=cos(radians);++count_;
     }
     bool collecting(uint32_t now)const{return static_cast<int32_t>(now-started_)>=0;}
     bool elapsed(uint32_t now)const{return static_cast<int32_t>(now-started_)>=3000;}
     uint32_t count()const{return count_;}
-    bool ready(uint32_t now)const{return count_>=4&&lastAccepted_-firstAccepted_>=120&&now-lastAccepted_<=100;}
     float yaw()const{return atan2(sine_,cosine_)*57.29577951308232;}
 };

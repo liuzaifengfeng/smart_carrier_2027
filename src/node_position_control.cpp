@@ -181,7 +181,9 @@ void Runner::moveTick() {
             if(!encoderSign[i]&&travelPulses[i]&&rawDelta)encoderSign[i]=(rawDelta>=0?1:-1)*(directions[i]?1:-1);
             stopped[i]=measured[i];
         }
-        io->timing(rotating?"TURN_ARRIVED":"STRAIGHT_ARRIVED");valid=true;arrived();return;
+        io->timing(rotating?"TURN_ARRIVED":"STRAIGHT_ARRIVED");valid=true;arrived();
+        // 四轮已停且位置到位，再等停轮后的三帧航向稳定，才用角度校角或接续直行。
+        settleNext=stage;headingStable.begin(io->now());stage=SETTLE;return;
     }
     if(sent&&allIdle&&io->now()-lastArrivalReport>=200) {
         io->arrivalDiagnostic(static_cast<float>(maxResidual/unitsPerDistance),measured);lastArrivalReport=io->now();
@@ -214,6 +216,66 @@ void Runner::moveTick() {
     }
     if(io->now()-lastReport>=200){io->report(rotating?"POSITION_TURN":"POSITION_STRAIGHT",*output,targetHeading);lastReport=io->now();}
     due=io->now()+(allIdle||maxResidual<=unitsPerDistance*(rotating?2.0:10.0)?1:20);
+}
+/** @brief 中间直行采用速度模式，航向旋转分量与直行分量同时下发，不重发位置目标。 */
+void Runner::middleTick() {
+    const uint32_t cycleAt=io->now();
+    const float dt=(cycleAt-previous)*.001f;previous=cycleAt;
+    if(cycleAt-started>deadline){fail("MOTOR_ARRIVAL_TIMEOUT");return;}
+    const char *failure=nullptr;
+    if(middleStopping) {
+        bool idle=true;
+        for(uint8_t id=1;id<=4;++id) {
+            failure=io->read(id,stopped[id-1]);if(failure){fail(failure);return;}
+            if(abs(stopped[id-1].rpm)>3)idle=false;
+        }
+        if(idle) {
+            io->timing("STRAIGHT_ARRIVED");valid=true;arrived();
+            settleNext=stage;headingStable.begin(io->now());stage=SETTLE;
+        } else due=io->now()+1;
+        return;
+    }
+    float wheelTravel[4];
+    for(uint8_t id=1;id<=4;++id) {
+        const int i=id-1;int64_t position;
+        failure=io->readPosition(id,position);if(failure){fail(failure);return;}
+        const int64_t change=position-positions[i];
+        if(!encoderSign[i]&&change&&applied.rpm[i])
+            encoderSign[i]=(change>=0?1:-1)*(applied.rpm[i]>=0?1:-1);
+        wheelTravel[i]=static_cast<float>(change*encoderSign[i])*PULSES_PER_REV/65536;
+        positions[i]=position;
+    }
+    // [+,-,+,-]直行分量取平均，抵消四轮同向的旋转分量；倒车仍按正向行程累计。
+    const float forward=(wheelTravel[0]-wheelTravel[1]+wheelTravel[2]-wheelTravel[3])/(4*ppm);
+    straightTravel+=forward*(distance>=0?1:-1);
+    H30Attitude m;failure=sample(m);if(failure){fail(failure);return;}
+    const float progress=clamp(straightTravel/fabsf(distance),0,1);
+    failure=updateProgress(progress,m,false);if(failure){fail(failure);return;}
+    const float remaining=fabsf(distance)-straightTravel;
+    if(remaining<=1) {
+        failure=io->velocity(WheelCommand{});if(failure){fail(failure);return;}
+        applied={};middleStopping=true;due=io->now();return;
+    }
+    // 制动距离包含两个40ms周期，覆盖四轮依次采样、装载及同步的延迟；不增加停车等待。
+    const float cap=fminf(maximum,acceleration*(sqrtf(.08f*.08f+2*remaining/acceleration)-.08f));
+    braking=cap<straightSpeed;
+    straightSpeed+=clamp(cap-straightSpeed,-acceleration*dt,acceleration*dt);
+    float omega=0;
+    if((m.fields&7)==7)omega=headingHold.update(output->heading,turn(output->heading,targetHeading),
+        m.receivedAtMs,MIDDLE_HEADING_KP,route->config.maxOmega);
+    else headingHold.reset();
+    Config wheelConfig=route->config;
+    wheelConfig.maxRpm=5000; // 沿用节点位置模式的驱动轮速上限，不套用连续试跑的maxRpm。
+    const WheelCommand command=wheels(Vec{0,straightSpeed*(distance>=0?1:-1)},omega,wheelConfig);
+    failure=io->velocity(command);if(failure){fail(failure);return;}
+    applied=command;
+    if(!sent){sent=true;io->timing("STRAIGHT_HOLD_SENT");}
+    if(io->now()-lastReport>=200) {
+        io->report("MIDDLE_HEADING_HOLD",*output,targetHeading);
+        io->headingControl(targetHeading,output->heading,command.omega,straightSpeed);
+        lastReport=io->now();
+    }
+    due=cycleAt+40;
 }
 /**
  * @brief 根据四轮反馈更新本次动作行程和到位残差；成功返回 nullptr。
@@ -262,10 +324,17 @@ void Runner::tick() {
         failure=sample(m);if(failure)break;
         if(idle){valid=true;
             if(stage==OUTER_QUIET){failure=displacement(stopped);prepared=true;io->timing("OUTER_DRIFT_ARRIVED");index=after;}
-            stage=SELECT;
+            settleNext=SELECT;headingStable.begin(io->now());stage=SETTLE;
         } else due=io->now()+5;
         break;
     }
+    case SETTLE:
+        failure=sample(m);if(failure)break;
+        // 沿用现有IMU不可用时的编码器控制；不拿估算角度凑三帧实测。
+        if((m.fields&7)!=7)stage=settleNext;
+        else if(headingStable.update(m,output->heading)){io->headingStable(output->heading);stage=settleNext;}
+        else due=io->now()+1;
+        break;
     case SELECT: {
         finalTranslation=false;terminalTurn=false;
         if(index>=route->segmentCount){action=FINAL;targetHeading=route->config.endHeading;attempts=0;stage=ALIGN;break;}
@@ -326,8 +395,15 @@ void Runner::tick() {
         representativeMoved=representativeStopped=comparisonReported=false;
         unitsPerDistance=ppm*65536/PULSES_PER_REV;tolerance=rotating?unitsPerDistance*.4:STRAIGHT_ARRIVAL_ENCODER_TOLERANCE;
         hardLimit=rotating?unitsPerDistance*3:fmax(unitsPerDistance*10,2*STRAIGHT_ARRIVAL_ENCODER_TOLERANCE);
-        stage=MOVE;break;
+        stage=MOVE;
+        if(!rotating&&!scanExit&&route->segments[index].middle) {
+            headingHold.reset();straightSpeed=straightTravel=0;middleStopping=false;applied={};
+            for(int i=0;i<4;++i)positions[i]=stopped[i].position;
+            stage=MIDDLE;
+        }
+        break;
     case MOVE: moveTick();break;
+    case MIDDLE: middleTick();break;
     case OUTER: {
         const uint32_t now=io->now();const float dt=fmaxf(.001f,(now-previous)*.001f);previous=now;
         Motor states[4];for(uint8_t id=1;id<=4;++id){failure=io->read(id,states[id-1]);if(failure)break;failure=health(*io,id,states[id-1]);if(failure)break;}

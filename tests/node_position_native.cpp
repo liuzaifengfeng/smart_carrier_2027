@@ -49,7 +49,7 @@ int main() {
     CHECK(sim.actions==3); // 两条直线（共线节点合并）+一次转向
     CHECK(sim.zeroGroups==1&&sim.halts==2); // 仅起步清零一次，动作间不重复halt/清零
     CHECK(sim.maxGap<100); // 到位后不附加100ms窗口或重复整组查询
-    CHECK(sim.startupQueries==16&&sim.firstZeroAt==1004); // 一组12次查询+4次仅位置验证
+    CHECK(sim.startupQueries==16&&sim.firstZeroAt>=1020); // 原16次查询保留，清零前须等停轮后三帧新IMU。
     CHECK(sim.updates==sim.actions*4&&sim.syncs==sim.actions);CHECK(sim.peak==51);
     CHECK(sim.sentMarks==sim.actions&&sim.arrivalMarks==sim.actions&&sim.waitReports==0);
     CHECK(sim.lastAcceleration==1); // 200mm/s²低于驱动器最小非零档，使用最慢曲线档1
@@ -64,7 +64,7 @@ int main() {
     CHECK(coasting.time>sim.time+750); // 位置已到但仍有转速，不能提前转向
     Sim ripple;ripple.rippleAt=1000;
     error=run(route,settings,ripple,result);CHECK(!error&&ripple.rippleInjected&&ripple.actions==3);
-    CHECK(ripple.firstZeroAt>sim.firstZeroAt); // 起步6RPM波动仍重新读近零转速
+    CHECK(ripple.firstZeroAt>=sim.firstZeroAt&&ripple.startupQueries>sim.startupQueries); // 起步6RPM波动仍重新读近零转速。
     Sim zeroFailed;zeroFailed.badZero=true;
     error=run(route,settings,zeroFailed,result);
     CHECK(error&&!strcmp(error,"MOTOR_ZERO_FAILED")&&zeroFailed.updates==0);

@@ -362,15 +362,14 @@ int H30UsbPollHeadingAverage() {
     headingAverageActive=false;
     const uint32_t count=headingAverage.count();
     const float yaw=headingAverage.yaw(),heading=headingAverageMap;
-    const bool ready=headingAverage.ready(millis());
     uint32_t age=0;
     const char *sourceError=headingSampleError(age);
-    const bool ok=!sourceError&&ready&&headingReference.calibrate(yaw,heading);
+    const bool ok=!sourceError&&count&&headingReference.calibrate(yaw,heading);
     ++headingReferenceVersion;
     portEXIT_CRITICAL(&mux);
     Serial.printf("{EVT,IMU,REFERENCE_COLLECT,END,%lu,%.3f}\n",static_cast<unsigned long>(count),yaw);
     if(ok)Serial.printf("{EVT,IMU,REFERENCE,OK,%.3f}\n",heading);
-    else Serial.printf("{EVT,IMU,REFERENCE,ERR,%s}\n",sourceError?sourceError:(count?"NOT_STATIONARY":"NO_STATIONARY_DATA"));
+    else Serial.printf("{EVT,IMU,REFERENCE,ERR,%s}\n",sourceError?sourceError:"NO_DATA");
     return ok?1:-1;
 }
 bool H30UsbHeadingAverageActive() {

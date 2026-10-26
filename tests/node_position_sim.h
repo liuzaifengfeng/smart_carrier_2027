@@ -120,6 +120,8 @@ struct Sim : IO {
         if(reject)return "MOTOR_COMMAND_REJECTED";
         velocityMode=true;targetSent=true;++velocityUpdates;
         for(int i=0;i<4;++i){velocityRpm[i]=command.rpm[i];rpm[i]=abs(command.rpm[i]);}
+        if(!command.rpm[0]&&!command.rpm[1]&&!command.rpm[2]&&!command.rpm[3])
+            for(int i=0;i<4;++i)goal[i]=actual[i]; // 速度模式停车不再保留先前位置目标。
         return nullptr;
     }
     void beginAction()override{

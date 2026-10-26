@@ -6,6 +6,8 @@
 struct ProfileSim : Sim {
     std::vector<uint16_t> speeds;
     std::vector<uint8_t> accelerations;
+    int stableReports=0;
+    void headingStable(float)override{++stableReports;}
     const char *target(uint8_t id,bool positive,uint16_t speed,uint8_t acceleration,uint32_t count)override {
         if(id==1){speeds.push_back(speed);accelerations.push_back(acceleration);}
         return Sim::target(id,positive,speed,acceleration,count);
@@ -79,13 +81,94 @@ void middleProfile() {
         ProfileSim car;car.heading=cfg.startHeading;car.location=points[0].p;
         Result result;assert(!run(path,settings,car,result));
         // 同速区间可合并，跨内外层边界不可把整条共线道路当成同一种曲线。
-        assert(car.actions==2&&car.speeds.size()==2);
-        for(int i=0;i<2;++i){bool middle=reverse?i==0:i==1;
-            assert(car.speeds[i]==rpmFor(middle?150:400,cfg.forwardPpm));
-            assert(car.accelerations[i]==driverAccelerationFor(middle?500:2000,cfg.forwardPpm));
-        }
+        assert(car.actions==2&&car.speeds.size()==1&&car.stableReports==3);
+        assert(car.speeds[0]==rpmFor(400,cfg.forwardPpm));
+        assert(car.accelerations[0]==driverAccelerationFor(2000,cfg.forwardPpm));
+        assert(car.velocityUpdates>10); // 中间道路独立规划线速度并实时纠偏，外围仍只下发一次位置目标。
         assert(norm(result.estimated-points[3].p)<3);
     }
+}
+struct HoldSim : ProfileSim {
+    Vec entry;float biasRate=0,kick=0,maxError=0,finalMovingError=0,peakSpeed=0;
+    int holdReports=0;bool kicked=false,sawNegativeCorrection=false,sawPositiveCorrection=false;
+    uint32_t lastHoldAt=0;bool stop=false;float maxAcceleration=0,previousSpeed=0;
+    void wait(uint32_t ms)override {
+        Sim::wait(ms);
+        if(velocityMode&&!stop) {
+            heading=wrap(heading+biasRate*ms*.001f);
+            if(!kicked&&norm(location-entry)>300){heading=wrap(heading+kick);kicked=true;}
+        }
+    }
+    const char *velocity(const WheelCommand &command)override {
+        wait(20); // 实际适配器四轮装载各5ms，最后同步生效。
+        const bool moving=command.rpm[0]||command.rpm[1]||command.rpm[2]||command.rpm[3];
+        if(moving) {
+            peakSpeed=fmaxf(peakSpeed,fabsf(command.body.y));
+            const float error=turn(heading,0);maxError=fmaxf(maxError,fabsf(error));finalMovingError=error;
+            if(error<-.1f&&command.omega<0)sawNegativeCorrection=true;
+            if(error>.1f&&command.omega>0)sawPositiveCorrection=true;
+        } else if(velocityUpdates)stop=true;
+        return Sim::velocity(command);
+    }
+    void headingControl(float,float,float,float speed)override {
+        if(lastHoldAt)maxAcceleration=fmaxf(maxAcceleration,fabsf(speed-previousSpeed)*1000/(time-lastHoldAt));
+        previousSpeed=speed;lastHoldAt=time;peakSpeed=fmaxf(peakSpeed,speed);++holdReports;
+    }
+};
+void middleHold() {
+    for(bool reverse:{false,true})for(float disturbance:{-3.0f,3.0f})for(int polarity:{-1,1}) {
+        Node points[]={{{reverse?1900.0f:400.0f,1200},0,true},{{reverse?400.0f:1900.0f,1200},0,true}};
+        Config cfg;cfg.policy=2;cfg.count=2;cfg.startHeading=cfg.endHeading=0;
+        Route path;assert(!path.build(points,cfg));
+        Settings settings;settings.middleSpeedMmS=700;settings.middleAccelMmS2=600;
+        HoldSim car;car.location=car.entry=points[0].p;car.kick=disturbance;car.biasRate=disturbance/3;
+        for(int i=0;i<4;++i)car.encoderPolarity[i]=polarity;
+        Result result;const char *failure=run(path,settings,car,result);
+        if(failure)fprintf(stderr,"middle hold: %s reverse=%d disturbance=%f polarity=%d\n",failure,reverse,disturbance,polarity);
+        assert(!failure&&car.kicked&&car.holdReports>5&&car.speeds.empty());
+        assert(fabsf(car.finalMovingError)<1&&norm(result.estimated-points[1].p)<2);
+        assert(norm(car.location-points[1].p)<45); // 注入侧滑/偏航后仍在行驶中拉回航向，而非等停车校角。
+        assert(disturbance>0?car.sawNegativeCorrection:car.sawPositiveCorrection);
+        assert(car.peakSpeed<=701&&car.maxAcceleration<=610);
+    }
+    for(float length:{100.0f,1730.0f}) {
+        Node points[]={{{320,1200},0,true},{{320+length,1200},0,true}};
+        Config cfg;cfg.policy=2;cfg.count=2;Route path;assert(!path.build(points,cfg));
+        HoldSim car;car.location=car.entry=points[0].p;car.latencyMs=3;
+        Settings settings;settings.middleSpeedMmS=3000;settings.middleAccelMmS2=1000;
+        Result result;assert(!run(path,settings,car,result));
+        if(norm(car.location-points[1].p)>=3||car.time>=7000)
+            fprintf(stderr,"hold length=%f actual=%f,%f estimated=%f time=%u peak=%f\n",length,car.location.x,car.location.y,result.estimated.x,car.time,car.peakSpeed);
+        assert(norm(car.location-points[1].p)<3&&car.time<7000);
+        assert(car.peakSpeed>(length>1000?1000:150)); // 长段不受试跑默认80RPM限速；短段也正常起步、减速。
+    }
+    // IMU暂不可用沿用编码器行程；取消时直接停车，不进入额外等待。
+    for(bool cancel:{false,true}) {
+        Node points[]={{{400,1200},0,true},{{1200,1200},0,true}};
+        Config cfg;cfg.policy=2;cfg.count=2;Route path;assert(!path.build(points,cfg));
+        HoldSim car;car.location=car.entry=points[0].p;car.missing=true;car.cancelAt=cancel?1600:0;
+        Settings settings;settings.middleSpeedMmS=500;Result result;const char *failure=run(path,settings,car,result);
+        if(cancel)assert(failure&&!strcmp(failure,"STOPPED"));else assert(!failure&&norm(result.estimated-points[1].p)<2);
+        for(int i=0;i<4;++i)assert(car.rpm[i]==0);
+    }
+}
+void stableFrames() {
+    HeadingStable3 stable;stable.begin(100);
+    H30Attitude sample;sample.fields=7;
+    auto frame=[&](uint16_t sequence,uint32_t stamp,float heading){sample.sequence=sequence;sample.receivedAtMs=stamp;return stable.update(sample,heading);};
+    assert(!frame(1,99,30)); // 停轮前旧帧不计数。
+    assert(!frame(2,110,359.95f));
+    assert(!frame(2,110,359.95f)); // 重复读取不能充当第二帧。
+    assert(!frame(3,120,.03f));
+    assert(frame(4,130,.08f)); // 跨0度，三帧总摆幅0.13度。
+    stable.begin(200);
+    assert(!frame(5,210,0));assert(!frame(6,220,.1f));
+    assert(!frame(7,230,.25f)); // 极差0.25度，仍不能宣布停稳。
+    assert(frame(8,240,.28f)); // 最新三帧0.10/0.25/0.28度，极差0.18度。
+    stable.begin(300);
+    assert(!frame(9,310,5));assert(!frame(10,320,5.1f));
+    assert(!frame(11,330,5.4f));assert(!frame(12,340,5.6f));
+    assert(!frame(13,350,5.9f)); // 持续转动不能仅靠累计三帧通过。
 }
 void scanTick() {
     for(float direction:{1.0f,-1.0f}) {
@@ -122,4 +205,4 @@ void representativePolling() {
     for(int i=0;i<30&&verify.active();++i){verify.tick();initialZero.wait(1);}
     assert(verify.active()&&initialZero.passedComparisons==0);
 }
-int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"middle"))middleProfile();else if(!strcmp(argv[1],"representative"))representativePolling();else nodeTick();}
+int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"stable"))stableFrames();else if(!strcmp(argv[1],"hold"))middleHold();else if(!strcmp(argv[1],"middle"))middleProfile();else if(!strcmp(argv[1],"representative"))representativePolling();else nodeTick();}

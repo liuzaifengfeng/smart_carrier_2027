@@ -203,7 +203,9 @@ void poses() {
     r.armPrepared=true;assert(!BuildArmProgram(r,p));
     assert(p.count==1&&p.steps[0].kind==motion::StepKind::POSITION); // 已提前 LOOK4，只保留航向修正。
     r.kind=MotionKind::HOME_RETURN;r.zone=1;assert(!BuildArmProgram(r,p));
-    assert(p.steps[p.count-2].high==-70&&p.steps[p.count-1].length==-200&&p.steps[p.count-1].waitMs==1000);
+    assert(p.steps[p.count-1].kind==motion::StepKind::POSITION&&p.steps[p.count-1].high==-90&&p.steps[p.count-1].length==-190&&p.steps[p.count-1].speed==200);
+    r.zone=2;assert(!BuildArmProgram(r,p));
+    assert(p.steps[p.count-1].kind==motion::StepKind::POSITION&&p.steps[p.count-1].high==-70&&p.steps[p.count-1].length==200&&p.steps[p.count-1].speed==200);
     // 同步入口同样采用第一层放料全程慢、圆盘全程快。
     cargoPlatforms[0].material=MATERIAL_RED;issuedArm.clear();
     assert(MoveCargoToWorkArea(1,1));

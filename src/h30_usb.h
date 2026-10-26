@@ -45,9 +45,9 @@ const char *H30UsbGetHeadingSnapshot(float &heading,uint32_t &sampleMs,uint32_t 
  */
 const char *H30UsbGetMotionSnapshot(H30Attitude &sample,float &heading,uint32_t &referenceVersion);
 
-/** @brief 收臂后静置3秒，再用3秒窗口采集静止Yaw并剔除离群值，绑定地图航向；不阻塞。 */
+/** @brief 初始化后静置3秒，再连续采集3秒新Yaw求圆周平均并绑定地图航向；不阻塞、不做静止筛选。 */
 void H30UsbBeginHeadingAverage(float mapHeading);
-/** @brief 推进开局标定：0采集中，1成功，-1无有效静止均值或数据不可用；不延长窗口。 */
+/** @brief 推进开局标定：0采集中，1成功，-1无采样或IMU不可用；不延长窗口。 */
 int H30UsbPollHeadingAverage();
 /** @brief 查询开局静置或采集窗口是否仍在运行，期间不执行开局斜移。 */
 bool H30UsbHeadingAverageActive();

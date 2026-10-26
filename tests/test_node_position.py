@@ -36,3 +36,13 @@ class PositionTests(unittest.TestCase):
         from native_support import build_native, run_native
         sources = ["tests/node_position_tick_native.cpp", "src/node_position_control.cpp", "src/continuous_route.cpp", "src/hybrid_route.cpp", "src/scan_motion_control.cpp"]
         run_native(build_native("node-tick", sources), "middle")
+
+    def test_three_new_stable_imu_frames_after_wheel_stop(self):
+        from native_support import build_native, run_native
+        sources = ["tests/node_position_tick_native.cpp", "src/node_position_control.cpp", "src/continuous_route.cpp", "src/hybrid_route.cpp", "src/scan_motion_control.cpp"]
+        run_native(build_native("node-tick", sources), "stable")
+
+    def test_middle_heading_hold_disturbances_forward_reverse_and_encoder_polarity(self):
+        from native_support import build_native, run_native
+        sources = ["tests/node_position_tick_native.cpp", "src/node_position_control.cpp", "src/continuous_route.cpp", "src/hybrid_route.cpp", "src/scan_motion_control.cpp"]
+        run_native(build_native("node-tick", sources), "hold")

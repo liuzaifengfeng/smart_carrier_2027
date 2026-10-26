@@ -109,6 +109,15 @@ public:
         Serial.printf("{EVT,NAV,ROUTE_PHASE,0,%s}\n",stage);
         Serial.printf("{EVT,NAV,ROUTE_POSITION,%.2f,%.2f,%.2f,%.3f,%.3f}\n",r.s,r.estimated.x,r.estimated.y,reference,r.heading);
     }
+    void headingStable(float heading)override {
+        Serial.printf("{EVT,NAV,ROUTE_IMU_STABLE,%lu,%lu,3,%.3f}\n",
+            static_cast<unsigned long>(CurrentMotionId()),static_cast<unsigned long>(millis()),heading);
+    }
+    void headingControl(float target,float actual,float omega,float speed)override {
+        Serial.printf("{EVT,NAV,ROUTE_HOLD,%lu,%lu,%.3f,%.3f,%.3f,%.3f,%.1f}\n",
+            static_cast<unsigned long>(CurrentMotionId()),static_cast<unsigned long>(millis()),
+            target,actual,continuous::turn(actual,target),omega,speed);
+    }
     void motorDiagnostic(uint8_t id,const char *reason,double goal,const node_position::Motor &m)override {
         Serial.printf("{EVT,NAV,ROUTE_MOTOR,%u,%s,%.0f,%lld,%d,%u}\n",id,reason,goal,
             static_cast<long long>(m.position),m.rpm,m.flags);

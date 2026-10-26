@@ -199,8 +199,7 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         break;
     case MotionKind::HOME_RETURN: {
         observation(p,ArmObservation::START,r.zone);
-        Step s;s.kind=StepKind::GOTO;s.name="HOME_X";s.high=-70;s.length=0;s.turret=0;s.waitMs=1000;p.append(s);
-        s.name="HOME_Y";s.high=0;s.length=r.zone==1?-200:200;p.append(s);break;
+        position(p,r.zone==1?-90:-70,r.zone==1?-190:200,0,200);break;
     }
     case MotionKind::POSITION: position(p,r.x,r.y,r.theta,r.speed);break;
     case MotionKind::GOTO: {Step s;s.kind=StepKind::GOTO;s.name="GOTO";s.high=r.x;s.length=r.y;s.turret=r.theta;p.append(s);break;}

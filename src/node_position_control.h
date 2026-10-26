@@ -5,6 +5,7 @@ namespace node_position {
 constexpr bool MOTOR_STALL_CHECK_ENABLED=false; // 临时禁用所有底盘电机的固件堵转检查；恢复时改为true
 constexpr float PULSES_PER_REV=3200; // 要求底盘驱动配置为16细分，实车验收时核对
 constexpr double STRAIGHT_ARRIVAL_ENCODER_TOLERANCE=5000; // 每轮65536单位/圈坐标中的允许误差
+constexpr float MIDDLE_HEADING_KP=4; // 中间直行航向比例增益：偏差1度给4度/秒修正，再叠加原积分和阻尼。
 struct Settings {
     float speedMmS=2000,accelMmS2=2000,turnDegS=200,turnAccelDegS2=400,headingDeadbandDeg=1;
     float middleSpeedMmS=2000,middleAccelMmS2=2000;
@@ -12,7 +13,28 @@ struct Settings {
 };
 struct Motor {uint8_t flags=0;int64_t position=0;int16_t rpm=0;}; // 位置：65536单位/圈
 struct Result {continuous::Vec estimated;float heading=0,s=0;};
-// 直行期间仅监测持续偏航；航向校正在到位、近零转速后独立执行。
+/** @brief 停轮后连续三帧新IMU航向的极差不超过0.2度；重复帧和停轮前数据不计数。 */
+class HeadingStable3 {
+    uint32_t stoppedAt=0,lastStamp=0;
+    uint16_t lastSequence=0;
+    uint8_t count=0;
+    float headings[3]={};
+    uint8_t next=0;
+public:
+    void begin(uint32_t now){*this=HeadingStable3{};stoppedAt=now;}
+    bool update(const H30Attitude &sample,float heading) {
+        if(static_cast<int32_t>(sample.receivedAtMs-stoppedAt)<=0)return false;
+        if(count&&(sample.sequence==lastSequence||sample.receivedAtMs==lastStamp))return false;
+        lastSequence=sample.sequence;lastStamp=sample.receivedAtMs;
+        headings[next]=heading;next=(next+1)%3;
+        if(count<3)++count;
+        if(count<3)return false;
+        float low=0,high=0;
+        for(uint8_t i=1;i<3;++i){const float angle=continuous::turn(headings[0],headings[i]);low=fminf(low,angle);high=fmaxf(high,angle);}
+        return high-low<=0.2f;
+    }
+};
+// 保留原有持续偏航检查；中间直行另外叠加实时航向闭环，外围直行仍停轮后校角。
 class HeadingGuard {
     bool softActive=false,hardActive=false,brakeActive=false;
     uint32_t softSince=0,hardSince=0,brakeSince=0;
@@ -101,6 +123,10 @@ struct IO {
      * @brief 输出当前动作的计时节点名称。
      */
     virtual void timing(const char *){}
+    /** @brief 停轮后连续三帧实测航向稳定，仅用于记录停稳结果。 */
+    virtual void headingStable(float){}
+    /** @brief 每200ms记录中间直行的目标/实测航向、纠偏角速度和规划线速度。 */
+    virtual void headingControl(float,float,float,float){}
     /**
      * @brief 输出四轮到位残差及实际状态，供定位到位耗时问题。
      */
@@ -139,7 +165,9 @@ const char *run(const continuous::Route &route,const Settings &settings,IO &io,R
 
 // 与 run 共用控制算法；每次 tick 只推进一次控制/通信周期，不等待物理行程结束。
 class Runner {
-    enum Stage { IDLE, START, QUIET, SELECT, ALIGN, ZERO, PREPARE, MOVE, OUTER, OUTER_QUIET, FINISHED } stage=IDLE;
+    enum Stage { IDLE, START, QUIET, SETTLE, SELECT, ALIGN, ZERO, PREPARE, MOVE, MIDDLE, OUTER, OUTER_QUIET, FINISHED } stage=IDLE;
+    Stage settleNext=SELECT;
+    HeadingStable3 headingStable;
     enum Action { ROTATION, STRAIGHT, CURVE, FINAL } action=FINAL;
     const continuous::Route *route=nullptr;
     const Settings *settings=nullptr;
@@ -165,6 +193,9 @@ class Runner {
     uint32_t travelPulses[4]={};
     bool directions[4]={};
     HeadingGuard headingGuard;
+    H30HeadingHold headingHold;
+    float straightSpeed=0,straightTravel=0;
+    bool middleStopping=false;
     bool quietSeen=false;
     uint32_t residualSince=0;
     uint8_t quietCount=0;
@@ -197,6 +228,8 @@ class Runner {
      * @brief 处理当前四轮位置动作的一次反馈、偏航及到位检查。
      */
     void moveTick();
+    /** @brief 中间直行：四轮编码器计程、主控规划加减速，并叠加IMU航向PI+D纠偏。 */
+    void middleTick();
     /** @brief 按估算或最终回读进度更新位置、编码器航向及既有偏航检查；不作为到位判据。 */
     const char *updateProgress(float progress,const H30Attitude &sample,bool idle);
     /**
@@ -227,11 +260,11 @@ public:
     /**
      * @brief 判断当前是否正在执行路径的最后一段连续平移。
      */
-    bool lastTranslation() const { return finalTranslation&&stage==MOVE&&!rotating; }
+    bool lastTranslation() const { return finalTranslation&&(stage==MOVE||stage==MIDDLE)&&!rotating; }
     /**
      * @brief 判断是否进入最终进站平移前的准备阶段，用于提前展开视觉观察姿态。
      */
-    bool observationApproach() const { return active()&&stage!=START&&stage!=QUIET&&index>=observationIndex; }
+    bool observationApproach() const { return active()&&stage!=START&&stage!=QUIET&&stage!=SETTLE&&index>=observationIndex; }
     /** @brief 最后平移完成，在路径末尾转向或终点校角开始前同步展开角点观察姿态。 */
     bool finalTurnApproach() const {
         if(!active()||stage!=ALIGN)return false;
