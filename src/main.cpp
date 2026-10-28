@@ -1,3 +1,4 @@
+#include "turret_motor.h"
 /**********************************************************
 *** 2027 工创大赛·智能搬运 主控程序框架
 *** 角色：ESP32 主控（运动控制 + 任务编排 + 决策）
@@ -227,11 +228,13 @@ void setup() {
 
     currentPose = {0, 0, 0};   // [TODO] 初始位姿按实际
     currentArm = {0, 0, 0, 0}; // 升降/伸缩目标坐标对应驱动器回零后的原点，舵机角度由下方实读更新。
-    // 与 MoveArm 的实际 ID 对应：2 号=转台，1 号=夹爪。
+    // 转盘为Serial1的7号张大头电机；夹爪为Serial2的1号舵机。
     // 在串口任务启动前读取，避免多个任务同时访问舵机总线。
     // 给上电中的舵机留出启动时间；总线已初始化但舵机不一定立即应答。
     vTaskDelay(pdMS_TO_TICKS(100));
-    readStartupServoAngle(2, currentArm.turret_angle);
+    if (!TurretMotorReadAngle(currentArm.turret_angle))
+        Serial.println("[Turret] startup angle unavailable; continuing startup");
+    else Serial.printf("[Turret] startup mechanical angle=%.3f deg (saved zero)\n",currentArm.turret_angle);
     readStartupServoAngle(1, currentArm.pawl_angle);
 
     // 注意: 原 initLidar() 已移除, 雷达/定位方案待定

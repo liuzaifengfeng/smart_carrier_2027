@@ -6,6 +6,7 @@
 #include "continuous_trial.h"
 #include "node_position_hardware.h"
 #include "motor_bus.h"
+#include "turret_motor.h"
 #include <float.h>
 
 // 保留旧参数注册位置以兼容上位机编号；观察姿态现按路径阶段提前触发。
@@ -64,13 +65,15 @@ void flag(const char *name) {
         static_cast<unsigned long>(millis()),name);
 }
 /**
- * @brief 取消路径与相对位置运动并停止升降/伸缩；保留夹爪当前命令。
+ * @brief 取消路径与相对位置运动并停止升降/伸缩/转盘；保留夹爪当前命令。
  */
 void stopHardware() {
     ContinuousMotionCancel();
     CancelPositionMove();
     MotorBusGuard transaction;
     for(uint8_t id=5;id<=6;++id)Emm_V5_Stop_Now(id,false);
+    Emm_V5_Stop_Now(TURRET_MOTOR_ID,false);
+    TurretMotorCancelTrace();
     // 保留夹爪当前命令，不在未知持料状态下松手。
 }
 /**
@@ -305,8 +308,9 @@ void task(void *) {
             const bool released=queued&&launchGate.runnable(pending.id,pending.generation,ota,taskMotionAborted);
             portEXIT_CRITICAL(&jobMux);
             if(!released||xQueueReceive(queue,&job,0)!=pdTRUE) {
+                TurretMotorPoll();
                 TickVisualAlignment();
-                ulTaskNotifyTake(pdTRUE,alignmentEnabled?pdMS_TO_TICKS(20):portMAX_DELAY);continue;
+                ulTaskNotifyTake(pdTRUE,(alignmentEnabled||TurretMotorTracking())?pdMS_TO_TICKS(20):portMAX_DELAY);continue;
             }
             running=true;stage=0;join=motion::Join{};activeSpan=nullptr;armSpanOpen=false;
             hardware.configure(job.id,cancelled);
@@ -318,6 +322,7 @@ void task(void *) {
             portENTER_CRITICAL(&jobMux);stopPending=false;portEXIT_CRITICAL(&jobMux);
             stopHardware();finish(MotionState::CANCELLED,taskMotionAborted?"ABORTED":"STOPPED");continue;
         }
+        TurretMotorPoll();
         const auto kind=job.request.kind;
         if(kind==MotionKind::NAVIGATE||kind==MotionKind::NODE_PATH)navigationTick();
         else if(kind==MotionKind::SCAN_TASK)scanTick();

@@ -118,7 +118,9 @@ void observation(Program &p,ArmObservation pose,uint8_t zone) {
     const uint32_t liftWait=static_cast<uint32_t>(lroundf(fabsf(170.0f-currentArm.high)*1500.0f/170.0f));
     switch(pose) {
     case ArmObservation::START:
-        arm(p,"INIT_LIFT",160,-1,-1,0,300,800);rotateArm(p,"INIT_TURN",-1,-1,-55,-1,300);arm(p,"INIT_RETRACT",154,40,-1,0,300,500);break;
+        arm(p,"INIT_LIFT",160,-1,-1,0,300,0);
+        p.steps[p.count-1].liftArrival=true;
+        rotateArm(p,"INIT_TURN",-1,-1,-55,-1,300);arm(p,"INIT_RETRACT",154,40,-1,0,300,500);break;
     case ArmObservation::LOOK:
         arm(p,"LOOK_LIFT",170,0,-1,60,200,liftWait);rotateArm(p,"LOOK_TURN",-1,0,90,80,200);arm(p,"LOOK_READY",170,-1,-1,80,200);break;
     case ArmObservation::LOOK2:

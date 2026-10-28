@@ -18,3 +18,6 @@ class MotionHardwareTests(unittest.TestCase):
 
     def test_rotation_finishes_on_measured_multiturn_target_only(self):
         run_native(build_motion_hardware(), "turret")
+
+    def test_initial_lift_blocks_rotation_until_measured_height_and_arrival_flag(self):
+        run_native(build_motion_hardware(), "lift")

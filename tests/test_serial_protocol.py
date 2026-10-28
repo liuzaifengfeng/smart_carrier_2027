@@ -31,6 +31,8 @@ class FrameTests(unittest.TestCase):
     def test_servo_origin_command(self):
         self.assertEqual(build_debug_command("SERVO_ZERO", ["2"]), "{CMD,ARM,SERVO_ZERO,2}")
         self.assertEqual(build_debug_command("SERVO_ZERO", ["1"]), "{CMD,ARM,SERVO_ZERO,1}")
+        self.assertEqual(build_debug_command("SERVO_ZERO", ["5"]), "{CMD,ARM,SERVO_ZERO,5}")
+        self.assertEqual(build_debug_command("SERVO_ZERO", ["6"]), "{CMD,ARM,SERVO_ZERO,6}")
         for values in (["254"], ["1.5"], ["2", "0"]):
             with self.assertRaises(ValueError):
                 build_debug_command("SERVO_ZERO", values)

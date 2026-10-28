@@ -45,6 +45,8 @@ struct Run {
     float HEIGHT_PULSE=10, LENGTH_PULSE=20;
     Command commands[8];
     int count=0;
+    constexpr bool TurretMotorReadAngle(float& angle) { angle=0; return true; }
+    constexpr bool TurretMotorMove(float, uint16_t) { return true; }
     constexpr bool Servo_QueryAngleMTurn(int, float& angle, int) { angle=0; return true; }
     constexpr void Servo_SetAngleMTurn(int, float, float, int) {}
     constexpr void Servo_SetAngleMTurnByInterval(int, float, uint32_t,

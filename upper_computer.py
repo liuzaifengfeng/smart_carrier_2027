@@ -22,6 +22,7 @@ from action_group_config import (action_delay_active, DELAY_NAMES, DELAY_PREFIX,
                                 FORWARD_TRANSFER_GROUPS, REVERSE_TRANSFER_GROUPS,
                                 load_action_group_delays, save_action_group_delays)
 from continuous_trial import ContinuousTrialPanel
+from emm_panel import EmmPanel
 from field_geometry import OBSTACLES
 
 try:
@@ -1494,9 +1495,9 @@ COMMAND_FIELDS = {
     "MoveArm_1": (("大臂高度", "-1"), ("伸缩距离", "-1"), ("速度", "80")),
     "MoveArm_2": (("舵盘角度", "-1"), ("夹爪角度", "-1"), ("速度", "80")),
     "SERVO": (("舵机 ID", "1"), ("角度", "0")),
-    "SERVO_ZERO": (("舵机 ID（1夹爪、2转台）", "2"),),
-    "SERVO_PID_GET": (("舵机 ID", "2"),),
-    "SERVO_PID_SET": (("舵机 ID", "2"),) + tuple((name, "") for name in ("Kp", "Kd", "Ki", "PwmBias", "HoldKp", "HoldKd", "HoldPwmBias")),
+    "SERVO_ZERO": (("逻辑轴 ID（1夹爪、2转盘、5升降、6伸缩）", "2"),),
+    "SERVO_PID_GET": (("舵机 ID", "1"),),
+    "SERVO_PID_SET": (("舵机 ID", "1"),) + tuple((name, "") for name in ("Kp", "Kd", "Ki", "PwmBias", "HoldKp", "HoldKd", "HoldPwmBias")),
 }
 
 # WASD 键与 Movepose 方向参数的对应关系。
@@ -2700,6 +2701,10 @@ class UpperComputerApp:
         vision_tab = vision_page.content
         notebook.add(pose_page, text="姿态")
         notebook.add(chassis_page, text="底盘")
+        emm_page = ScrollableTab(notebook)
+        notebook.add(emm_page, text="EMM 电机")
+        self.emm_panel = EmmPanel(emm_page.content, self.serial_link.send_line, self.append_log, parse_frame)
+        self.emm_panel.pack(fill=tk.BOTH, expand=True)
         notebook.add(arm_page, text="机械臂")
         notebook.add(keyboard_page, text="键盘控制")
         notebook.add(log_tab, text="日志")
@@ -3110,21 +3115,21 @@ class UpperComputerApp:
             justify=tk.LEFT,
             wraplength=285,
         ).pack(anchor="w", pady=(7, 0))
-        zero_group = ttk.LabelFrame(arm_tab, text="舵机零点设置", padding=7)
+        zero_group = ttk.LabelFrame(arm_tab, text="机械臂零点设置", padding=7)
         zero_group.pack(fill=tk.X, pady=(10, 0))
         zero_id = tk.StringVar(value="2")
         self.command_vars["SERVO_ZERO"] = [zero_id]
-        ttk.Label(zero_group, text="舵机 ID（1夹爪、2转台）：").pack(anchor="w")
-        ttk.Entry(zero_group, textvariable=zero_id, width=8).pack(anchor="w", pady=3)
+        ttk.Label(zero_group, text="逻辑轴 ID（1夹爪、2转盘、5升降、6伸缩）：").pack(anchor="w")
+        ttk.Combobox(zero_group, textvariable=zero_id, values=("1", "2", "5", "6"), width=8).pack(anchor="w", pady=3)
         ttk.Button(zero_group, text="将当前位置设为零点",
                    command=lambda: self.send_command("SERVO_ZERO")).pack(fill=tk.X)
-        ttk.Label(zero_group, text="仅Debug模式。将所选舵机当前位置定义为0°，会改变后续角度目标的基准。",
+        ttk.Label(zero_group, text="仅Debug模式且运动空闲时设置。转盘机械零位保存到主控，电机每次上电须在0～180°；升降、伸缩清零仅本次上电有效。设置不执行回零运动。",
                   wraplength=285).pack(anchor="w", pady=(5, 0))
         pid_group = ttk.LabelFrame(arm_tab, text="舵机内部 PID", padding=7)
         pid_group.pack(fill=tk.X, pady=(10, 0))
-        self.servo_pid_id = tk.StringVar(value="2")
+        self.servo_pid_id = tk.StringVar(value="1")
         self.servo_pid_values = [tk.StringVar() for _ in range(7)]
-        self.servo_pid_status = tk.StringVar(value="1夹爪、2转台；查询后修改，写入后显示实测回读值。")
+        self.servo_pid_status = tk.StringVar(value="1号夹爪舵机；转盘已改用7号张大头电机，不适用此PID。")
         self.command_vars["SERVO_PID_GET"] = [self.servo_pid_id]
         self.command_vars["SERVO_PID_SET"] = [self.servo_pid_id, *self.servo_pid_values]
         ttk.Label(pid_group, text="舵机 ID").grid(row=0, column=0, sticky="w")
@@ -4086,10 +4091,10 @@ class UpperComputerApp:
         self.pose_query_status.set("查询超时，保留上次显示；动作结束后可重新查询")
 
     def _accept_pose_response(self, text: str) -> None:
-        if text in ("{RSP,POSE,GET,ERR,SERVO_READ,1}", "{RSP,POSE,GET,ERR,SERVO_READ,2}"):
+        if text in ("{RSP,POSE,GET,ERR,SERVO_READ,1}", "{RSP,POSE,GET,ERR,SERVO_READ,2}", "{RSP,POSE,GET,ERR,MOTOR_READ,7}"):
             self._cancel_pose_query_timeout()
-            axis = "夹爪（1 号）" if text.endswith(",1}") else "舵盘（2 号）"
-            self.pose_query_status.set(f"{axis}舵机读取失败，保留上次显示")
+            axis = "夹爪（1 号）" if text.endswith(",1}") else "舵盘（7号张大头电机）"
+            self.pose_query_status.set(f"{axis}读取失败，保留上次显示")
             self.arm_status_var.set(f"{axis}实测读取失败；当前图不是本次测量值")
             return
         result = parse_pose_response(text)
@@ -4202,6 +4207,7 @@ class UpperComputerApp:
                     self.status_var.set(f"路径命令失败或被拒绝：{text}")
                 was_reading = self.parameter_panel.mode == "read"
                 self.parameter_panel.receive(text)
+                self.emm_panel.receive(text)
                 self.parameter_panel.receive_test_result(text)
                 if was_reading and self.parameter_panel.ready:
                     # 节点数组回读成功后同步地图，避免画面坐标与车上配置不一致。
@@ -4220,7 +4226,13 @@ class UpperComputerApp:
                     self._accept_servo_pid_response(fields)
                 if fields is not None and fields[:3] == ("RSP", "ARM", "SERVO_ZERO"):
                     if len(fields) == 7 and fields[3] == "READBACK":
-                        self.arm_status_var.set(f"舵机{fields[4]}设零后实测：单圈{fields[5]}°，多圈{fields[6]}°。")
+                        if fields[4] in ("5", "6"):
+                            axis = "升降轴" if fields[4] == "5" else "伸缩轴"
+                            self.arm_status_var.set(f"{axis}设零后实测：{fields[5]}mm。")
+                        elif fields[4] == "2":
+                            self.arm_status_var.set(f"转盘机械零位已保存，实测：{fields[6]}°。")
+                        else:
+                            self.arm_status_var.set(f"舵机{fields[4]}设零后实测：单圈{fields[5]}°，多圈{fields[6]}°。")
                         self.query_poses()
                     elif len(fields) == 5 and fields[3] == "ISSUED":
                         self.arm_status_var.set(f"舵机{fields[4]}设置零点指令已下发，请回读实测角度确认。")

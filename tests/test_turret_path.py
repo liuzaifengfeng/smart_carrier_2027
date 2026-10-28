@@ -1,4 +1,4 @@
-"""实际规划代码的编译期验证：两段选角、限位与三件整组的穷举对照。"""
+"""实际规划代码的编译期验证：绝对角度、圈数、限位与三件整组目标保留。"""
 import os
 from pathlib import Path
 import subprocess
@@ -49,8 +49,8 @@ constexpr bool one(float start, float logical, float target, float cost) {
 constexpr bool examples() {
     const float goals[] = {300,48.7f}; TurretPathPlan plan;
     if (!PlanTurretPath(123.3f,goals,2,-150,360,plan) || plan.count!=2
-            || !near(plan.anglesDeg[0],-60) || !near(plan.anglesDeg[1],48.7f)
-            || !near(plan.totalDegrees,292)) return false;
+            || !near(plan.anglesDeg[0],300) || !near(plan.anglesDeg[1],48.7f)
+            || !near(plan.totalDegrees,428)) return false;
     const float repeated[] = {90,90,90};
     return PlanTurretPath(90,repeated,3,-150,360,plan) && plan.totalDegrees==0
         && plan.anglesDeg[0]==90 && plan.anglesDeg[1]==90 && plan.anglesDeg[2]==90;
@@ -64,39 +64,29 @@ constexpr bool guards() {
             || PlanTurretPath(inf[0],good,1,-150,360,plan) || PlanTurretPath(0,nan,1,-150,360,plan)
             || PlanTurretPath(0,inf,1,-150,360,plan) || PlanTurretPath(0,good,1,nan[0],360,plan)
             || PlanTurretPath(0,good,1,-150,inf[0],plan) || PlanTurretPath(0,good,1,0,0,plan)
-            || PlanTurretPath(0,good,1,360,-150,plan) || PlanTurretPath(0,good,1,-360,360,plan)
+            || PlanTurretPath(0,good,1,360,-150,plan)
             || PlanTurretPath(0,good,1,-20,20,plan)) return false;
     for (size_t i=1;i<TURRET_PATH_MAX_TARGETS;++i) if (plan.anglesDeg[i]!=0) return false;
     return plan.count==2 && plan.totalDegrees==888 && plan.anglesDeg[0]==17;
 }
-static_assert(examples(), "two-leg planning chooses 292 degrees instead of greedy 428; repeated goals stay still");
-static_assert(one(10,350,-10,20), "use the nearest valid equivalent");
+static_assert(examples(), "two-leg planning preserves 300 degrees and total 428; repeated goals stay still");
+static_assert(one(10,350,350,340), "preserve requested absolute winding");
 static_assert(one(350,10,10,340), "a short arc outside cable limits is forbidden");
 static_assert(one(-150,180,180,330), "minimum cable endpoint is included");
-static_assert(one(360,0,360,0) && one(0,360,0,0), "zero and 360 retain the correct winding");
-static_assert(one(0,359,-1,1), "planned minus-one is a real angle, not a skip command");
-static_assert(one(60,240,-120,180), "equal-cost choices deterministically prefer the lower branch");
+static_assert(one(360,0,0,360) && one(0,360,360,360), "zero and 360 retain the correct winding");
+static_assert(one(0,-1,-1,1) && one(0,359,359,359), "planned minus-one is a real angle, not a skip command");
+static_assert(one(60,240,240,180), "preserve target even when an equivalent has equal cost");
 static_assert(guards(), "invalid input leaves every output field unchanged");
 ''')
 
-    def test_all_batch_permutations_match_exhaustive_search(self):
+    def test_all_batch_permutations_preserve_absolute_targets(self):
         self.compile_cases(r'''
 constexpr float distance(float a,float b) { const float d=a-b; return d<0 ? -d : d; }
 constexpr bool near(float a,float b) { return distance(a,b)<0.001f; }
-constexpr float exhaustive(float start,const float *goals,size_t count) {
-    size_t possibilities=1;
-    for (size_t i=0;i<count;++i) possibilities*=3;
-    float best=FLT_MAX;
-    for (size_t code=0;code<possibilities;++code) {
-        size_t digits=code; float position=start,total=0; bool valid=true;
-        for (size_t i=0;i<count;++i) {
-            const float next=goals[i]+360.0f*(int(digits%3)-1); digits/=3;
-            if (next < -150 || next > 360) { valid=false; break; }
-            total+=distance(position,next); position=next;
-        }
-        if (valid && total<best) best=total;
-    }
-    return best;
+constexpr float directTotal(float start,const float *goals,size_t count) {
+    float total=0;
+    for(size_t i=0;i<count;++i){total+=distance(start,goals[i]);start=goals[i];}
+    return total;
 }
 constexpr bool batches() {
     constexpr int orders[][3]={{1,2,3},{1,3,2},{2,1,3},{2,3,1},{3,1,2},{3,2,1}};
@@ -111,12 +101,11 @@ constexpr bool batches() {
         for (float start:starts) {
             TurretPathPlan plan;
             if (!PlanTurretPath(start,goals,6,-150,360,plan) || plan.count!=6
-                    || !near(plan.totalDegrees,exhaustive(start,goals,6))) return false;
+                    || !near(plan.totalDegrees,directTotal(start,goals,6))) return false;
             float position=start,total=0;
             for (size_t i=0;i<6;++i) {
                 const float angle=plan.anglesDeg[i];
-                if (angle < -150 || angle > 360 || !(near(angle,goals[i])
-                        || near(angle,goals[i]-360) || near(angle,goals[i]+360))) return false;
+                if (angle < -150 || angle > 360 || !near(angle,goals[i])) return false;
                 total+=distance(position,angle); position=angle;
             }
             if (!near(total,plan.totalDegrees)) return false;
@@ -124,7 +113,7 @@ constexpr bool batches() {
     }
     return true;
 }
-static_assert(batches(), "48 forward/reverse batches preserve order and match exhaustive global optimum");
+static_assert(batches(), "48 forward/reverse batches preserve order and preserve every absolute target and direct travel");
 ''')
 
 

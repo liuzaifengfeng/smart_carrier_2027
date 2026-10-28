@@ -40,7 +40,7 @@ const char *MotionHardware::issue(const Step &s) {
  */
 bool MotionHardware::feedback(const Step &s) {
     return s.kind==StepKind::POSITION||s.kind==StepKind::TURRET_READY||
-        (s.kind==StepKind::ARM&&(s.turretArrival||ARM_FEEDBACK_ENABLED)&&!s.timed);
+        (s.kind==StepKind::ARM&&(s.liftArrival||s.turretArrival||ARM_FEEDBACK_ENABLED)&&!s.timed);
 }
 /**
  * @brief 检查位置移动、转台或机械臂实测到位条件，并通过 done 返回本次结果。
@@ -51,8 +51,18 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
     if(s.kind==StepKind::POSITION){TickPositionMove();done=!PositionMoveActive();return nullptr;}
     if(s.kind==StepKind::TURRET_READY) {
         float angle=0;
-        if(Servo_QueryAngleMTurn(2,angle,100)&&isfinite(angle)&&fabsf(angle-s.turret)<=5){done=true;return nullptr;}
+        if(ReadArmTurretAngle(angle)&&fabsf(angle-s.turret)<=5){done=true;return nullptr;}
         return millis()-turretStarted>=s.waitMs?"EXECUTION":nullptr;
+    }
+    if(s.liftArrival) {
+        node_position::Motor state;
+        const char *error=ReadMotorFeedback(5,state);if(error)return error;
+        // 升降正方向为CCW，位置反馈为负；保留符号，不把反向位置当作抬升到位。
+        const double measured=-static_cast<double>(state.position)*3200.0/65536.0/HEIGHT_PULSE;
+        done=(state.flags&2)&&fabs(measured-s.high)<=1.0;
+        if(done)Serial.printf("{EVT,MOTION,LIFT_ARRIVED,%lu,%.3f,%.3f}\n",
+            static_cast<unsigned long>(job),s.high,measured);
+        return nullptr;
     }
     if(s.turretArrival) {
         float measured=0;if(!ReadArmTurretAngle(measured))return "EXECUTION";

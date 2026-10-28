@@ -72,6 +72,14 @@ class PoseQueryTests(unittest.TestCase):
         app._accept_pose_response("{RSP,POSE,GET,OK,150,150,270,50,80,360,12.7}")
         self.assertIn("舵盘多圈=360°", app.arm_status_var.set.call_args.args[0])
 
+    def test_turret_motor_failure_preserves_views(self):
+        app = self.app()
+        app.pose_query_timer = "timer"
+        app._accept_pose_response("{RSP,POSE,GET,ERR,MOTOR_READ,7}")
+        app.field.set_current_pose.assert_not_called()
+        app.arm_preview.set_pose.assert_not_called()
+        self.assertIn("7号张大头电机", app.pose_query_status.set.call_args.args[0])
+
     def test_servo_failure_preserves_views_and_reports_axis(self):
         for servo_id, axis in ((1, "夹爪"), (2, "舵盘")):
             with self.subTest(servo_id=servo_id):

@@ -1,5 +1,6 @@
 #include "Emm_V5.h"
 #include "motor_bus.h"
+#include "turret_motor.h"
 
 /**
   * @brief    初始化电机
@@ -29,6 +30,9 @@ void Emm_V5_Init(void)
   Emm_V5_Origin_Trigger_Return(6, 0, false);
   Serial1.flush();
   delay(10);
+  // 转盘只使能，保留驱动器当前位置，不自动旋转或清零。
+  Emm_V5_En_Control(TURRET_MOTOR_ID, true, false);
+  Serial1.flush();
   Serial.println("[Emm_V5] initialized! UART initialized on SERIAL1");
 }
 
@@ -168,7 +172,7 @@ void Emm_V5_En_Control(uint8_t addr, bool state, bool snF)
 void Emm_V5_En_Control_all(bool state){
   MotorBusGuard transaction;
   vTaskDelay(pdMS_TO_TICKS(10));
-  Emm_V5_En_Control(0, state, false);
+  Emm_V5_En_Control(4, state, false);
   vTaskDelay(pdMS_TO_TICKS(10));
   Emm_V5_En_Control(1, state, false);
   vTaskDelay(pdMS_TO_TICKS(10));

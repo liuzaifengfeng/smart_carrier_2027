@@ -1,3 +1,4 @@
+#include "turret_motor.h"
 #include "robot_runtime.h"
 #include "alignment_start_policy.h"
 #include "h30_usb.h"
@@ -392,15 +393,15 @@ bool waitScannerCode(char *out, uint32_t len, uint32_t timeoutMs) {
 }
 
 // ================= 主状态机 =================
-// 底盘、升降和伸缩回读理想值；两个舵机通过总线现场读取，不触发运动。
+// 底盘、升降和伸缩回读理想值；转盘电机与夹爪舵机现场读取，不触发运动。
 // Debug 和 Release 共用此接口；单位顺序为 mm/mm/度/mm/mm/度/度。
 static void sendPoseQueryReply() {
     const RobotPose robot = currentPose;
     ArmPose arm = currentArm;
-    // 与 MoveArm 一致：2 号舵盘读取真实多圈角度，1 号夹爪读取单圈角度。
+    // 转盘读取张大头电机多圈位置，夹爪读取舵机单圈角度。
     // 读取失败不以命令目标/上次角度冒充实测值，也不改写运动目标 currentArm。
-    if (!Servo_QueryAngleMTurn(2, arm.turret_angle) || !isfinite(arm.turret_angle)) {
-        Serial.println("{RSP,POSE,GET,ERR,SERVO_READ,2}");
+    if (!TurretMotorReadAngle(arm.turret_angle) || !isfinite(arm.turret_angle)) {
+        Serial.println("{RSP,POSE,GET,ERR,MOTOR_READ,7}");
         return;
     }
     if (!Servo_QueryAngle(1, arm.pawl_angle) || !isfinite(arm.pawl_angle)) {
@@ -416,54 +417,17 @@ static void sendPoseQueryReply() {
 
 // 开机读取一个舵机的角度，并同步到主控维护的机械臂位姿。
 /**
- * @brief 启动时读取转台或夹爪实际角度，成功时写入 storedAngle；不发运动指令。
+ * @brief 启动时读取夹爪实际角度，成功时写入 storedAngle；不发运动指令。
  */
 void readStartupServoAngle(uint8_t servoId, float &storedAngle) {
     Serial.printf("[Servo] 开机角度读取开始: ID=%u\n",
                   static_cast<unsigned>(servoId));
     float measuredAngle = 0.0f;
-    const bool readOk = servoId == 2
-        ? Servo_QueryAngleMTurn(servoId, measuredAngle, 100)
-        : Servo_QueryAngle(servoId, measuredAngle, 100);
+    const bool readOk = Servo_QueryAngle(servoId, measuredAngle, 100);
     if (!readOk || !isfinite(measuredAngle)) {
         Serial.printf("[Servo] 开机角度读取失败: ID=%u, 保留原值=%.1f度, 未进行归一化\n",
                       static_cast<unsigned>(servoId), storedAngle);
         return; // 读取失败时保留原值，不把失败当作测得 0 度。
-    }
-
-    if (servoId == 2) {
-        storedAngle = measuredAngle;
-        if (storedAngle < 0.0f || storedAngle > 180.0f) {
-            // 用户约定：每次上电时转台物理上都停在 0~180 度。
-            // 只在单圈实测也符合该区间、且与多圈角度的余数一致时重置圈数。
-            float singleAngle = 0.0f;
-            float wrappedAngle = fmodf(measuredAngle, 360.0f);
-            if (wrappedAngle > 180.0f) wrappedAngle -= 360.0f;
-            if (wrappedAngle < -180.0f) wrappedAngle += 360.0f;
-            const bool singleReadOk = Servo_QueryAngle(2, singleAngle, 100);
-            if (!singleReadOk || !isfinite(singleAngle)
-                    || singleAngle < 0.0f || singleAngle > 180.0f
-                    || fabsf(singleAngle - wrappedAngle) > 3.0f) {
-                Serial.printf("[Servo] ERR: 转台单圈校验失败：多圈=%.1f度，余角=%.1f度，单圈读取%s，单圈=%.1f度；未重置圈数\n",
-                              measuredAngle, wrappedAngle, singleReadOk ? "成功" : "失败", singleAngle);
-                return;
-            }
-            float resetAngle = 0.0f;
-            if (!Servo_ResetTurnCount(2, resetAngle) || !isfinite(resetAngle)
-                    || resetAngle < 0.0f || resetAngle > 180.0f
-                    || fabsf(resetAngle - singleAngle) > 3.0f) {
-                Serial.printf("[Servo] ERR: 转台圈数重置未验证成功；重置前=%.1f度，单圈=%.1f度，回读=%.1f度\n",
-                              measuredAngle, singleAngle, resetAngle);
-                return;
-            }
-            storedAngle = resetAngle;
-            Serial.printf("[Servo] 转台圈数已重置：%.1f -> %.1f度；未命令转台旋转\n",
-                          measuredAngle, storedAngle);
-        } else {
-            Serial.printf("[Servo] 转台实测多圈角度=%.1f度（线缆允许范围 -150~360 度），无需重置\n",
-                          storedAngle);
-        }
-        return;
     }
 
     float normalizedAngle = measuredAngle;

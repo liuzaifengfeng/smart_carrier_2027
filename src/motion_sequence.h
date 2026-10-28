@@ -11,10 +11,11 @@ struct Step {
     uint32_t waitMs=0,holdMs=0;
     uint8_t cargo=0,color=0;
     bool planned=false;
-    bool turretArrival=false; // 独立转向步骤由2号舵机实测多圈角度决定完成。
+    bool turretArrival=false; // 独立转向步骤由转盘电机实测多圈角度决定完成。
+    bool liftArrival=false; // 初始化抬升实测到位后，才允许后续转盘动作。
     bool timed=false; // 此步按waitMs计时，即使开启机械臂反馈模式也不改为等待到位。
     bool slowLower=false; // 第一层工位放料下降：升降转速和实际加速度各减半。
-    uint16_t turretRampMs=600; // 2号转台加速、减速各自时长；由动作阶段指定。
+    uint16_t turretRampMs=600; // 转盘加减速参考时间，换算为张大头加速度档位；由动作阶段指定。
 };
 struct Program {
     // 整组三件第一层放料最多48步；静态存储，运行中不申请堆内存。

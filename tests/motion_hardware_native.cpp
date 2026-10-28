@@ -11,6 +11,9 @@ uint32_t clockMs=0;bool stop=false,servoAvailable=true;
 float turretMeasured=0,clawMeasured=0;
 uint8_t flags=3;
 bool motorAtTarget=true;
+bool customMotor=false;
+int64_t customPosition=0;
+const char *motorError=nullptr;
 int issued=0;
 uint16_t issuedRamp=0;bool issuedSlowLower=false;
 uint32_t millis(){return clockMs;}
@@ -32,6 +35,7 @@ void MovePose(int,float,bool){++issued;}
 bool ReadArmTurretAngle(float &angle){angle=turretMeasured;return servoAvailable;}
 bool Servo_QueryAngleMTurn(uint8_t id,float &angle,uint32_t){angle=id==2?turretMeasured:clawMeasured;return servoAvailable;}
 const char *ReadMotorFeedback(uint8_t id,node_position::Motor &state) {
+    if(customMotor){assert(id==5);state.flags=flags;state.position=customPosition;return motorError;}
     state.flags=flags;
     const float target=id==5?100:20,ppm=id==5?HEIGHT_PULSE:LENGTH_PULSE;
     state.position=llround((target+(motorAtTarget?0:10))*ppm*65536/3200);return nullptr;
@@ -52,16 +56,16 @@ void look3() {
 void turretArrival() {
     MotionHardware hardware;hardware.configure(19,cancelled);
     motion::Step s;s.kind=motion::StepKind::ARM;s.turretArrival=true;s.turret=350;
-    // 底层选择-10°等效目标，必须比较真实多圈值，而非请求的350°或最近目标缓存。
-    currentArm.turret_angle=-10;turretMeasured=-50;ARM_FEEDBACK_ENABLED=0;
+    // 底层保留350°绝对目标，必须比较真实多圈值，不能将-10°当作同一目标。
+    currentArm.turret_angle=350;turretMeasured=310;ARM_FEEDBACK_ENABLED=0;
     assert(!hardware.issue(s)&&hardware.feedback(s));bool done=false;
     assert(!hardware.ready(s,done)&&!done);
     currentArm.turret_angle=99; // 发令后缓存变化不应改变本步骤保存的目标。
-    turretMeasured=-15.1f;assert(!hardware.ready(s,done)&&!done);
-    turretMeasured=-15;assert(!hardware.ready(s,done)&&done);
-    turretMeasured=-5;assert(!hardware.ready(s,done)&&done);
-    turretMeasured=-4.9f;assert(!hardware.ready(s,done)&&!done);
-    turretMeasured=350;assert(!hardware.ready(s,done)&&!done); // 不把错圈当作到位。
+    turretMeasured=344.9f;assert(!hardware.ready(s,done)&&!done);
+    turretMeasured=345;assert(!hardware.ready(s,done)&&done);
+    turretMeasured=355;assert(!hardware.ready(s,done)&&done);
+    turretMeasured=355.1f;assert(!hardware.ready(s,done)&&!done);
+    turretMeasured=-10;assert(!hardware.ready(s,done)&&!done); // 不把错圈当作到位。
     servoAvailable=false;assert(hardware.ready(s,done));servoAvailable=true;
     stop=true;assert(hardware.ready(s,done));stop=false;
 }
@@ -83,6 +87,30 @@ void feedback() {
     stop=false;s.kind=motion::StepKind::COMMIT;s.cargo=1;s.color=6;
     assert(!hardware.issue(s)&&cargoPlatforms[0].material==MATERIAL_LIGHT_BLUE);
 }
+void liftArrival() {
+    MotionHardware hardware;hardware.configure(20,cancelled);
+    motion::Step lift;lift.kind=motion::StepKind::ARM;lift.name="INIT_LIFT";
+    lift.high=160;lift.liftArrival=true;
+    assert(hardware.feedback(lift)&&!ARM_FEEDBACK_ENABLED);
+    motion::Program program;program.append(lift);
+    motion::Step turn;turn.kind=motion::StepKind::ARM;turn.name="INIT_TURN";turn.turret=-55;program.append(turn);
+    motion::Sequence sequence;sequence.begin(program,hardware);
+    customMotor=true;customPosition=0;currentArm.high=160;
+    sequence.tick();assert(issued==1);
+    clockMs=900;sequence.tick();assert(sequence.stepIndex()==0&&issued==1);
+    customPosition=262144; // 反向160mm不允许结束抬升。
+    clockMs+=50;sequence.tick();assert(sequence.stepIndex()==0&&issued==1);
+    customPosition=-262144;flags=1; // 实测位置到了，但驱动器尚未报告到位。
+    clockMs+=50;sequence.tick();assert(sequence.stepIndex()==0&&issued==1);
+    flags=3;
+    clockMs+=50;sequence.tick();assert(sequence.stepIndex()==1&&issued==1);
+    sequence.tick();assert(issued==2);
+    assert(Serial.text.find("LIFT_ARRIVED,20,160.000,160.000")!=std::string::npos);
+    bool done=false;motorError="MOTOR_FEEDBACK_TIMEOUT";
+    assert(hardware.ready(lift,done)&&!done);
+    motorError=nullptr;assert(!hardware.ready(lift,done)&&done); // 通信恢复后可以再次检查。
+    stop=true;assert(hardware.ready(lift,done)&&!done);
+}
 int main(int argc,char **argv) {
-    assert(argc==2);if(!strcmp(argv[1],"look3"))look3();else if(!strcmp(argv[1],"feedback"))feedback();else if(!strcmp(argv[1],"turret"))turretArrival();else assert(false);
+    assert(argc==2);if(!strcmp(argv[1],"look3"))look3();else if(!strcmp(argv[1],"feedback"))feedback();else if(!strcmp(argv[1],"turret"))turretArrival();else if(!strcmp(argv[1],"lift"))liftArrival();else assert(false);
 }

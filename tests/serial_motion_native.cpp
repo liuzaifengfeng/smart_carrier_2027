@@ -3,6 +3,7 @@
 #include "motion_job.h"
 #include "robot_state.h"
 #include "chassis.h"
+#include "turret_motor.h"
 #include "material_transfer.h"
 #include "continuous_trial.h"
 #include "h30_usb.h"
@@ -131,6 +132,13 @@ void Emm_V5_Reset_Clog_Pro(uint8_t id){recordCommand(100+id);}
 void Emm_V5_Reset_CurPos_To_Zero(uint8_t id){recordCommand(200+id);}
 void Emm_V5_En_Control(uint8_t id,bool,bool){recordCommand(300+id);}
 void Emm_V5_Origin_Trigger_Return(uint8_t id,uint8_t,bool){recordCommand(400+id);}
+bool TurretMotorSetZero(float &angle){originId=7;angle=0;return true;}
+float HEIGHT_PULSE=80,LENGTH_PULSE=30;
+uint8_t zeroMotorId=0,readMotorId=0;
+bool zeroFails=false,readFails=false;
+int64_t zeroReadback=0;
+const char *ZeroMotorEncoderPosition(uint8_t id){assert(transactionDepth);zeroMotorId=id;return zeroFails?"TIMEOUT":nullptr;}
+const char *ReadMotorEncoderPosition(uint8_t id,int64_t &position){assert(transactionDepth);readMotorId=id;position=zeroReadback;return readFails?"TIMEOUT":nullptr;}
 #include "motor_init_actual.inc"
 
 // 编译实际运行时代码和完整串口分发；仅替换硬件及 FreeRTOS 边界。
@@ -163,11 +171,13 @@ void positions() {
     dispatch("{CMD,CHASSIS,MOVE,0,0,1}");assert(!active&&cancels==1&&!roundProgress);
 }
 void maintenance() {
-    dispatch("{CMD,ARM,SERVO_PID_GET,2}");assert(pidId==2);
-    assert(Serial.text.find("{RSP,ARM,SERVO_PID_GET,READBACK,2,100,20,3,4,50,6,7}")!=std::string::npos);
+    dispatch("{CMD,ARM,SERVO_PID_GET,2}");assert(pidId==255);
+    assert(Serial.text.find("UNSUPPORTED")!=std::string::npos);
+    dispatch("{CMD,ARM,SERVO_PID_GET,1}");assert(pidId==1);
+    assert(Serial.text.find("{RSP,ARM,SERVO_PID_GET,READBACK,1,100,20,3,4,50,6,7}")!=std::string::npos);
     dispatch("{CMD,ARM,SERVO_PID_SET,1,200,30,5,6,70,8,9}");assert(pidId==1&&pidValues[0]==200&&pidValues[6]==9);
     assert(Serial.text.find("{RSP,ARM,SERVO_PID_SET,READBACK,1,200,30,5,6,70,8,9}")!=std::string::npos);
-    dispatch("{CMD,ARM,SERVO_ZERO,2}");assert(originId==2);
+    dispatch("{CMD,ARM,SERVO_ZERO,2}");assert(originId==7);
     assert(Serial.text.find("{RSP,ARM,SERVO_ZERO,READBACK,2,0.000,0.000}")!=std::string::npos);
 
     dispatch("{CMD,ARM,INIT_START}");assert(captured.kind==MotionKind::ARM_POSE&&active);
@@ -180,6 +190,29 @@ void maintenance() {
     dispatch("{CMD,ARM,RETRIEVE,3,2}");assert(captured.kind==MotionKind::RETRIEVE&&captured.color==MATERIAL_RED);finish();
     dispatch("{CMD,VISION,START_REQUEST,WORK_AREA_LOADED}");assert(captured.startVision&&!alignmentEnabled);
     assert(captured.vision==static_cast<uint8_t>(VisionStartMode::WORK_AREA_LOADED));
+}
+void linearZero() {
+    currentArm={100,50,90,20};
+    dispatch("{CMD,ARM,SERVO_ZERO,5}");
+    assert(zeroMotorId==5&&readMotorId==5&&currentArm.high==0&&currentArm.length==50);
+    assert(originId==255&&currentArm.turret_angle==90&&currentArm.pawl_angle==20);
+    assert(Serial.text.find("{RSP,ARM,SERVO_ZERO,READBACK,5,0.000,0.000}")!=std::string::npos);
+    dispatch("{CMD,ARM,SERVO_ZERO,6}");
+    assert(zeroMotorId==6&&readMotorId==6&&currentArm.length==0);
+    zeroReadback=-16384;
+    dispatch("{CMD,ARM,SERVO_ZERO,5}");assert(currentArm.high==10);
+    zeroFails=true;readMotorId=0;
+    dispatch("{CMD,ARM,SERVO_ZERO,5}");assert(currentArm.high==10&&readMotorId==0);
+    assert(Serial.text.find("{RSP,ARM,SERVO_ZERO,ERR,MOTOR_WRITE}")!=std::string::npos);
+    zeroFails=false;readFails=true;
+    dispatch("{CMD,ARM,SERVO_ZERO,5}");assert(currentArm.high==10);
+    assert(Serial.text.find("{RSP,ARM,SERVO_ZERO,ERR,MOTOR_READ}")!=std::string::npos);
+    readFails=false;zeroReadback=0;
+    dispatch("{CMD,ARM,SERVO_ZERO,5}");assert(currentArm.high==0);
+    zeroMotorId=0;serialDebugMode=false;
+    dispatch("{CMD,ARM,SERVO_ZERO,6}");assert(zeroMotorId==0);
+    serialDebugMode=true;active=true;
+    dispatch("{CMD,ARM,SERVO_ZERO,6}");assert(zeroMotorId==0&&!transactionDepth);
 }
 void lidar() {
     headingCollecting=true;serialDebugMode=false;dispatch("{CMD,VISION,LIDAR_POSE}");
@@ -214,7 +247,7 @@ void boot() {
 }
 void startup() {
     Emm_V5_Init();
-    assert(startupCommands==std::vector<int>({100,201,202,203,204,305,405,306,406}));
+    assert(startupCommands==std::vector<int>({100,201,202,203,204,305,306,406,307}));
     assert(!transactionDepth);
 }
 void zones() {
@@ -230,5 +263,6 @@ int main(int argc,char **argv) {
     if(!strcmp(argv[1],"grab"))grab();else if(!strcmp(argv[1],"positions"))positions();
     else if(!strcmp(argv[1],"maintenance"))maintenance();else if(!strcmp(argv[1],"lidar"))lidar();
     else if(!strcmp(argv[1],"trial"))trial();else if(!strcmp(argv[1],"boot"))boot();
-    else if(!strcmp(argv[1],"startup"))startup();else if(!strcmp(argv[1],"zones"))zones();else assert(false);
+    else if(!strcmp(argv[1],"startup"))startup();else if(!strcmp(argv[1],"zones"))zones();
+    else if(!strcmp(argv[1],"linear-zero"))linearZero();else assert(false);
 }

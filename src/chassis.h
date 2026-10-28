@@ -8,7 +8,7 @@
 constexpr float ARM_HEIGHT_LIMIT_MM = 175.0f; // Maximum arm height (mm).
 // 总任务超时后锁止 MoveArm 的后续发令，上电/重新进入 Release 才清除。
 extern volatile bool taskMotionAborted;
-// 2 号转台舵机的真实多圈角度边界，由线缆可运动范围决定。
+// 转盘真实多圈角度边界，由线缆可运动范围决定。
 constexpr float TURRET_CABLE_MIN_DEG = -150.0f;
 constexpr float TURRET_CABLE_MAX_DEG = 360.0f;
 
@@ -132,20 +132,20 @@ void ResetAlignmentWait();
 // 契约：目标在机械行程内，速度为正；RPM 在写入协议时饱和。
 // 串口和参数入口负责校验；-1 跳过对应轴。
 // slowLower仅将升降轴转速及实际加速度减半，伸缩、转台和夹爪保持原参数。
-// turretRampMs 为2号转台加速、减速各自时间(ms)，由动作阶段传入；不改变夹爪参数。
+// turretRampMs 保留动作接口兼容；张大头转盘使用turret_motor.h里的独立曲线。
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed, uint16_t turretRampMs=600, bool slowLower=false);
 
-// 读取2号转台实际多圈角度并检查线缆范围；失败时不改写 angle，也不更新目标缓存。
+// 读取7号张大头转盘实际多圈角度并检查线缆范围；失败时不改写 angle，也不更新目标缓存。
 /**
- * @brief 读取2号转台实际多圈角度(deg)，同时沿用现有线缆范围检查；成功写入angle并返回true。
+ * @brief 读取7号张大头转盘实际多圈角度(deg)，同时沿用现有线缆范围检查；成功写入angle并返回true。
  */
 bool ReadArmTurretAngle(float &angle);
 
-// 执行已规划的精确多圈转台角度，不重新选择等效角度；转台 -1 表示实际 -1 度。
+// 两个入口均保留多圈绝对角度；规划入口的转台 -1 表示实际 -1 度，普通入口表示跳过。
 // 其他三轴仍以 -1 跳过；速度、计时、保护和返回值含义与 MoveArm 相同。
 /**
- * @brief 按已规划的多圈绝对转台目标发令，不再选择最近等效角；其他轴的-1仍表示跳过。
- * @param turretRampMs 转台加速、减速各自时长(ms)，第一层放料全程500，收料、第二层叠放及圆盘全程20。
+ * @brief 按已规划的多圈绝对转台目标发令，保留全部圈数；其他轴的-1仍表示跳过。
+ * @param turretRampMs 旧动作阶段参数；张大头转盘曲线独立配置，不再按该参数设置。
  * @return true 指令下发成功，不表示实测到位。
  */
 bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed, uint16_t turretRampMs=600, bool slowLower=false);

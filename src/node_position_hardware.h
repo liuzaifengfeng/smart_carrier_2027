@@ -37,6 +37,15 @@ node_position::Runner &PositionNodeRunner();
  * @return nullptr 成功，否则为通信错误原因。
  */
 const char *ReadMotorFeedback(uint8_t id,node_position::Motor &state);
+// 单独读取/清零多圈位置，沿用电机总线事务锁和应答解析。
+const char *ReadMotorEncoderPosition(uint8_t id,int64_t &position);
+// 一条0x43应答中同时取得单圈编码器和累计位置。
+const char *ReadMotorEncoderSnapshot(uint8_t id,uint16_t &encoder,int64_t &position,int16_t &rpm,uint8_t &flags);
+const char *ReadMotorPositionPid(uint8_t id,uint32_t (&values)[3]);
+const char *WriteMotorPositionPid(uint8_t id,const uint32_t (&values)[3],bool save=false);
+const char *SetMotorPositionPidVerified(uint8_t id,const uint32_t (&values)[3],bool save);
+const char *ConfigureEmmMotor(uint8_t id,uint8_t function,uint8_t value,bool save);
+const char *ZeroMotorEncoderPosition(uint8_t id);
 /**
  * @brief 绑定扫码硬件并启动 ScanMotionRunner；received 回调由 pollTaskCode 提供。
  */

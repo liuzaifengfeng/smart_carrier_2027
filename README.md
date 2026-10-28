@@ -19,13 +19,13 @@
 
 ## 硬件架构（设备清单）
 > 由团队硬件规划确认。注意与旧代码的差异：雷达/相机接 **jetson_nano**，
-> ESP32 只保留运动/IO/总线职责；**6x_motor_bus = 4 底盘麦克纳姆轮 + 2 机械爪电机**
-> （沿用旧 4 轮麦轮运动学，另 2 电机供机械爪使用）。
+> ESP32 只保留运动/IO/总线职责；**7x_motor_bus = 4 底盘麦克纳姆轮 + 升降 + 伸缩 + 转盘**
+> （沿用旧 4 轮麦轮运动学，另 3 电机供机械臂使用）。
 
 ```
 robot_chassis:
 ├─ power_system(24V)
-│  ├─ battery_lithium: 24V 原始动力电源 → 直供 6x_motor_bus
+│  ├─ battery_lithium: 24V 原始动力电源 → 直供 7x_motor_bus
 │  ├─ dcdc_12v(24V→12V) → servo_control_board (舵机控制板)
 │  │  └─ dcdc_19v(12V→19V) → jetson_nano
 │  ├─ dcdc_5v(24V→5V)  → esp32_s3 / scan_module / radar_module
@@ -40,15 +40,15 @@ robot_chassis:
 │  ├─ radar_module: UART TTL → jetson_nano (激光/超声波测距)
 │  └─ servo_feedback: UART ⇄ esp32_s3 (通过控制板返回状态/负载/角度)
 └─ actuator_layer
-   ├─ 6x_motor_bus: UART BUS ⇄ esp32_s3 (6x 轮毂/底盘电机, 指令/反馈)
-   └─ 2x_servo: UART ⇄ esp32_s3 → 12V servo_control_board (双独立舵机, 转向/云台)
+   ├─ 7x_motor_bus: UART BUS ⇄ esp32_s3 (地址1～4底盘、5升降、6伸缩、7转盘)
+   └─ 1x_servo: UART ⇄ esp32_s3 → 12V servo_control_board (ID 1夹爪)
 ```
 
 **关键接线对应（主控侧）**
 | 外设 | 接主控(ESP32) | 接 jetson_nano | 说明 |
 |---|---|---|---|
-| 6x 轮毂/底盘电机 | ✅ UART BUS | — | 经由双向串行总线控制，直连24V供电 |
-| 12V 舵机控制板 | ✅ UART | — | 控制2个转向/云台舵机并反馈数据 |
+| 7x 张大头电机 | ✅ UART BUS | — | 经由双向串行总线控制，直连24V供电 |
+| 12V 舵机控制板 | ✅ UART | — | 控制1号夹爪舵机并反馈数据 |
 | 二维码扫描 | ✅ UART TTL | — | scan_module |
 | USB 摄像头 ×2 | — | ✅ USB | 前向/俯视视觉 |
 | 雷达模块 | — | ✅ UART | 定位/避障(由 jetson 处理) |
@@ -64,6 +64,7 @@ src/
 ├── main.cpp        # 主控：新赛制状态机 + 机载电脑通信 + 任务码解析
 ├── chassis.h/.cpp  # 底盘运动原语（movepose / GotoPose，麦克纳姆轮）
 ├── Emm_V5.h/.cpp   # 电机驱动协议（原样保留，底层驱动）
+├── turret_motor.h/.cpp # 转盘张大头驱动，与底盘共用Serial1
 ├── servo.h/.cpp    # UART 总线舵机驱动（Fashion Star 协议，HA8-U25H-M）
 └── ota_service.*   # WiFi + OTA 无线烧录（原样保留）
 ```

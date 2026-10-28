@@ -5,6 +5,8 @@
 #include "continuous_trial.h"
 #include "disc_position_grab.h"
 #include "motion_executor.h"
+#include "node_position_hardware.h"
+#include "motor_bus.h"
 static bool serialDebugMode = true;
 /**
  * @brief 处理连续路径试跑配置、准备、启动、状态和停止指令；返回是否已匹配处理。
@@ -415,6 +417,50 @@ static void serialDispatch(const SerialFrame &frame) {
     // 1. 通用命令与共享业务状态。
     if (frame.is("SYS", "HELLO", 0)) {
         Serial.println("{RSP,SYS,HELLO,OK,2}");
+    } else if(frame.is("EMM","PID_GET",1)||frame.is("EMM","PID_SET",5)
+            ||frame.is("EMM","STATE_GET",1)||frame.is("EMM","MODE_SET",3)
+            ||frame.is("EMM","ENABLE",2)||frame.is("EMM","CLEAR_STALL",1)) {
+        if(!serialDebugMode){serialError(frame,"MODE");return;}
+        uint32_t id=0;
+        if(!serialUInt(frame.fields[3],id,7)||!id){serialError(frame,"RANGE");return;}
+        MotorBusGuard transaction;
+        const char *error=nullptr;
+        if(frame.is("EMM","PID_GET",1)||frame.is("EMM","PID_SET",5)) {
+            uint32_t gains[3]={},save=0;
+            if(frame.is("EMM","PID_SET",5)) {
+                for(uint8_t i=0;i<3;++i)if(!serialUInt(frame.fields[4+i],gains[i],UINT32_MAX)){serialError(frame,"RANGE");return;}
+                if(!serialUInt(frame.fields[7],save,1)){serialError(frame,"RANGE");return;}
+                error=SetMotorPositionPidVerified(id,gains,save);
+                if(error){
+                    Serial.printf("[EMM] id=%u PID_SET stage=WRITE_VERIFY error=%s\n",unsigned(id),error);
+                    serialError(frame,error);return;
+                }
+            }
+            else error=ReadMotorPositionPid(id,gains);
+            if(error){
+                Serial.printf("[EMM] id=%u %s stage=READBACK error=%s\n",unsigned(id),frame.fields[2],error);
+                serialError(frame,error);return;
+            }
+            Serial.printf("{RSP,EMM,%s,READBACK,%u,%lu,%lu,%lu}\n",frame.fields[2],unsigned(id),
+                (unsigned long)gains[0],(unsigned long)gains[1],(unsigned long)gains[2]);
+        } else if(frame.is("EMM","STATE_GET",1)) {
+            uint16_t encoder=0;int64_t position=0;int16_t rpm=0;uint8_t flags=0;
+            error=ReadMotorEncoderSnapshot(id,encoder,position,rpm,flags);
+            if(error){serialError(frame,error);return;}
+            Serial.printf("{RSP,EMM,STATE_GET,READBACK,%u,%u,%lld,%d,%u}\n",unsigned(id),encoder,(long long)position,rpm,flags);
+        } else {
+            uint32_t value=0,save=0;uint8_t function=0x0E;
+            if(frame.is("EMM","MODE_SET",3)) {
+                if(!serialUInt(frame.fields[4],value,3)||!serialUInt(frame.fields[5],save,1)){serialError(frame,"RANGE");return;}
+                function=0x46;
+            } else if(frame.is("EMM","ENABLE",2)) {
+                if(!serialUInt(frame.fields[4],value,1)){serialError(frame,"RANGE");return;}
+                function=0xF3;
+            }
+            error=ConfigureEmmMotor(id,function,value,save);
+            if(error){serialError(frame,error);return;}
+            Serial.printf("{RSP,EMM,%s,ACK,%u}\n",frame.fields[2],unsigned(id));
+        }
     } else if(frame.is("MOTION","STATUS",1)) {
         uint32_t id=0;if(!serialUInt(frame.fields[3],id,UINT32_MAX)){serialError(frame,"RANGE");return;}
         const auto result=GetMotionStatus(id);
@@ -692,6 +738,8 @@ static void serialDispatch(const SerialFrame &frame) {
         if(!serialDebugMode){serialError(frame,"MODE");return;}
         uint32_t id=0;
         if(!serialUInt(frame.fields[3],id,253)){serialError(frame,"RANGE");return;}
+        // 旧协议中的逻辑轴2仍代表转盘；该轴已不使用华馨京舵机PID。
+        if(id==2){serialError(frame,"UNSUPPORTED");return;}
         uint16_t values[7];
         if(strcmp(frame.fields[2],"SERVO_PID_SET")==0) {
             for(uint8_t i=0;i<7;++i){uint32_t value=0;
@@ -707,13 +755,31 @@ static void serialDispatch(const SerialFrame &frame) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         uint32_t id=0;
         if(!serialUInt(frame.fields[3],id,253)){serialError(frame,"RANGE");return;}
+        if(id==5||id==6) {
+            MotorBusGuard transaction;
+            if(ZeroMotorEncoderPosition(id)){serialError(frame,"MOTOR_WRITE");return;}
+            int64_t position=0;
+            if(ReadMotorEncoderPosition(id,position)){serialError(frame,"MOTOR_READ");return;}
+            // 两个直线轴的正向位置指令均为CCW，对应负编码器坐标。
+            const float measured=static_cast<double>(-position)*3200.0/65536.0/(id==5?HEIGHT_PULSE:LENGTH_PULSE);
+            if(id==5)currentArm.high=measured;
+            else currentArm.length=measured;
+            Serial.printf("{RSP,ARM,SERVO_ZERO,READBACK,%u,%.3f,%.3f}\n",static_cast<unsigned>(id),measured,measured);
+            return;
+        }
+        if(id==2) {
+            float angle=0;
+            if(!TurretMotorSetZero(angle)){serialError(frame,"MOTOR_READ");return;}
+            currentArm.turret_angle=angle;
+            Serial.printf("{RSP,ARM,SERVO_ZERO,READBACK,2,%.3f,%.3f}\n",angle,angle);
+            return;
+        }
         if(!Servo_SetOrigin(id)){serialError(frame,"SERVO_WRITE");return;}
         float single=0,multi=0;
         if(!Servo_QueryAngle(id,single,100)||!Servo_QueryAngleMTurn(id,multi,100)){
             serialError(frame,"SERVO_READ");return;
         }
         if(id==1)currentArm.pawl_angle=multi;
-        if(id==2)currentArm.turret_angle=multi;
         Serial.printf("{RSP,ARM,SERVO_ZERO,READBACK,%u,%.3f,%.3f}\n",static_cast<unsigned>(id),single,multi);
     } else if (frame.is("ARM", "SERVO", 2)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }

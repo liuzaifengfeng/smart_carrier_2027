@@ -7,6 +7,7 @@
 #include "node_position_hardware.h"
 #include "position_move_timing.h"
 #include "motor_bus.h"
+#include "turret_motor.h"
 volatile bool taskMotionAborted = false;
 
 // 理想位姿(由主控维护; 真实位姿的获取方案待定)
@@ -206,12 +207,12 @@ void RegisterChassisParameters() {
 
 
 /**
- * @brief 读取2号转台实际多圈角度(deg)，同时沿用现有线缆范围检查；成功写入angle并返回true。
+ * @brief 读取张大头转盘实际多圈角度(deg)，沿用线缆范围检查。
  */
 bool ReadArmTurretAngle(float &angle) {
     if (taskMotionAborted) return false;
     float measuredAngle = 0.0f;
-    if (!Servo_QueryAngleMTurn(2, measuredAngle, 100) || !isfinite(measuredAngle)) {
+    if (!TurretMotorReadAngle(measuredAngle) || !isfinite(measuredAngle)) {
         Serial.println("[Arm] ERR: turret multi-turn angle read failed; motion skipped");
         return false;
     }
@@ -237,47 +238,18 @@ bool ReadArmTurretAngle(float &angle) {
  */
 static bool MoveArmInternal(float high, float length, float turret_angle, float pawl_angle, float speed, bool absoluteTurret, uint16_t turretRampMs, bool slowLower) {
     if (taskMotionAborted) return false;
-    // 2号转台：按动作传入加减速时长，按梯形曲线面积计算总时间。
-    // 这里只设置舵机指令曲线，不增加动作组等待；夹爪仍使用下方原有参数。
-    constexpr float TURRET_ANGULAR_SPEED_DEG_S = 250.0f; // 指令曲线峰值角速度(deg/s)
-    const uint16_t TURRET_ACCEL_TIME_MS = turretRampMs;  // 加速时间(ms)
-    const uint16_t TURRET_DECEL_TIME_MS = turretRampMs;  // 减速时间(ms)
-    const uint32_t TURRET_MIN_TIME_MS = TURRET_ACCEL_TIME_MS + TURRET_DECEL_TIME_MS + 1;
     // 夹爪原标定为 speed=200 对应约90°/s；时间缩短至1/5后等效为450°/s。
     // 实际指令耗时按回读角度到最近等效目标的行程计算，不再使用与角度无关的线性映射。
     constexpr float GRIPPER_REFERENCE_COMMAND_SPEED = 200.0f; // 夹爪角速度标定时采用的指令速度
     constexpr float GRIPPER_REFERENCE_ANGULAR_SPEED_DEG_S = 450.0f; // 缩短动作时间后的等效角速度
     constexpr uint32_t GRIPPER_MIN_TIME_MS = 40;
     float safeTurretTarget = 0.0f;
-    uint32_t turretIntervalMs = TURRET_MIN_TIME_MS;
     const bool moveTurret = absoluteTurret || turret_angle != -1.0f;
     if (moveTurret) {
         float measuredAngle = 0.0f;
         if (!ReadArmTurretAngle(measuredAngle)) return false;
-        float bestDistance = INFINITY;
-        if (absoluteTurret) {
-            // 保留整段路径规划选择的圈数，包括有效的 -1 度目标。
-            safeTurretTarget = turret_angle;
-            bestDistance = fabsf(safeTurretTarget - measuredAngle);
-        } else {
-            // 普通调用继续选择线缆边界内最近的等效角度。
-            for (int8_t turn = -1; turn <= 1; ++turn) {
-                const float candidate = turret_angle + 360.0f * turn;
-                if (candidate < TURRET_CABLE_MIN_DEG || candidate > TURRET_CABLE_MAX_DEG) continue;
-                const float distance = fabsf(candidate - measuredAngle);
-                if (distance < bestDistance) {
-                    bestDistance = distance;
-                    safeTurretTarget = candidate;
-                }
-            }
-        }
-        // bestDistance 来自实测多圈角度与最终安全目标的差，不使用上次目标缓存。
-        // 行程=峰值速度×[总时间-(加速时间+减速时间)/2]。
-        const float scaledIntervalMs = bestDistance * 1000.0f / TURRET_ANGULAR_SPEED_DEG_S
-            + (TURRET_ACCEL_TIME_MS + TURRET_DECEL_TIME_MS) * 0.5f;
-        if (scaledIntervalMs > TURRET_MIN_TIME_MS) {
-            turretIntervalMs = static_cast<uint32_t>(scaledIntervalMs + 0.5f);
-        }
+        // 目标为带符号的累计绝对角度，保留圈数，不选择±360度等效角。
+        safeTurretTarget = turret_angle;
     }
 
     if (taskMotionAborted) return false;
@@ -303,7 +275,7 @@ static bool MoveArmInternal(float high, float length, float turret_angle, float 
 
     if (taskMotionAborted) return false;
     if (moveTurret) {
-        Servo_SetAngleMTurnByInterval(2, safeTurretTarget, turretIntervalMs,  TURRET_ACCEL_TIME_MS, TURRET_DECEL_TIME_MS, 0);
+        if(!TurretMotorMove(safeTurretTarget, turretRampMs))return false;
         currentArm.turret_angle = safeTurretTarget;
     }
 
