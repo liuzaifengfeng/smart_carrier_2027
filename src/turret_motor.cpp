@@ -8,8 +8,7 @@ namespace {
 uint16_t zeroEncoder=0;
 bool zeroLoaded=false;
 float motorOriginAngle=0,lastMeasuredAngle=0;
-bool pidConfigured=false;
-struct TurnTrace {bool active=false;uint32_t id=0,started=0,lastSample=0;uint8_t stableSamples=0;float start=0,target=0,overshoot=0;};
+struct TurnTrace {bool active=false;uint32_t id=0,started=0,lastSample=0;uint8_t stableSamples=0;float start=0,target=0,overshoot=0;uint32_t periodMs=50,durationMs=0;};
 TurnTrace trace;
 uint32_t nextTrace=0;
 void finishTrace(const char *reason) {
@@ -17,37 +16,6 @@ void finishTrace(const char *reason) {
         static_cast<unsigned long>(trace.id),static_cast<unsigned long>(millis()-trace.started),
         reason,trace.target,lastMeasuredAngle,trace.overshoot);
     trace.active=false;
-}
-
-bool configureDamping() {
-    if(pidConfigured)return true;
-    MotorBusGuard transaction;
-    uint32_t baseline[3]={};
-    Preferences store;
-    if(!store.begin("turret",false))return false;
-    if(store.isKey("pid_base")) {
-        const bool loaded=store.getBytes("pid_base",baseline,sizeof(baseline))==sizeof(baseline);
-        store.end();if(!loaded)return false;
-    } else {
-        vTaskDelay(pdMS_TO_TICKS(TURRET_QUERY_GAP_MS));
-        const char *error=ReadMotorPositionPid(TURRET_MOTOR_ID,baseline);
-        if(error){store.end();Serial.printf("[Turret] PID baseline read failed: %s\n",error);return false;}
-        const bool saved=store.putBytes("pid_base",baseline,sizeof(baseline))==sizeof(baseline);
-        store.end();if(!saved)return false;
-    }
-    uint32_t applied[3]={baseline[0],baseline[1],0};
-    const uint64_t derivative=uint64_t(baseline[2])*TURRET_PID_D_NUMERATOR/TURRET_PID_D_DENOMINATOR;
-    applied[2]=derivative>UINT32_MAX?UINT32_MAX:static_cast<uint32_t>(derivative);
-    const char *error=WriteMotorPositionPid(TURRET_MOTOR_ID,applied);
-    if(error){Serial.printf("[Turret] PID write failed: %s\n",error);return false;}
-    vTaskDelay(pdMS_TO_TICKS(TURRET_QUERY_GAP_MS));
-    uint32_t actual[3]={};error=ReadMotorPositionPid(TURRET_MOTOR_ID,actual);
-    if(error){Serial.printf("[Turret] PID readback failed: %s\n",error);return false;}
-    for(uint8_t i=0;i<3;++i)if(actual[i]!=applied[i])return false;
-    Serial.printf("[Turret] PID baseline=%lu/%lu/%lu applied=%lu/%lu/%lu (RAM only)\n",
-        static_cast<unsigned long>(baseline[0]),static_cast<unsigned long>(baseline[1]),static_cast<unsigned long>(baseline[2]),
-        static_cast<unsigned long>(actual[0]),static_cast<unsigned long>(actual[1]),static_cast<unsigned long>(actual[2]));
-    pidConfigured=true;return true;
 }
 
 bool loadZero() {
@@ -86,6 +54,7 @@ bool TurretMotorReadState(TurretMotorState &state) {
     const float sign=TURRET_MOTOR_POSITIVE_DIR==0?1.0f:-1.0f;
     state.angle=motorOriginAngle+static_cast<double>(position)*360.0/65536.0/TURRET_MOTOR_GEAR_RATIO*sign;
     state.rpm=TURRET_MOTOR_POSITIVE_DIR==0?rpm:-rpm;state.flags=flags;
+    state.encoder=encoder;state.position=position;
     lastMeasuredAngle=state.angle;
     return true;
 }
@@ -95,23 +64,42 @@ bool TurretMotorReadAngle(float &angle) {
     angle=state.angle;return true;
 }
 
-bool TurretMotorMove(float angle, uint16_t /*rampMs*/) {
-    if(!configureDamping())return false;
+static uint16_t motorRpm(float speedDegS) {
+    const uint16_t requestedRpm = static_cast<uint16_t>(speedDegS * TURRET_MOTOR_GEAR_RATIO / 6.0f + 0.5f);
+    return requestedRpm ? requestedRpm : 1; // 协议转速为整数RPM，最小非零档为1。
+}
+
+static bool moveProfile(float angle,uint16_t rpm,uint8_t acceleration,uint32_t periodMs,uint32_t durationMs) {
     const float motorAngle = (angle-motorOriginAngle) * TURRET_MOTOR_GEAR_RATIO;
     const uint32_t pulses = static_cast<uint32_t>(fabsf(motorAngle) * TURRET_MOTOR_PULSES_PER_REV / 360.0f + 0.5f);
-    const uint16_t rpm = static_cast<uint16_t>(TURRET_MOTOR_SPEED_DEG_S * TURRET_MOTOR_GEAR_RATIO / 6.0f + 0.5f);
-    // 厂家公式：每增加1RPM耗时(256-acc)*50us；换算并量化到协议档位1~255。
-    // https://devpress.csdn.net/xian/68945b69080e555a88d61cd3.html
-    const int step = static_cast<int>(TURRET_MOTOR_RAMP_MS * 20.0f / rpm + 0.5f);
-    const uint8_t acceleration = TURRET_MOTOR_RAMP_MS == 0 ? 0 : step < 1 ? 255 : step > 255 ? 1 : 256 - step;
     Emm_V5_Pos_Control(TURRET_MOTOR_ID, motorAngle < 0 ? 1 - TURRET_MOTOR_POSITIVE_DIR : TURRET_MOTOR_POSITIVE_DIR,
                        rpm, acceleration, pulses, true, false);
     if(trace.active)finishTrace("REPLACED");
     trace=TurnTrace{};trace.active=true;trace.id=++nextTrace;trace.started=trace.lastSample=millis();
-    trace.start=lastMeasuredAngle;trace.target=angle;
+    trace.start=lastMeasuredAngle;trace.target=angle;trace.periodMs=periodMs;trace.durationMs=durationMs;
     Serial.printf("{EVT,TURRET,COMMAND,%lu,%lu,%.3f,%.3f,%u,%u}\n",static_cast<unsigned long>(trace.id),
         static_cast<unsigned long>(trace.started),angle,trace.start,rpm,acceleration);
     return true;
+}
+
+bool TurretMotorMove(float angle,uint16_t /*rampMs*/) {
+    return moveProfile(angle,motorRpm(TURRET_MOTOR_SPEED_DEG_S),TURRET_MOTOR_ACCELERATION,50,0);
+}
+
+bool TurretMotorTrial(float angle,float speedDegS,uint16_t rampMs,uint32_t periodMs,uint32_t durationMs) {
+    MotorBusGuard transaction;
+    TurretMotorState state;if(!TurretMotorReadState(state))return false;
+    const uint16_t rpm=motorRpm(speedDegS);
+    // 试验页继续按每增加1RPM耗时(256-acc)*50us换算档位。
+    const int step=static_cast<int>(rampMs*20.0f/rpm+0.5f);
+    const uint8_t acceleration=rampMs==0?0:step<1?255:step>255?1:256-step;
+    return moveProfile(angle,rpm,acceleration,periodMs,durationMs);
+}
+
+uint32_t TurretMotorNextDelay() {
+    if(!trace.active)return 20;
+    const uint32_t elapsed=millis()-trace.lastSample;
+    return elapsed>=trace.periodMs?1:trace.periodMs-elapsed;
 }
 
 bool TurretMotorSetZero(float &angle) {
@@ -133,14 +121,25 @@ bool TurretMotorSetZero(float &angle) {
 bool TurretMotorTracking(){return trace.active;}
 void TurretMotorCancelTrace(){if(trace.active)finishTrace("CANCELLED");}
 void TurretMotorPoll() {
-    if(!trace.active||millis()-trace.lastSample<50)return;
+    if(!trace.active||millis()-trace.lastSample<trace.periodMs)return;
     trace.lastSample=millis();
-    TurretMotorState state;if(!TurretMotorReadState(state))return;
+    const uint32_t queryStart=millis();
+    TurretMotorState state;if(!TurretMotorReadState(state)) {
+        if(trace.durationMs&&millis()-trace.started>=trace.durationMs)finishTrace("OBSERVED");
+        return;
+    }
     const float error=state.angle-trace.target;
     const float passed=(trace.target>=trace.start?1.0f:-1.0f)*error;
     if(passed>trace.overshoot)trace.overshoot=passed;
-    Serial.printf("{EVT,TURRET,SAMPLE,%lu,%lu,%.3f,%.3f,%d,%u,%.3f}\n",static_cast<unsigned long>(trace.id),
-        static_cast<unsigned long>(millis()),trace.target,state.angle,state.rpm,state.flags,trace.overshoot);
+    if(trace.durationMs) {
+        Serial.printf("{EVT,TURRET,SAMPLE,%lu,%lu,%.3f,%.3f,%d,%u,%.3f,%u,%lld,%lu}\n",
+            (unsigned long)trace.id,(unsigned long)millis(),trace.target,state.angle,state.rpm,state.flags,trace.overshoot,
+            state.encoder,(long long)state.position,(unsigned long)(millis()-queryStart));
+        if(millis()-trace.started>=trace.durationMs)finishTrace("OBSERVED");
+        return;
+    }
+    Serial.printf("{EVT,TURRET,SAMPLE,%lu,%lu,%.3f,%.3f,%d,%u,%.3f}\n",(unsigned long)trace.id,
+        (unsigned long)millis(),trace.target,state.angle,state.rpm,state.flags,trace.overshoot);
     // 仅结束后台记录，不参与动作放行；原有±5度放行及动作重叠保持不变。
     if((state.flags&2)&&state.rpm==0&&fabsf(error)<=1.0f)++trace.stableSamples;
     else trace.stableSamples=0;

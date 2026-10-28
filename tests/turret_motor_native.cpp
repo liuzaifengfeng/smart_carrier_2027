@@ -65,12 +65,12 @@ int main(){
     snapshot(16384,0);
     assert(TurretMotorReadAngle(angle)&&angle==90&&writes==1&&zeroCommands==1);
     TurretMotorMove(0,20);
-    assert(direction==0&&targetPulses==800&&speed==42&&acceleration==208&&absolute&&!sync);
+    assert(direction==0&&targetPulses==800&&speed==83&&acceleration==126&&absolute&&!sync);
     TurretMotorMove(360,500);
-    assert(direction==1&&targetPulses==2400&&acceleration==208&&absolute);
-    assert(driverPid[0]==62000&&driverPid[1]==100&&driverPid[2]==93000&&pidBaselineWrites==1);
-    pidConfigured=false; // 主控复位而电机未掉电时，不能在已提高的Kd上再次乘1.5。
-    assert(TurretMotorMove(360,500)&&driverPid[2]==93000&&pidBaselineWrites==1&&pidWrites==2);
+    assert(direction==1&&targetPulses==2400&&acceleration==126&&absolute);
+    assert(driverPid[0]==62000&&driverPid[1]==100&&driverPid[2]==62000&&pidBaselineWrites==0&&pidWrites==0);
+    driverPid[2]=20000;
+    assert(TurretMotorMove(360,500)&&driverPid[2]==20000&&pidWrites==0);
     snapshot(16384,-49152);
     assert(TurretMotorReadAngle(angle)&&angle==360);
     TurretMotorMove(0,20);assert(direction==0&&targetPulses==800&&absolute); // 从360返回0，不就近取等效角。
@@ -81,7 +81,7 @@ int main(){
     // 只给电机断电：主控RAM不复位，180度重新上电后仍恢复正确坐标。
     snapshot(32768,0);
     assert(TurretMotorReadAngle(angle)&&angle==180);
-    TurretMotorMove(90,600);assert(direction==0&&targetPulses==800&&acceleration==208);
+    TurretMotorMove(90,600);assert(direction==0&&targetPulses==800&&acceleration==126);
     available=false;angle=777;
     assert(!TurretMotorReadAngle(angle)&&angle==777);
     const int previousZeros=zeroCommands;
@@ -102,9 +102,18 @@ int main(){
     clockMs+=50;TurretMotorPoll();clockMs+=50;TurretMotorPoll();
     assert(!TurretMotorTracking()&&moves==commandsBeforeTrace);
     assert(Serial.text.find("SETTLED")!=std::string::npos);
-    pidConfigured=false;pidWriteAvailable=false;
-    assert(!TurretMotorMove(90,20)&&moves==commandsBeforeTrace); // 参数写入未确认时不发送新位置指令，后续可重新尝试。
-    pidWriteAvailable=true;assert(TurretMotorMove(90,20));TurretMotorCancelTrace();assert(!TurretMotorTracking());
+    // PID写入接口不可用不应阻断位置运动，也不自动覆盖手动参数。
+    pidWriteAvailable=false;assert(TurretMotorMove(90,20)&&driverPid[2]==20000&&pidWrites==0);
+    TurretMotorCancelTrace();assert(!TurretMotorTracking());
+    snapshot(0,0);measuredRpm=0;measuredFlags=3;
+    assert(TurretMotorTrial(90,120,200,10,100));
+    assert(speed==20&&acceleration==56&&targetPulses==800&&trace.durationMs==100);
+    snapshot(0,-16384);
+    for(int i=0;i<4;++i){clockMs+=10;TurretMotorPoll();assert(TurretMotorTracking());}
+    assert(trace.stableSamples==0); // 即使到位也必须继续观察，不能提前结束。
+    clockMs+=100;TurretMotorPoll();assert(!TurretMotorTracking());
+    assert(Serial.text.find("OBSERVED")!=std::string::npos);
+    assert(driverPid[2]==20000&&pidWrites==0);
     // 官方0x43示例帧：单圈编码器与累计位置来自同一回复，位置为-65536。
     EmmFeedbackParser parser;EmmReply reply;
     const uint8_t bytes[]={7,0x43,0x1F,9,0x6B,0x67,0,3,0x43,0xEB,1,0,1,0,0,0,0,0,1,0,1,0,0,1,0,0,0,8,3,3,0x6B};

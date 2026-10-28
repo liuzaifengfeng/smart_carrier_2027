@@ -310,7 +310,7 @@ void task(void *) {
             if(!released||xQueueReceive(queue,&job,0)!=pdTRUE) {
                 TurretMotorPoll();
                 TickVisualAlignment();
-                ulTaskNotifyTake(pdTRUE,(alignmentEnabled||TurretMotorTracking())?pdMS_TO_TICKS(20):portMAX_DELAY);continue;
+                ulTaskNotifyTake(pdTRUE,(alignmentEnabled||TurretMotorTracking())?pdMS_TO_TICKS(TurretMotorNextDelay()):portMAX_DELAY);continue;
             }
             running=true;stage=0;join=motion::Join{};activeSpan=nullptr;armSpanOpen=false;
             hardware.configure(job.id,cancelled);
@@ -326,6 +326,14 @@ void task(void *) {
         const auto kind=job.request.kind;
         if(kind==MotionKind::NAVIGATE||kind==MotionKind::NODE_PATH)navigationTick();
         else if(kind==MotionKind::SCAN_TASK)scanTick();
+        else if(kind==MotionKind::TURRET_TRIAL) {
+            if(stage==0) {
+                phase("TURRET_TRIAL");
+                const auto &r=job.request;
+                if(!TurretMotorTrial(r.turret,r.speed,r.turretTrialRampMs,r.turretTrialPeriodMs,r.turretTrialDurationMs))finish(MotionState::FAILED,"MOTOR_READ");
+                else {currentArm.turret_angle=r.turret;stage=1;}
+            } else if(!TurretMotorTracking())finish(MotionState::DONE);
+        }
         else if(kind==MotionKind::TRIAL) {
             if(stage==0){ContinuousMotionBegin();stage=1;phase("TRIAL");}
             ContinuousMotionTick();
@@ -341,6 +349,7 @@ void task(void *) {
         if(join.armStarted&&!join.armReady){portENTER_CRITICAL(&jobMux);status.phase=arm.phase();portEXIT_CRITICAL(&jobMux);}
         TickVisualAlignment();
         uint32_t delay=20;
+        if(kind==MotionKind::TURRET_TRIAL)delay=TurretMotorNextDelay();
         if((kind==MotionKind::NAVIGATE||kind==MotionKind::NODE_PATH)&&stage==2&&!join.chassisDone)delay=ContinuousMotionNextDelay();
         if(join.armStarted&&!join.armReady){const uint32_t next=arm.nextDelay();if(next<delay)delay=next;}
         if(kind==MotionKind::TRIAL)delay=ContinuousMotionNextDelay();

@@ -44,6 +44,9 @@ const char *ReadMotorEncoderSnapshot(uint8_t id,uint16_t &encoder,int64_t &posit
 const char *ReadMotorPositionPid(uint8_t id,uint32_t (&values)[3]);
 const char *WriteMotorPositionPid(uint8_t id,const uint32_t (&values)[3],bool save=false);
 const char *SetMotorPositionPidVerified(uint8_t id,const uint32_t (&values)[3],bool save);
+const char *ReadMotorDriveParams(uint8_t id,uint16_t (&values)[7]);
+// 成功读回后values更新为实际值，包括驱动器拒用/限幅导致的不一致。
+const char *SetMotorDriveParamsVerified(uint8_t id,uint16_t (&values)[7],bool save);
 const char *ConfigureEmmMotor(uint8_t id,uint8_t function,uint8_t value,bool save);
 const char *ZeroMotorEncoderPosition(uint8_t id);
 /**

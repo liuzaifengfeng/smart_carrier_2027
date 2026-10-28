@@ -6,7 +6,7 @@ enum class MotionState : uint8_t { QUEUED, RUNNING, DONE, FAILED, CANCELLED };
 enum class MotionKind : uint8_t {
     NAVIGATE, NODE_PATH, ARM_POSE, DISC_GRAB, LOAD_ROUND, HELD_DISC, PLACE_ROUND, RETRIEVE_ROUND,
     TRANSFER, RETRIEVE, DEMO_PLACE, DEMO_RETRIEVE, SCAN_TASK, LIDAR_POSE,
-    HOME_OBSERVE, HOME_RETURN, POSITION, GOTO, VELOCITY, ARM_RAW, SERVO_RAW, ENABLE, TRIAL
+    HOME_OBSERVE, HOME_RETURN, POSITION, GOTO, VELOCITY, ARM_RAW, SERVO_RAW, ENABLE, TRIAL, TURRET_TRIAL
 };
 enum class ArmObservation : uint8_t { NONE, START, LOOK, LOOK2, LOOK3, LOOK4 };
 
@@ -21,6 +21,8 @@ struct MotionRequest {
     bool startVision=false;
     bool armPrepared=false; // 返航导航已完成 LOOK4，HOME_OBSERVE 只执行原有航向修正。
     uint8_t vision=0;
+    uint16_t turretTrialRampMs=100;
+    uint32_t turretTrialPeriodMs=20,turretTrialDurationMs=3000;
     // 应答文本按值复制，不能保存串口栈上 frame.fields 的指针。
     char category[8]={},command[24]={};
 };

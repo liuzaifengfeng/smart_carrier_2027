@@ -13,27 +13,31 @@ class EmmPidVerifyTests(unittest.TestCase):
 #include <string.h>
 #include <assert.h>
 struct MotorBusGuard {};
+int gaps=0;
+bool gapAfterWrite=false;
+#define pdMS_TO_TICKS(ms) (ms)
+void vTaskDelay(uint32_t ms){assert(ms==5);++gaps;gapAfterWrite=true;}
 const char *writeError=nullptr,*readError=nullptr;
 int writes=0,reads=0;bool saved=false;uint32_t actual[3]={10,20,30};
 const char *WriteMotorPositionPid(uint8_t id,const uint32_t (&values)[3],bool save){
-    assert(id==7);++writes;saved=save;return writeError;
+    assert(id==7);++writes;saved=save;gapAfterWrite=false;return writeError;
 }
 const char *ReadMotorPositionPid(uint8_t id,uint32_t (&values)[3]){
-    assert(id==7);++reads;for(int i=0;i<3;++i)values[i]=actual[i];return readError;
+    assert(id==7);assert(writeError||gapAfterWrite);++reads;for(int i=0;i<3;++i)values[i]=actual[i];return readError;
 }
 FUNCTION
 int main(){
     uint32_t target[3]={10,20,30};
-    assert(!SetMotorPositionPidVerified(7,target,false));assert(writes==1&&reads==1);
+    assert(!SetMotorPositionPidVerified(7,target,false));assert(writes==1&&reads==1&&gaps==1);
     writeError="MOTOR_FEEDBACK_TIMEOUT";
-    assert(!SetMotorPositionPidVerified(7,target,true));assert(writes==2&&reads==2&&saved);
+    assert(!SetMotorPositionPidVerified(7,target,true));assert(writes==2&&reads==2&&saved&&gaps==1);
     actual[1]=21;
     assert(!strcmp(SetMotorPositionPidVerified(7,target,false),"PID_VERIFY_MISMATCH"));
     readError="MOTOR_FEEDBACK_TIMEOUT";
     assert(!strcmp(SetMotorPositionPidVerified(7,target,false),readError));
     writeError="MOTOR_COMMAND_REJECTED";int before=reads;
     assert(!strcmp(SetMotorPositionPidVerified(7,target,false),writeError));assert(reads==before);
-    assert(writes==5); // 每次操作只写一次
+    assert(writes==5&&gaps==1); // 每次操作只写一次；超时/拒绝不追加间隔。
 }
 '''.replace('FUNCTION', function)
         path = ROOT / '.pio/motion-native/emm_pid_verify.cpp'

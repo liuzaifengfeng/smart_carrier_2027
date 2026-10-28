@@ -2,6 +2,7 @@
 #include "robot_runtime.h"
 #include "h30_usb.h"
 #include "emm_feedback.h"
+#include "emm_drive_config.h"
 #include "motor_bus.h"
 #include "motion_executor.h"
 
@@ -31,14 +32,14 @@ class Hardware : public node_position::IO {
                         continue;
                     }
                     if(out.function!=fn)continue;
-                    if((fn==0xFD||fn==0x0A||fn==0x4A)&&out.data[2]!=2)return "MOTOR_COMMAND_REJECTED";
+                    if((fn==0xFD||fn==0x0A||fn==0x4A||fn==0x48)&&out.data[2]!=2)return "MOTOR_COMMAND_REJECTED";
                     if(commandError)Serial.printf("[MotorBus] id=%u request=0x%02X matched after unassigned error\n",id,fn);
                     return nullptr;
                 }
             }
             vTaskDelay(pdMS_TO_TICKS(1));
         }
-        if(fn==0x4A||fn==0x21) {
+        if(fn==0x4A||fn==0x21||fn==0x42||fn==0x48) {
             Serial.printf("[MotorBus] id=%u request=0x%02X timeout=25ms RX=",id,fn);
             for(size_t i=0;i<receivedSize;++i)Serial.printf("%s%02X",i?" ":"",received[i]);
             if(!receivedSize)Serial.printf("<none>");
@@ -128,6 +129,33 @@ public:
         if(error) {
             Serial.printf("[MotorBus] PID write error=%s TX=",error);
             for(uint8_t i=0;i<sizeof(cmd);++i)Serial.printf("%s%02X",i?" ":"",cmd[i]);
+            Serial.println("");
+        }
+        return error;
+    }
+    const char *readDriveConfig(uint8_t id,EmmDriveConfig &config) {
+        MotorBusGuard transaction;
+        drain();uint8_t cmd[]={id,0x42,0x6C,0x6B};Serial1.write(cmd,sizeof(cmd));Serial1.flush();
+        EmmReply out;const char *error=reply(id,0x42,out);
+        if(!error) {
+            Serial.printf("[MotorBus] config RX=");
+            for(uint8_t i=0;i<out.size;++i)Serial.printf("%s%02X",i?" ":"",out.data[i]);
+            Serial.println("");
+            for(uint8_t i=0;i<28;++i)config.data[i]=out.data[4+i];
+        }
+        return error;
+    }
+    const char *writeDriveConfig(uint8_t id,const EmmDriveConfig &config,bool save) {
+        MotorBusGuard transaction;
+        uint8_t cmd[33];config.writeFrame(id,save,cmd);
+        Serial.printf("[MotorBus] config TX=");
+        for(uint8_t i=0;i<sizeof(cmd);++i)Serial.printf("%s%02X",i?" ":"",cmd[i]);
+        Serial.println("");
+        drain();Serial1.write(cmd,sizeof(cmd));Serial1.flush();EmmReply out;
+        const char *error=reply(id,0x48,out);
+        if(out.function==0x48) {
+            Serial.printf("[MotorBus] config ACK RX=");
+            for(uint8_t i=0;i<out.size;++i)Serial.printf("%s%02X",i?" ":"",out.data[i]);
             Serial.println("");
         }
         return error;
@@ -256,6 +284,8 @@ const char *SetMotorPositionPidVerified(uint8_t id,const uint32_t (&values)[3],b
     MotorBusGuard transaction;
     const char *error=WriteMotorPositionPid(id,values,save);
     if(error&&strcmp(error,"MOTOR_FEEDBACK_TIMEOUT")!=0)return error;
+    // 经用户确认验证写后回读时序；ACK超时路径已等待25ms，不再追加间隔。
+    if(!error)vTaskDelay(pdMS_TO_TICKS(5));
     uint32_t actual[3]={};
     error=ReadMotorPositionPid(id,actual);
     if(error)return error;
@@ -263,6 +293,37 @@ const char *SetMotorPositionPidVerified(uint8_t id,const uint32_t (&values)[3],b
     return nullptr;
 }
 const char *ConfigureEmmMotor(uint8_t id,uint8_t function,uint8_t value,bool save){Hardware io(0,nullptr);return io.configureMotor(id,function,value,save);}
+const char *ReadMotorDriveParams(uint8_t id,uint16_t (&values)[7]) {
+    Hardware io(0,nullptr);EmmDriveConfig config;
+    const char *error=io.readDriveConfig(id,config);
+    if(!error)for(uint8_t i=0;i<7;++i)values[i]=config.get(i);
+    return error;
+}
+const char *SetMotorDriveParamsVerified(uint8_t id,uint16_t (&values)[7],bool save) {
+    MotorBusGuard transaction;Hardware io(0,nullptr);EmmDriveConfig config;
+    Serial.printf("[EMM] id=%u DRIVE_SET stage=BASE_READ save=%u\n",id,unsigned(save));
+    const char *error=io.readDriveConfig(id,config);
+    if(error){Serial.printf("[EMM] id=%u DRIVE_SET stage=BASE_READ error=%s (write not sent)\n",id,error);return error;}
+    for(uint8_t i=0;i<7;++i)config.set(i,values[i]);
+    // 经用户确认，整包读取到写入留5ms帧间隔。
+    vTaskDelay(pdMS_TO_TICKS(5));
+    Serial.printf("[EMM] id=%u DRIVE_SET stage=WRITE_ACK\n",id);
+    error=io.writeDriveConfig(id,config,save);
+    if(error)Serial.printf("[EMM] id=%u DRIVE_SET stage=WRITE_ACK error=%s\n",id,error);
+    if(error&&strcmp(error,"MOTOR_FEEDBACK_TIMEOUT")!=0)return error;
+    // 经用户确认验证Flash写入后100ms再回读；RAM仍5ms，ACK超时不追加等待。
+    if(!error)vTaskDelay(pdMS_TO_TICKS(save?100:5));
+    Serial.printf("[EMM] id=%u DRIVE_SET stage=READBACK\n",id);
+    uint16_t actual[7]={};error=ReadMotorDriveParams(id,actual);
+    if(error){Serial.printf("[EMM] id=%u DRIVE_SET stage=READBACK error=%s\n",id,error);return error;}
+    bool mismatch=false;
+    for(uint8_t i=0;i<7;++i)if(actual[i]!=values[i]) {
+        Serial.printf("[EMM] id=%u DRIVE_SET stage=VERIFY field=%u expected=%u actual=%u\n",id,i,values[i],actual[i]);
+        mismatch=true;
+    }
+    for(uint8_t i=0;i<7;++i)values[i]=actual[i];
+    return mismatch?"DRIVE_VERIFY_MISMATCH":nullptr;
+}
 const char *ZeroMotorEncoderPosition(uint8_t id){Hardware io(0,nullptr);return io.zero(id);}
 /**
  * @brief 同步运行节点位置路径直至结束；调用者持有底盘运动锁。

@@ -417,6 +417,33 @@ static void serialDispatch(const SerialFrame &frame) {
     // 1. 通用命令与共享业务状态。
     if (frame.is("SYS", "HELLO", 0)) {
         Serial.println("{RSP,SYS,HELLO,OK,2}");
+    } else if(frame.is("EMM","TURRET_TRIAL",5)) {
+        if(!serialDebugMode){serialError(frame,"MODE");return;}
+        float angle=0,speed=0;uint32_t ramp=0,period=0,duration=0;
+        if(!serialFloat(frame.fields[3],angle,TURRET_CABLE_MIN_DEG,TURRET_CABLE_MAX_DEG)
+            ||!serialFloat(frame.fields[4],speed,1,65535.0f*6/TURRET_MOTOR_GEAR_RATIO)
+            ||!serialUInt(frame.fields[5],ramp,UINT16_MAX)
+            ||!serialUInt(frame.fields[6],period,UINT32_MAX)||!period
+            ||!serialUInt(frame.fields[7],duration,UINT32_MAX)||!duration){serialError(frame,"RANGE");return;}
+        MotionRequest r;r.kind=MotionKind::TURRET_TRIAL;r.turret=angle;r.speed=speed;
+        r.turretTrialRampMs=ramp;r.turretTrialPeriodMs=period;r.turretTrialDurationMs=duration;
+        serialMotion(frame,r);
+    } else if(frame.is("EMM","DRIVE_GET",1)||frame.is("EMM","DRIVE_SET",9)) {
+        if(!serialDebugMode){serialError(frame,"MODE");return;}
+        uint32_t id=0,save=0;
+        if(!serialUInt(frame.fields[3],id,7)||!id){serialError(frame,"RANGE");return;}
+        uint16_t values[7]={};const char *error=nullptr;
+        if(frame.is("EMM","DRIVE_SET",9)) {
+            for(uint8_t i=0;i<7;++i){uint32_t value=0;
+                if(!serialUInt(frame.fields[4+i],value,UINT16_MAX)){serialError(frame,"RANGE");return;}
+                values[i]=value;
+            }
+            if(!serialUInt(frame.fields[11],save,1)){serialError(frame,"RANGE");return;}
+            error=SetMotorDriveParamsVerified(id,values,save);
+        } else error=ReadMotorDriveParams(id,values);
+        if(error&&strcmp(error,"DRIVE_VERIFY_MISMATCH")!=0){serialError(frame,error);return;}
+        Serial.printf("{RSP,EMM,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u}\n",frame.fields[2],error?"READBACK_MISMATCH":"READBACK",unsigned(id),
+            values[0],values[1],values[2],values[3],values[4],values[5],values[6]);
     } else if(frame.is("EMM","PID_GET",1)||frame.is("EMM","PID_SET",5)
             ||frame.is("EMM","STATE_GET",1)||frame.is("EMM","MODE_SET",3)
             ||frame.is("EMM","ENABLE",2)||frame.is("EMM","CLEAR_STALL",1)) {
