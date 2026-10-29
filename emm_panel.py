@@ -35,6 +35,8 @@ def build_emm_command(action, motor, *values):
 
 
 class EmmPanel(ttk.Frame):
+    lift_tuning = extension_tuning = None
+
     def __init__(self, parent, send, log, parse):
         super().__init__(parent, padding=12)
         self.send, self.log, self.parse = send, log, parse
@@ -86,10 +88,29 @@ class EmmPanel(ttk.Frame):
         ttk.Label(group, textvariable=self.feedback, wraplength=440).pack(anchor="w")
         ttk.Label(self, textvariable=self.status, wraplength=440).pack(anchor="w", pady=12)
         ttk.Label(self, wraplength=440, text="需进入 Debug 模式并在动作空闲时操作。默认仅修改 RAM；勾选保存同时用于 PID 和脉冲输入模式。\n转盘运动直接使用驱动器当前 PID，不再自动放大 Kd。\n模式设置收到驱动器 ACK 后显示成功；PID 显示实际回读值。原始应答同时记录在日志中。").pack(anchor="w")
-        self.tuning = TurretTuningPanel(self, send, log, self.gains, self.motor)
-        self.tuning.pack(fill="both", expand=True, pady=12)
+        self.trial_tabs = ttk.Notebook(self)
+        self.trial_tabs.pack(fill="both", expand=True, pady=12)
+        for axis, name, attr in ((5, "升降", "lift_tuning"), (6, "伸缩", "extension_tuning"), (7, "转盘", "tuning")):
+            page = ttk.Frame(self.trial_tabs)
+            self.trial_tabs.add(page, text=f"{axis}号{name}测试")
+            panel = TurretTuningPanel(page, send, log, self.gains, self.motor, axis, self.can_start_trial)
+            setattr(self, attr, panel)
+            panel.pack(fill="both", expand=True)
+
+    def tuning_panels(self):
+        return tuple(p for p in (self.tuning, self.lift_tuning, self.extension_tuning) if p is not None)
+
+    def can_start_trial(self):
+        return not any(panel.active for panel in self.tuning_panels())
+
+    def disconnected(self, reason="连接或模式改变，试验序列已取消"):
+        for panel in self.tuning_panels():
+            panel.disconnected(reason)
 
     def changed_motor(self, *_):
+        for panel in self.tuning_panels():
+            if panel.active:
+                panel.stop_trial()
         for variable in self.gains:
             variable.set("")
         for variable in self.drive_values:
@@ -113,11 +134,12 @@ class EmmPanel(ttk.Frame):
     def receive(self, text):
         fields = self.parse(text)
         if fields:
-            self.tuning.receive(fields)
+            for panel in self.tuning_panels():
+                panel.receive(fields)
         if not fields or fields[:2] != ("RSP", "EMM"):
             return
         # 试验应答由调参模块处理；其ACK不带电机地址字段。
-        if fields[2] == "TURRET_TRIAL":
+        if fields[2] in ("TURRET_TRIAL", "AXIS_TRIAL"):
             return
         if fields[3] == "ERR":
             self.status.set(f"操作失败：{fields[4]}（MODE 需 Debug，BUSY 表示动作执行中）")

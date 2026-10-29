@@ -78,6 +78,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"SYS", "HELLO"}, {"SYS", "RELEASE"}, {"SYS", "READY"},
         {"SYS", "START"}, {"SYS", "HELP"},
         {"MOTION", "STATUS"},
+        {"EMM", "AXIS_TRIAL"},
         {"TASK", "SET"},
         {"LED", "SET"}, {"LED", "GET"}, {"LED", "FREQ"},
         {"NAV", "START_ZONE"}, {"NAV", "ROUTE"}, {"NAV", "STOP"},
@@ -427,6 +428,19 @@ static void serialDispatch(const SerialFrame &frame) {
             ||!serialUInt(frame.fields[7],duration,UINT32_MAX)||!duration){serialError(frame,"RANGE");return;}
         MotionRequest r;r.kind=MotionKind::TURRET_TRIAL;r.turret=angle;r.speed=speed;
         r.turretTrialRampMs=ramp;r.turretTrialPeriodMs=period;r.turretTrialDurationMs=duration;
+        serialMotion(frame,r);
+    } else if(frame.is("EMM","AXIS_TRIAL",6)) {
+        if(!serialDebugMode){serialError(frame,"MODE");return;}
+        uint32_t id=0,rpm=0,ramp=0,period=0,duration=0;float position=0;
+        if(!serialUInt(frame.fields[3],id,6)||(id!=5&&id!=6)
+            ||!serialFloat(frame.fields[4],position,0,id==5?ARM_HEIGHT_LIMIT_MM:170.0f)
+            ||!serialUInt(frame.fields[5],rpm,UINT16_MAX)||!rpm
+            ||!serialUInt(frame.fields[6],ramp,UINT16_MAX)
+            ||!serialUInt(frame.fields[7],period,UINT32_MAX)||!period
+            ||!serialUInt(frame.fields[8],duration,UINT32_MAX)||!duration){serialError(frame,"RANGE");return;}
+        MotionRequest r;r.kind=MotionKind::AXIS_TRIAL;r.axisTrialMotor=id;
+        if(id==5)r.high=position;else r.length=position;
+        r.axisTrialRpm=rpm;r.axisTrialRampMs=ramp;r.axisTrialPeriodMs=period;r.axisTrialDurationMs=duration;
         serialMotion(frame,r);
     } else if(frame.is("EMM","DRIVE_GET",1)||frame.is("EMM","DRIVE_SET",9)) {
         if(!serialDebugMode){serialError(frame,"MODE");return;}

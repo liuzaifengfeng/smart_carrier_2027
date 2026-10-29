@@ -7,6 +7,7 @@
 #include "node_position_hardware.h"
 #include "motor_bus.h"
 #include "turret_motor.h"
+#include "arm_axis_trial.h"
 #include <float.h>
 
 // 保留旧参数注册位置以兼容上位机编号；观察姿态现按路径阶段提前触发。
@@ -74,6 +75,7 @@ void stopHardware() {
     for(uint8_t id=5;id<=6;++id)Emm_V5_Stop_Now(id,false);
     Emm_V5_Stop_Now(TURRET_MOTOR_ID,false);
     TurretMotorCancelTrace();
+    ArmAxisTrialCancel();
     // 保留夹爪当前命令，不在未知持料状态下松手。
 }
 /**
@@ -108,6 +110,7 @@ void completedEvent(const MotionStatus &result) {
     if(r.category[0]) {
         if(r.kind==MotionKind::TRANSFER)Serial.printf("{EVT,ARM,TRANSFER,%s,%u,%u}\n",success?"DONE":"FAILED",r.cargo,r.work);
         else if(r.kind==MotionKind::RETRIEVE)Serial.printf("{EVT,ARM,RETRIEVE,%s,%u,%u}\n",success?"DONE":"FAILED",r.work,r.cargo);
+        else if(r.kind==MotionKind::AXIS_TRIAL)Serial.printf("{EVT,EMM,AXIS_TRIAL,%s,%u}\n",success?"DONE":"FAILED",r.axisTrialMotor);
         else if(r.kind==MotionKind::LIDAR_POSE)Serial.println(success?"{EVT,VISION,LIDAR_POSE_DONE}":"{EVT,VISION,LIDAR_POSE_FAILED}");
         else if(r.kind==MotionKind::POSITION)Serial.println(success?"{EVT,CHASSIS,MOVE_POSITION,DONE,ESTIMATED}":"{EVT,CHASSIS,MOVE_POSITION,FAILED}");
         else Serial.printf("{EVT,%s,%s,%s}\n",r.category,r.command,
@@ -334,6 +337,26 @@ void task(void *) {
                 else {currentArm.turret_angle=r.turret;stage=1;}
             } else if(!TurretMotorTracking())finish(MotionState::DONE);
         }
+        else if(kind==MotionKind::AXIS_TRIAL) {
+            if(stage==0) {
+                phase("AXIS_TRIAL");
+                const auto &r=job.request;
+                const float target=r.axisTrialMotor==5?r.high:r.length;
+                const char *error=ArmAxisTrialStart(r.axisTrialMotor,target,r.axisTrialRpm,
+                    r.axisTrialRampMs,r.axisTrialPeriodMs,r.axisTrialDurationMs);
+                if(error)finish(MotionState::FAILED,error);
+                else {
+                    if(r.axisTrialMotor==5)currentArm.high=target;else currentArm.length=target;
+                    stage=1;
+                }
+            } else {
+                ArmAxisTrialPoll();
+                if(!ArmAxisTrialActive()) {
+                    const char *error=ArmAxisTrialError();
+                    finish(error?MotionState::FAILED:MotionState::DONE,error);
+                }
+            }
+        }
         else if(kind==MotionKind::TRIAL) {
             if(stage==0){ContinuousMotionBegin();stage=1;phase("TRIAL");}
             ContinuousMotionTick();
@@ -350,6 +373,7 @@ void task(void *) {
         TickVisualAlignment();
         uint32_t delay=20;
         if(kind==MotionKind::TURRET_TRIAL)delay=TurretMotorNextDelay();
+        if(kind==MotionKind::AXIS_TRIAL)delay=ArmAxisTrialNextDelay();
         if((kind==MotionKind::NAVIGATE||kind==MotionKind::NODE_PATH)&&stage==2&&!join.chassisDone)delay=ContinuousMotionNextDelay();
         if(join.armStarted&&!join.armReady){const uint32_t next=arm.nextDelay();if(next<delay)delay=next;}
         if(kind==MotionKind::TRIAL)delay=ContinuousMotionNextDelay();

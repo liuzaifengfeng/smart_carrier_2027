@@ -139,6 +139,13 @@ bool zeroFails=false,readFails=false;
 int64_t zeroReadback=0;
 const char *ZeroMotorEncoderPosition(uint8_t id){assert(transactionDepth);zeroMotorId=id;return zeroFails?"TIMEOUT":nullptr;}
 const char *ReadMotorEncoderPosition(uint8_t id,int64_t &position){assert(transactionDepth);readMotorId=id;position=zeroReadback;return readFails?"TIMEOUT":nullptr;}
+// 参数接口不属于本文件的硬件测试范围；若分发误调用硬件，必须直接暴露。
+const char *SetMotorDriveParamsVerified(uint8_t,uint16_t (&)[7],bool){assert(false);return "UNUSED";}
+const char *ReadMotorDriveParams(uint8_t,uint16_t (&)[7]){assert(false);return "UNUSED";}
+const char *SetMotorPositionPidVerified(uint8_t,const uint32_t (&)[3],bool){assert(false);return "UNUSED";}
+const char *ReadMotorPositionPid(uint8_t,uint32_t (&)[3]){assert(false);return "UNUSED";}
+const char *ReadMotorEncoderSnapshot(uint8_t,uint16_t &,int64_t &,int16_t &,uint8_t &){assert(false);return "UNUSED";}
+const char *ConfigureEmmMotor(uint8_t,uint8_t,uint8_t,bool){assert(false);return "UNUSED";}
 #include "motor_init_actual.inc"
 
 // 编译实际运行时代码和完整串口分发；仅替换硬件及 FreeRTOS 边界。
@@ -233,10 +240,47 @@ void lidar() {
     assert(reply.find("{EVT,VISION,LIDAR_POSE_DONE}")!=std::string::npos);
     assert(reply.find("BUSY")==std::string::npos&&active&&submissions==1);
 }
+void axisTrial();
 void trial() {
     dispatch("{CMD,NAV,TRIAL_START,42}");assert(active&&trialActive&&captured.kind==MotionKind::TRIAL);
     dispatch("{CMD,NAV,TRIAL_STATUS,42}");dispatch("{CMD,POSE,GET}");assert(poseQueries==1&&active);
     dispatch("{CMD,NAV,TRIAL_STOP,42}");assert(!active&&!trialActive&&cancels==1);
+    axisTrial(); // 既有试跑回归入口同时覆盖新增的直线轴试验协议。
+}
+void axisTrial() {
+    const int before=submissions,previousLaunches=launches,previousCancels=cancels,previousQueries=poseQueries;
+    serialDebugMode=false;dispatch("{CMD,EMM,AXIS_TRIAL,5,120,1000,100,20,3000}");
+    assert(submissions==before&&Serial.text.find("AXIS_TRIAL,ERR,MODE")!=std::string::npos);
+    serialDebugMode=true;
+    const char *invalid[]={
+        "{CMD,EMM,AXIS_TRIAL,7,90,1000,100,20,3000}",
+        "{CMD,EMM,AXIS_TRIAL,5,175.1,1000,100,20,3000}",
+        "{CMD,EMM,AXIS_TRIAL,6,-1,1000,100,20,3000}",
+        "{CMD,EMM,AXIS_TRIAL,6,170.1,1000,100,20,3000}",
+        "{CMD,EMM,AXIS_TRIAL,5,nan,1000,100,20,3000}",
+        "{CMD,EMM,AXIS_TRIAL,5,100,0,100,20,3000}",
+        "{CMD,EMM,AXIS_TRIAL,5,100,65536,100,20,3000}",
+        "{CMD,EMM,AXIS_TRIAL,5,100,1000,65536,20,3000}",
+        "{CMD,EMM,AXIS_TRIAL,5,100,1000,100,0,3000}",
+        "{CMD,EMM,AXIS_TRIAL,5,100,1000,100,20,0}"};
+    for(const char *line:invalid) {
+        Serial.text.clear();dispatch(line);assert(submissions==before);
+        assert(Serial.text.find("AXIS_TRIAL,ERR,RANGE")!=std::string::npos);
+    }
+    Serial.text.clear();dispatch("{CMD,EMM,AXIS_TRIAL,5,100}");
+    assert(Serial.text.find("AXIS_TRIAL,ERR,FORMAT")!=std::string::npos);
+    dispatch("{CMD,EMM,AXIS_TRIAL,5,175,65535,65535,1,3000}");
+    assert(active&&submissions==before+1&&launches==previousLaunches+1&&captured.kind==MotionKind::AXIS_TRIAL);
+    assert(captured.axisTrialMotor==5&&captured.high==175&&captured.length==-1);
+    assert(captured.axisTrialRpm==65535&&captured.axisTrialRampMs==65535&&captured.axisTrialPeriodMs==1);
+    assert(captured.axisTrialDurationMs==3000);
+    Serial.text.clear();dispatch("{CMD,EMM,AXIS_TRIAL,6,50,500,100,20,3000}");
+    assert(submissions==before+1&&Serial.text.find("AXIS_TRIAL,ERR,BUSY")!=std::string::npos);
+    dispatch("{CMD,POSE,GET}");dispatch("{CMD,SYS,HELLO}");assert(poseQueries==previousQueries+1&&active);
+    dispatch("{CMD,NAV,STOP}");assert(!active&&cancels==previousCancels+1&&!taskMotionAborted);
+    dispatch("{CMD,EMM,AXIS_TRIAL,6,170,500,0,20,1000}");
+    assert(active&&submissions==before+2&&captured.axisTrialMotor==6&&captured.high==-1&&captured.length==170);
+    assert(captured.axisTrialRpm==500&&captured.axisTrialRampMs==0);
 }
 void boot() {
     serialBootSetIdle(true);active=true;inputLevel=LOW;PollDebugBootButton();clockMs+=100;PollDebugBootButton();serialBootReleaseAtIdle(true);
@@ -263,6 +307,7 @@ int main(int argc,char **argv) {
     if(!strcmp(argv[1],"grab"))grab();else if(!strcmp(argv[1],"positions"))positions();
     else if(!strcmp(argv[1],"maintenance"))maintenance();else if(!strcmp(argv[1],"lidar"))lidar();
     else if(!strcmp(argv[1],"trial"))trial();else if(!strcmp(argv[1],"boot"))boot();
+    else if(!strcmp(argv[1],"axis-trial"))axisTrial();
     else if(!strcmp(argv[1],"startup"))startup();else if(!strcmp(argv[1],"zones"))zones();
     else if(!strcmp(argv[1],"linear-zero"))linearZero();else assert(false);
 }

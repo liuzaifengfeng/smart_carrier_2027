@@ -48,6 +48,43 @@ class EmmPanelTests(unittest.TestCase):
         panel.tuning.receive.assert_called_once_with(("RSP", "EMM", "TURRET_TRIAL", "ACK"))
         panel.status.set.assert_not_called()
 
+    def test_linear_acks_and_events_route_to_all_trial_panels(self):
+        panel = EmmPanel.__new__(EmmPanel)
+        panel.parse = parse_frame
+        panel.tuning, panel.lift_tuning, panel.extension_tuning = Mock(), Mock(), Mock()
+        panel.status = Mock()
+        for line in ("{RSP,EMM,AXIS_TRIAL,ACK}", "{EVT,EMM,AXIS_TRIAL,DONE,5}"):
+            panel.receive(line)
+            for child in panel.tuning_panels():
+                self.assertEqual(child.receive.call_args.args, (parse_frame(line),))
+        panel.status.set.assert_not_called()
+
+    def test_all_trial_panels_disconnect_and_share_busy_guard(self):
+        panel = EmmPanel.__new__(EmmPanel)
+        panel.tuning, panel.lift_tuning, panel.extension_tuning = Mock(), Mock(), Mock()
+        for child in panel.tuning_panels():
+            child.active = False
+        self.assertTrue(panel.can_start_trial())
+        panel.extension_tuning.active = True
+        self.assertFalse(panel.can_start_trial())
+        panel.disconnected("mode changed")
+        for child in panel.tuning_panels():
+            child.disconnected.assert_called_once_with("mode changed")
+
+    def test_changing_motor_stops_active_test_before_clearing_pid(self):
+        panel = EmmPanel.__new__(EmmPanel)
+        panel.tuning, panel.lift_tuning, panel.extension_tuning = Mock(), Mock(), Mock()
+        panel.tuning.active = panel.extension_tuning.active = False
+        panel.lift_tuning.active = True
+        panel.gains, panel.drive_values = [Mock() for _ in range(3)], [Mock() for _ in range(7)]
+        panel.drive_status, panel.feedback, panel.status = Mock(), Mock(), Mock()
+        panel.changed_motor()
+        panel.lift_tuning.stop_trial.assert_called_once_with()
+        panel.tuning.stop_trial.assert_not_called()
+        panel.extension_tuning.stop_trial.assert_not_called()
+        for variable in panel.gains:
+            variable.set.assert_called_once_with("")
+
     def test_commands(self):
         self.assertEqual(build_emm_command("PID_SET", "7", "4294967295", "0", "62000", 1),
                          "{CMD,EMM,PID_SET,7,4294967295,0,62000,1}")

@@ -477,3 +477,29 @@ encoder/position 来自同一0x43回复；query_ms 包含既有5ms查询间隔�
 指标：按方向计算最大采样过冲；±1°内持续到记录结束且至少0.5秒的稳定时间；最后0.5秒角度峰峰值；最后采样误差。末段仍运动时峰峰值不能解释为静止抖动。CSV包含 PID、请求速度/曲线、实际 RPM/档位、观察时长、原始计数、转速、标志和查询耗时，可据此离线复算。
 
 驱动配置实机记录：该7号驱动器曾对6000/10000mV请求保留5000mV，对6000mA检测电流请求回读5000mA；这是当前硬件/固件的实测行为，不据此在主控中增加通用5000限值。写入ACK不代表所有字段都采用请求值，始终以回读为准。
+
+## 5号升降、6号伸缩半自动 PID 试验
+
+EMM 页分别提供5号、6号测试区。先在页顶选择对应电机，读取或输入 PID，点击该区“写入 RAM 并开始试验”。实际 PID 回读一致后，先移动到 A，再按 A→B→A 往返。三个测试区互斥，切换电机时停止进行中的试验，断线或设备模式改变时取消后续序列。
+
+单段命令：`{CMD,EMM,AXIS_TRIAL,id,position_mm,rpm,ramp_ms,period_ms,duration_ms}`。
+
+- id 仅5/6；位置分别为0～175mm、0～170mm，沿用当前上电零点和 HEIGHT_PULSE/LENGTH_PULSE，测试不会清零或回零。
+- rpm 是整数1～65535，直接传驱动器，不使用正式动作组的速度倍率；协议表示范围不代表硬件可达到的转速。
+- ramp 为0～65535ms，与7号试验一样按 `ramp_ms ≈ rpm*(256-acc)*0.05` 量化档位，0表示不加减速；短行程未必达到请求转速。
+- period/duration 为正uint32毫秒。限Debug且运动作业空闲，先回复 `{RSP,EMM,AXIS_TRIAL,ACK}` 再交由统一运动任务执行；参数错误使用 `RANGE`，参数数量错误使用 `FORMAT`。
+
+反馈字段如下，位置、过冲单位mm，正转速表示升高/伸出，负转速表示下降/缩回；原始累计计数保留驱动器符号：
+
+```
+{EVT,AXIS,COMMAND,id,trace_id,started_ms,target_mm,start_mm,actual_rpm,acceleration}
+{EVT,AXIS,SAMPLE,id,trace_id,received_ms,target_mm,position_mm,signed_rpm,flags,overshoot_mm,encoder,position_counts,query_ms}
+{EVT,AXIS,RESULT,id,trace_id,elapsed_ms,result,target_mm,last_mm,overshoot_mm}
+{EVT,EMM,AXIS_TRIAL,DONE或FAILED,id}
+```
+
+累计位置按 `-position_counts*3200/65536/脉冲系数` 换算；每段固定其启动时的脉冲系数。请求周期不保证实际采样频率，query_ms包含5ms查询间隔和总线等待。初始读取失败不发运动命令；窗口内丢帧可重试，最后读取仍失败时结果为错误原因并产生FAILED，不作为正常OBSERVED结束。
+
+RESULT 为 OBSERVED、CANCELLED或读取错误原因。OBSERVED只表示观察结束，不承诺到位或停车；观察窗口需覆盖运动与静止观察，过短可能从运动中接续下一段。停止按钮复用 `{CMD,NAV,STOP}` 并执行统一物理停车；OTA仍走既有取消/停车通道，错误不设置永久故障锁。
+
+曲线支持位置(mm)、位置误差(mm)、转速(RPM)；稳定指标使用±1mm且持续至少0.5秒。CSV独立导出本电机的多组试验，包含电机编号、PID、实际RPM/档位、时间、原始计数、转速、标志和查询耗时。未做硬件单位校验时不能用曲线替代实际机构标定。

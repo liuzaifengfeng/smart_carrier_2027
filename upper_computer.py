@@ -3393,7 +3393,7 @@ class UpperComputerApp:
         self._reset_imu_query("连接已变更，请重新查询 H30")
         self.led_status.set("连接已变更，请重新查询亮度")
         self.parameter_panel.disconnected()
-        self.emm_panel.tuning.disconnected()
+        self.emm_panel.disconnected()
         self._cancel_protocol_timer()
         self._cancel_pose_query_timeout()
         self.pose_query_status.set("连接已变更，请重新查询位姿")
@@ -3442,7 +3442,7 @@ class UpperComputerApp:
         if self.serial_link.is_open and not self.serial_link.protocol_ready:
             self.serial_link.disconnect()
             self.parameter_panel.disconnected()
-            self.emm_panel.tuning.disconnected()
+            self.emm_panel.disconnected()
             self.connect_button.configure(text="连接")
             self.connection_var.set("协议不匹配或设备无回复")
             self.append_log("WARN", "未收到 ESP32 串口协议 v2 确认；控制命令已禁用")
@@ -4222,7 +4222,7 @@ class UpperComputerApp:
                     self.trial_panel.disconnected("设备启动或模式改变")
                     self._reset_imu_query("设备启动或模式改变，请重新查询 H30")
                     self.parameter_panel.disconnected()
-                    self.emm_panel.tuning.disconnected()
+                    self.emm_panel.disconnected()
                     self.led_status.set("设备启动或模式改变，请重新查询亮度")
                 self._accept_target_echo(text)
                 if fields is not None and fields[:3] in (("RSP", "ARM", "SERVO_PID_GET"), ("RSP", "ARM", "SERVO_PID_SET")):
@@ -4250,7 +4250,7 @@ class UpperComputerApp:
                 self._cancel_protocol_timer()
                 self._cancel_pose_query_timeout()
                 self.parameter_panel.disconnected()
-                self.emm_panel.tuning.disconnected()
+                self.emm_panel.disconnected()
                 self.serial_link.disconnect()
                 self.active_drive_key = None
                 self.pressed_drive_keys.clear()

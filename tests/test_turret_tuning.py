@@ -77,6 +77,107 @@ class TuningTests(unittest.TestCase):
         panel.receive(parse_frame("{RSP,EMM,PID_SET,READBACK,7,26000,10,39000}"))
         self.assertEqual(panel.send.call_count, before)
 
+    def make_linear_panel(self, motor):
+        panel = self.make_panel()
+        panel.axis_id = str(motor)
+        panel.unit, panel.position_mode = "mm", "位置"
+        panel.event_group, panel.trial_command = "AXIS", "AXIS_TRIAL"
+        panel.motor.get.return_value = str(motor)
+        panel.variables["a"].get.return_value = "80" if motor == 5 else "0"
+        panel.variables["b"].get.return_value = "120" if motor == 5 else "50"
+        panel.variables["speed"].get.return_value = "500"
+        return panel
+
+    def test_linear_limits_and_integer_rpm(self):
+        values = dict(a="0", b="175", speed="65535", ramp="65535", period="1", duration="3000", cycles="1")
+        self.assertEqual(trial_settings(values, 5)["speed"], 65535)
+        self.assertEqual(trial_settings(dict(values, b="170"), 6)["b"], 170)
+        for motor, change in ((5, {"b": "175.1"}), (6, {"b": "170.1"}),
+                              (5, {"a": "-0.1"}), (6, {"b": "nan"}),
+                              (5, {"speed": "500.5"}), (5, {"speed": "65536"}),
+                              (5, {"period": "0"}), (6, {"duration": "0"})):
+            with self.subTest(motor=motor, change=change), self.assertRaises(ValueError):
+                trial_settings({**values, "b": "100", **change}, motor)
+
+    def test_both_linear_trials_verify_own_pid_filter_feedback_and_export_mm(self):
+        for motor in (5, 6):
+            with self.subTest(motor=motor):
+                panel = self.make_linear_panel(motor)
+                panel.start_trial()
+                self.assertEqual(panel.send.call_args.args[0], f"{{CMD,EMM,PID_SET,{motor},26000,10,39000,0}}")
+                other = 6 if motor == 5 else 5
+                panel.receive(parse_frame(f"{{RSP,EMM,PID_SET,READBACK,{other},26000,10,39000}}"))
+                self.assertEqual(panel.send.call_count, 1)
+                panel.receive(parse_frame(f"{{RSP,EMM,PID_SET,READBACK,{motor},26000,10,39000}}"))
+                a, b = (80, 120) if motor == 5 else (0, 50)
+                self.assertEqual(panel.send.call_args.args[0], f"{{CMD,EMM,AXIS_TRIAL,{motor},{float(a)},500,100,20,3000}}")
+                # 其他电机的数据及过早/重复DONE不得跳过本段。
+                panel.receive(parse_frame(f"{{EVT,AXIS,COMMAND,{other},1,1000,10,0,500,252}}"))
+                panel.receive(parse_frame(f"{{EVT,EMM,AXIS_TRIAL,DONE,{motor}}}"))
+                self.assertIsNone(panel.current)
+                for trace, target in enumerate((a, b, a), 1):
+                    panel.receive(parse_frame(f"{{EVT,AXIS,COMMAND,{motor},{trace},1000,{target},0,500,252}}"))
+                    panel.receive(parse_frame(f"{{EVT,AXIS,SAMPLE,{other},{trace},1020,{target},999,1,3,0,123,-456,8}}"))
+                    self.assertEqual(panel.current.samples, [])
+                    panel.receive(parse_frame(f"{{EVT,AXIS,SAMPLE,{motor},{trace},1020,{target},{target},-42,3,0,123,-456,8}}"))
+                    self.assertEqual(panel.current.samples[0], (20, target, -42, 3, 123, -456, 8))
+                    panel.receive(parse_frame(f"{{EVT,AXIS,RESULT,{motor},{trace},3000,OBSERVED,{target},{target},0}}"))
+                    panel.receive(parse_frame(f"{{EVT,EMM,AXIS_TRIAL,DONE,{other}}}"))
+                    panel.receive(parse_frame(f"{{EVT,EMM,AXIS_TRIAL,DONE,{motor}}}"))
+                    calls = panel.send.call_count
+                    panel.receive(parse_frame(f"{{EVT,EMM,AXIS_TRIAL,DONE,{motor}}}"))
+                    self.assertEqual(panel.send.call_count, calls)
+                self.assertFalse(panel.active)
+                self.assertEqual(len(panel.records), 3)
+                self.assertEqual(panel.send.call_count, 4)
+                with TemporaryDirectory() as folder:
+                    path = Path(folder) / "linear.csv"
+                    with patch("turret_tuning.filedialog.asksaveasfilename", return_value=str(path)):
+                        panel.export_csv()
+                    with path.open(encoding="utf-8-sig", newline="") as stream:
+                        rows = list(csv.DictReader(stream))
+                    self.assertEqual(len(rows), 3)
+                    self.assertEqual(rows[0]["motor"], str(motor))
+                    self.assertEqual(rows[0]["position_mm"], str(float(a)))
+                    self.assertEqual(rows[0]["speed_rpm"], "500")
+                    self.assertEqual(rows[0]["position_counts"], "-456")
+                    self.assertNotIn("angle_deg", rows[0])
+
+    def test_linear_stop_disconnect_mismatch_and_errors_do_not_continue(self):
+        panel = self.make_linear_panel(5)
+        panel.start_trial()
+        panel.receive(parse_frame("{RSP,EMM,PID_SET,READBACK,5,26000,10,123}"))
+        self.assertFalse(panel.active)
+        self.assertEqual(panel.send.call_count, 1)
+        panel.start_trial()
+        panel.receive(parse_frame("{RSP,EMM,PID_SET,READBACK,5,26000,10,39000}"))
+        panel.receive(parse_frame("{RSP,EMM,STATE_GET,ERR,BUSY}"))
+        self.assertTrue(panel.active)  # 无关状态查询错误不取消本段记录。
+        panel.receive(parse_frame("{EVT,AXIS,COMMAND,5,1,1000,80,0,500,252}"))
+        panel.receive(parse_frame("{EVT,AXIS,RESULT,5,1,3000,MOTOR_FEEDBACK_TIMEOUT,80,0,0}"))
+        calls = panel.send.call_count
+        panel.receive(parse_frame("{EVT,EMM,AXIS_TRIAL,FAILED,5}"))
+        self.assertFalse(panel.active)
+        self.assertEqual(panel.send.call_count, calls)
+        panel.start_trial(); panel.stop_trial()
+        self.assertEqual(panel.send.call_args.args[0], "{CMD,NAV,STOP}")
+        panel.start_trial(); panel.disconnected()
+        calls = panel.send.call_count
+        panel.receive(parse_frame("{RSP,EMM,PID_SET,READBACK,5,26000,10,39000}"))
+        self.assertEqual(panel.send.call_count, calls)
+
+    def test_wrong_motor_and_concurrent_trial_cannot_write_pid(self):
+        panel = self.make_linear_panel(6)
+        panel.motor.get.return_value = "5"
+        with patch("turret_tuning.messagebox.showerror"):
+            panel.start_trial()
+        panel.send.assert_not_called()
+        panel.motor.get.return_value = "6"
+        panel.can_start = lambda: False
+        with patch("turret_tuning.messagebox.showerror"):
+            panel.start_trial()
+        panel.send.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
