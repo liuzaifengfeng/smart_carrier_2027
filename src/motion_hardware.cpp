@@ -2,6 +2,7 @@
 #include "motion_executor.h"
 #include "robot_runtime.h"
 #include "node_position_hardware.h"
+#include "arm_placement_log.h"
 
 using namespace motion;
 /**
@@ -93,6 +94,8 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
  * @brief 输出当前作业的 STEP 开始/结束日志，index 为步骤下标。
  */
 void MotionHardware::event(size_t index,const Step &step,bool begin) {
+    if(!begin&&step.placementPosition)
+        LogArmPlacementReadback(job,step.placementPosition,currentArm.turret_angle,currentArm.length);
     Serial.printf("{EVT,MOTION,STEP,%lu,%lu,%u,%s,%s}\n",static_cast<unsigned long>(job),
         static_cast<unsigned long>(millis()),static_cast<unsigned>(index),step.name,begin?"BEGIN":"END");
 }

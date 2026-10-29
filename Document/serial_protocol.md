@@ -83,6 +83,7 @@ TASK SET 在 Debug 可修改任务码并重置抓取进度为 0；开启 DISC_MA
 - `START_ZONE` 只能为 1 或 2。Debug 中设置后同步软件估计位姿；Release 中保留现有业务状态行为。
 - `ROUTE`：2～25 个节点，节点编号 0～24，5×5 蛇形地图中相邻节点必须物理上下或左右相邻。路径的第一个节点必须是小车实际所在节点。固件执行前再检查相邻性；上位机输入框仍可输入 `0-1-8`，发送时转换为逗号字段。
 - `ALIGN_DATA`：三个有限浮点值，依次为角度偏差（度）、视觉 X 与 Y 偏差（视觉单位）；20 Hz 连续输入时只保留最新一帧。停止对齐后收到有效反馈也不驱动电机，并最多每秒回传一次 `{EVT,VISION,ALIGN_IGNORED,DISABLED}`；反馈不会自行重启运动。
+- `DISC` 圆盘整体对齐的角度环改用 H30 已标定地图航向，目标为 `DISC_AREA_HEADING=90°`（与导航终点一致），以环绕到 ±180° 的“实测航向−目标航向”驱动现有角度 PID；连续 5 帧到位判定也使用该 H30 角差和原 DISC 死区。视觉 angle 字段仍须为有限数，但不参与 DISC 控制或到位判断；X/Y、PID增益、最大轮速和控制节奏保持原设置。其他模式仍使用视觉角差。H30 查询失败（含未标定或样本超过200ms）时，该帧旋转输出为0并清空角度PID历史，X/Y继续对齐且清零连续到位计数，不退回视觉角度；数据恢复后自动继续。异常首次输出 `{EVT,VISION,DISC_HEADING,ERR,原因}`，恢复输出 `{EVT,VISION,DISC_HEADING,OK}`。`[Align]` 日志中 angle 为实际参与控制的角差，尾部 `source=IMU/IMU_UNAVAILABLE/VISION` 表示来源；原有自动对齐超时规则保留。
 - 首轮圆盘自动流程：路径结束后固件开启连续对齐，再发 `START_REQUEST,DISC`；电脑仅需回传 `ALIGN_DATA`。连续 5 帧达标时发 `ALIGN_DONE`，主流程随后发 `STOP_REQUEST,DISC` 停止对齐，再发 `START_REQUEST,DISC_MATERIAL`。包含首帧等待的首次达标限时为 15 秒，300 ms 断流停车/失败分支暂时注释，断流期间保持最后一次轮速；等待失败发 `ALIGN_FAILED,TIMEOUT`，主流程结束 DISC 请求并保持故障。自动对齐期间，同模式或无模式 `ALIGN_START` 回复 OK 并保留当前模式、WAITING/DONE、反馈、PID、连续帧计数及原超时起点；不同模式回复 `{RSP,VISION,ALIGN_START,ERR,BUSY}`，不改变当前对齐。FAILED 尚未被主状态机处理时也拒绝启动，避免覆盖失败结果。`ALIGN_STOP` 仍会停车并取消业务等待，不能作为自动完成信号。
 - `COLOR`：整数 1～6，依次为红、黄、蓝、绿、黑、浅蓝。DISC_MATERIAL 运行时，每条颜色反馈按当前轮次任务码判断：第一轮使用 round1_colors，第二轮使用 round2_colors，只与下标 roundProgress 对应的下一件颜色比较。匹配且当前抓取阶段已准备、底盘对齐停止、目标载物台为空时，发送 `{EVT,VISION,COLOR,GRAB,color,cargo}` 并调用 `GrabDiscMaterial(color,cargo)`。仅颜色不匹配时发送 `{EVT,VISION,COLOR,SKIP,color,cargo,COLOR_MISMATCH}`；状态阻止时发送 `{EVT,VISION,COLOR,BLOCKED,color,cargo,reason}`，reason 为 NO_TASK、NOT_WAITING、ROUND_COMPLETE、ALIGN_ACTIVE、NOT_READY 或 OCCUPIED。cargo 为 roundProgress+1，无有效进度时为 0；有有效任务和进度时，拒绝日志还打印 received、expected、cargo、reason。上位机兼容旧固件六字段 SKIP，但会提示旧回复未提供原因。`CONFIRM` 仍仅 Release 接令入队，不执行抓取。
 - `GRAB`：保留显式任务校验抓取入口。cargo 为 1～3；单参数使用最近 COLOR，双参数为 color,cargo。须开启物料视觉、停止底盘对齐、进入有效任务码的抓取阶段，颜色及载物台顺序须匹配，载物台须为空。拒绝原因保留 NOT_ACTIVE、ALIGN_ACTIVE、NO_COLOR、NOT_WAITING、ORDER、COLOR_MISMATCH、OCCUPIED；非法参数为 RANGE，参数数量错误为 FORMAT。Debug 不绕过任务码校验。
@@ -320,6 +321,8 @@ Release 自动流程继续使用 DISC 定位完成后开启 DISC_MATERIAL 的切
 串口运动入口改为提交作业，保留上述 ACK 与既有完成事件字段。先保留作业、发送 ACK，再放行工作任务。抓放期间仍处理 POSE、IMU、CFG GET、MOTION STATUS、停止及所需路径/视觉输入；竞争运动命令可回复 BUSY，串口不等待整段动作。旧 ARM INIT/MOVE 的 ISSUED 语义保留，不能按该事件宣称实测到位。
 
 新增 `{CMD,MOTION,STATUS,id}`，返回 `{RSP,MOTION,STATUS,OK,id,state,phase,elapsed_ms}`；未知编号返回 `ERR,ID`。state 为 QUEUED/RUNNING/DONE/FAILED/CANCELLED；保留当前和最近八个作业。已有命令 ACK 不新增 id 字段，日志 RESULT/FLAG 可用于关联作业。NAV STOP 取消统一作业及识别业务，ACK 仅表示请求停止，终态和现场停车另行确认。
+
+粗加工区、暂存区每件放料在下降步骤结束、松爪前各回读一次转盘和伸缩电机，输出 `[MaterialPlace] job=作业号 position=工位号 axis=turret/length target=目标 actual=回读值 error=偏差 unit=deg/mm`。角度保留多圈坐标，伸出长度由6号电机有符号编码器位置换算；偏差统一为 `actual-target`。兼容旧同步接口的作业号为0。读取失败输出对应轴的 `read=ERR`（伸缩轴附reason），仅作日志诊断，不重试、不追加到位等待、不因偏差或诊断读取失败中止放料。原串口日志直接显示，无需新增查询命令。
 
 计时帧不改变协议版本 2：
 

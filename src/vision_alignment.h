@@ -30,6 +30,12 @@ constexpr bool IsWithinAlignmentDeadzone(const VisionAlignmentDeadzone &zone, fl
 }
 
 constexpr uint8_t ALIGNMENT_REQUIRED_FRAMES = 5;
+constexpr uint8_t DISC_ALIGNMENT_REQUIRED_FRAMES = 1;
+
+constexpr uint8_t RequiredAlignmentFrames(VisionStartMode mode) {
+    return mode == VisionStartMode::DISC
+        ? DISC_ALIGNMENT_REQUIRED_FRAMES : ALIGNMENT_REQUIRED_FRAMES;
+}
 
 /**
  * @brief 根据本帧死区判定和模式是否连续，更新连续到位帧数。
@@ -61,6 +67,6 @@ struct AlignmentFrameWaiter {
         consecutiveFrames = NextAlignmentFrameCount(consecutiveFrames,
             newMode != VisionStartMode::NONE && withinDeadzone, mode == newMode);
         mode = newMode;
-        return consecutiveFrames >= REQUIRED_FRAMES;
+        return consecutiveFrames >= RequiredAlignmentFrames(newMode);
     }
 };

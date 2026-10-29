@@ -17,6 +17,8 @@ float MOTION_LOOK_LEAD_MM=0,MOTION_LOOK2_LEAD_MM=0;
 int armSpeed=500;
 bool angleAvailable=true;float measuredTurret=170;
 bool ReadArmTurretAngle(float &angle){angle=measuredTurret;return angleAvailable;}
+float LENGTH_PULSE=30.2f;
+const char *ReadMotorEncoderPosition(uint8_t,int64_t &position){position=0;return nullptr;}
 uint32_t SubmitMotion(const MotionRequest &,bool){return 1;}
 bool WaitMotion(uint32_t){return false;}
 bool MovePosition(float,float,float,float,bool (*)()){return true;}
@@ -50,9 +52,10 @@ void forward() {
         const auto &delays=cargoToWorkAreaDelays[c-1][w-1];
         assert(p.steps[0].waitMs==delays.pickAbove.translateMs);
         assert(near(p.steps[0].length,materialTransferLayout.cargo[c-1].length));
-        bool release=false,retract=false;int commits=0,partialReleases=0;
+        bool release=false,retract=false;int commits=0,partialReleases=0,readbacks=0;
         for(size_t i=0;i<p.count;++i) {
             const auto &s=p.steps[i];
+            if(s.placementPosition){assert(s.placementPosition==w&&!strcmp(s.name,"PLACE_DESCEND"));++readbacks;}
             if(!strcmp(s.name,"APPROACH_ROTATE")||!strcmp(s.name,"PICK_DESCEND")||!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_10"))assert(s.pawl==-1);
             if(!strcmp(s.name,"APPROACH_ROTATE")||!strcmp(s.name,"PLACE_ROTATE"))assert(s.turretArrival&&s.waitMs==0);
             if(s.kind==motion::StepKind::ARM)assert(s.turretRampMs==(layer==1?500:20));
@@ -70,7 +73,7 @@ void forward() {
             if(s.kind==motion::StepKind::COMMIT){assert(release&&retract&&i==p.count-1&&s.cargo==c&&s.color==MATERIAL_NONE);++commits;}
             if(s.planned)assert(s.turret>=TURRET_CABLE_MIN_DEG&&s.turret<=TURRET_CABLE_MAX_DEG);
         }
-        assert(commits==1&&partialReleases==(layer==1?1:0));
+        assert(commits==1&&partialReleases==(layer==1?1:0)&&readbacks==1);
     }
 }
 void reverse() {
@@ -79,7 +82,7 @@ void reverse() {
         MotionRequest r;r.kind=MotionKind::RETRIEVE;r.cargo=c;r.work=w;r.color=6;
         motion::Program p;assert(!BuildArmProgram(r,p));
         for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretRampMs==20&&!p.steps[i].slowLower);
-        for(size_t i=0;i<p.count;++i)assert(strcmp(p.steps[i].name,"PLACE_RELEASE_ZERO"));
+        for(size_t i=0;i<p.count;++i)assert(strcmp(p.steps[i].name,"PLACE_RELEASE_ZERO")&&!p.steps[i].placementPosition);
         assert(p.steps[0].waitMs==workAreaToCargoDelays[w-1][c-1].pickAbove.translateMs);
         bool lift=false;
         for(size_t i=0;i<p.count;++i)if(!strcmp(p.steps[i].name,"PICK_LIFT")){assert(p.steps[i].length==0);lift=true;}
@@ -129,6 +132,7 @@ void discs() {
         motion::Program p;assert(!BuildArmProgram(r,p));
         checkTail(p,p.count-7,cargo);
         for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretRampMs==20&&!p.steps[i].slowLower);
+        for(size_t i=0;i<p.count;++i)assert(!p.steps[i].placementPosition);
         assert(p.steps[p.count-9].waitMs==d.pickGripMs&&p.steps[p.count-9].holdMs==37);
         if(pos>=1&&pos<=3) {
             const float angle=pos==1?71:pos==2?90:102,length=pos==2?0:150;

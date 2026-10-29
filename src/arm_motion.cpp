@@ -53,7 +53,7 @@ void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelay
 /**
  * @brief 构建放料转向、下降、松爪及抬升序列；height为实际层高，retracted表示小臂已缩回。
  */
-void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle,bool slowLower=false) {
+void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle,bool slowLower=false,uint8_t workPosition=0) {
     if(retracted) {
         wait(p,"PLACE_TRANSLATE_WAIT",d.placeAbove.translateMs);wait(p,"PLACE_SETTLE",d.placeAbove.settleMs);
         rotateArm(p,"PLACE_ROTATE",-1,-1,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,angle);
@@ -66,6 +66,7 @@ void place(Program &p,const MaterialStationPose &pose,float height,const Materia
         p.steps[p.count-1].slowLower=true;
         p.steps[p.count-1].timed=true;
     } else arm(p,"PLACE_DESCEND",height,retracted?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+    p.steps[p.count-1].placementPosition=workPosition;
     if(slowLower) { // 仅工位第一层：先卸去夹紧力，300ms后再完全张开。
         arm(p,"PLACE_RELEASE_ZERO",-1,-1,-1,0,materialMotionSteps.placeReleaseSpeed,300);
         p.steps[p.count-1].timed=true;
@@ -105,7 +106,7 @@ const char *transfer(const MotionRequest &r,Program &p) {
         const auto &source=retrieve?work:cargo,&destination=retrieve?cargo:work;
         const float height=destination.high+(retrieve?0:(r.layer-1)*materialTransferLayout.secondLayerOffset);
         pick(p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i]);
-        place(p,destination,height,d,true,&selected.anglesDeg[2*i+1],!retrieve&&r.layer==1);
+        place(p,destination,height,d,true,&selected.anglesDeg[2*i+1],!retrieve&&r.layer==1,retrieve?0:works[i]);
         commit(p,cargos[i],retrieve?(demo?MATERIAL_RED:single?r.color:r.colors[i]):MATERIAL_NONE);
     }
     return nullptr;

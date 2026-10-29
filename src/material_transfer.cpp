@@ -1,4 +1,5 @@
 #include "material_transfer.h"
+#include "arm_placement_log.h"
 #include "turret_path.h"
 
 #include <math.h>
@@ -195,7 +196,7 @@ bool pickAt(const MaterialStationPose &pose,
 //@param targetHeight 目标高度
 bool placeAt(const MaterialStationPose &pose, float targetHeight,
              const MaterialTransferDelays &delays = commonMaterialDelays,
-             bool fromRetracted = false, const float *plannedAngle = nullptr, uint16_t turretRampMs = 20) {
+             bool fromRetracted = false, const float *plannedAngle = nullptr, uint16_t turretRampMs = 20, bool workPlacement = false) {
     if (fromRetracted) {
         // pickAt 已完成抬升和缩回；此处额外等待并稳定，再保持缩回转向。
         waitForArm(delays.placeAbove.translateMs);
@@ -218,6 +219,7 @@ bool placeAt(const MaterialStationPose &pose, float targetHeight,
                     -1,materialMotionSteps.placeDescendSpeed,turretRampMs))return false;
         waitForArm(delays.placeDescendMs);
     }
+    if(workPlacement)LogArmPlacementReadback(0,static_cast<uint8_t>(&pose-materialTransferLayout.workArea+1),currentArm.turret_angle,currentArm.length);
     if(turretRampMs==500) { // 仅工位第一层放料，载物台和二层不分段松爪。
         if(!MoveArm(-1,-1,-1,0,materialMotionSteps.placeReleaseSpeed))return false;
         waitForArm(300);
@@ -282,7 +284,7 @@ bool executeWorkTransfer(const MaterialStationPose &source, const MaterialStatio
     // 使用局部规划，不污染普通 MoveArm 和圆盘流程；每次旋转由底层再次回读校验。
     const uint16_t turretRampMs=retrieve||layer!=1?20:500;
     return pickAt(source, delays, !retrieve, retrieve, angles, turretRampMs)
-        && placeAt(destination, height, delays, true, angles + 1, turretRampMs);
+        && placeAt(destination, height, delays, true, angles + 1, turretRampMs, !retrieve);
 }
 
 bool validateCodeArrays(const int *first, const int *second, bool firstIsMaterial) {

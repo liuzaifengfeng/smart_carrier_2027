@@ -13,6 +13,9 @@ def build_motion_hardware():
 
 
 class MotionHardwareTests(unittest.TestCase):
+    def test_placement_logs_signed_measured_errors_and_read_failures(self):
+        run_native(build_motion_hardware(), "placement")
+
     def test_feedback_requires_actual_position_flags_and_both_servo_angles(self):
         run_native(build_motion_hardware(), "feedback")
 

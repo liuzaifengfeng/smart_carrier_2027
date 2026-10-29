@@ -3,6 +3,7 @@
 #include "node_position_control.h"
 #include "chassis.h"
 #include "material_transfer.h"
+#include "arm_placement_log.h"
 #include <assert.h>
 #include <string.h>
 
@@ -39,6 +40,10 @@ const char *ReadMotorFeedback(uint8_t id,node_position::Motor &state) {
     state.flags=flags;
     const float target=id==5?100:20,ppm=id==5?HEIGHT_PULSE:LENGTH_PULSE;
     state.position=llround((target+(motorAtTarget?0:10))*ppm*65536/3200);return nullptr;
+}
+int placementReads=0;
+const char *ReadMotorEncoderPosition(uint8_t id,int64_t &position) {
+    assert(id==6);++placementReads;position=customPosition;return motorError;
 }
 #include "motion_hardware_actual.inc"
 void look3() {
@@ -111,6 +116,23 @@ void liftArrival() {
     motorError=nullptr;assert(!hardware.ready(lift,done)&&done); // 通信恢复后可以再次检查。
     stop=true;assert(hardware.ready(lift,done)&&!done);
 }
+void placement() {
+    MotionHardware hardware;hardware.configure(21,cancelled);
+    motion::Step s;s.name="PLACE_DESCEND";s.placementPosition=2;
+    currentArm.turret_angle=350;currentArm.length=20;turretMeasured=-10;
+    customPosition=llround(-22.0*LENGTH_PULSE*65536/3200);
+    hardware.event(0,s,true);assert(placementReads==0);
+    hardware.event(0,s,false);assert(placementReads==1);
+    assert(Serial.text.find("axis=turret target=350.000 actual=-10.000 error=-360.000 unit=deg")!=std::string::npos);
+    assert(Serial.text.find("axis=length target=20.000 actual=22.000 error=+2.000 unit=mm")!=std::string::npos);
+    servoAvailable=false;motorError="MOTOR_FEEDBACK_TIMEOUT";hardware.event(0,s,false);
+    assert(Serial.text.find("axis=turret read=ERR")!=std::string::npos);
+    assert(Serial.text.find("axis=length read=ERR reason=MOTOR_FEEDBACK_TIMEOUT")!=std::string::npos);
+    // 日志读取失败不能中止序列，后续提交照常执行。
+    s.placementPosition=0;s.kind=motion::StepKind::COMMIT;s.cargo=1;s.color=MATERIAL_RED;
+    assert(!hardware.issue(s)&&cargoPlatforms[0].material==MATERIAL_RED);
+    hardware.event(1,s,false);assert(placementReads==2);
+}
 int main(int argc,char **argv) {
-    assert(argc==2);if(!strcmp(argv[1],"look3"))look3();else if(!strcmp(argv[1],"feedback"))feedback();else if(!strcmp(argv[1],"turret"))turretArrival();else if(!strcmp(argv[1],"lift"))liftArrival();else assert(false);
+    assert(argc==2);if(!strcmp(argv[1],"look3"))look3();else if(!strcmp(argv[1],"feedback"))feedback();else if(!strcmp(argv[1],"turret"))turretArrival();else if(!strcmp(argv[1],"lift"))liftArrival();else if(!strcmp(argv[1],"placement"))placement();else assert(false);
 }

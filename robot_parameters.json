@@ -55,7 +55,7 @@
           "integer": false
         },
         "搬运/工作区1/伸出(mm)": {
-          "value": 70.0,
+          "value": 71.0,
           "description": "工作区1：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
@@ -97,7 +97,7 @@
           "integer": false
         },
         "搬运/工作区2/伸出(mm)": {
-          "value": 7.5,
+          "value": 8.5,
           "description": "工作区2：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
@@ -139,7 +139,7 @@
           "integer": false
         },
         "搬运/工作区3/伸出(mm)": {
-          "value": 43.5,
+          "value": 44.5,
           "description": "工作区3：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
@@ -485,14 +485,14 @@
       "description": "视觉闭环的容许误差与最大轮速。进入死区表示该方向误差已足够小。",
       "parameters": {
         "对齐/DISC/X死区": {
-          "value": 15.0,
+          "value": 5.0,
           "description": "圆盘整体对齐：X死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/DISC/Y死区": {
-          "value": 15.0,
+          "value": 5.0,
           "description": "圆盘整体对齐：Y死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,

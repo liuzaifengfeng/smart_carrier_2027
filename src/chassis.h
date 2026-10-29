@@ -117,7 +117,7 @@ void OmniMove(float xVelocity, float yVelocity, float rotationVelocity, uint16_t
 // 清除连续对齐 PID 的积分/微分历史；不会自行发送停车命令。
 void ResetDiscAlignmentPid();
 
-// 通用单帧 PID：按模式使用独立 X/Y/角度死区，true 只代表这一帧进入死区。
+// 通用单帧 PID：角差由调用方选择来源（DISC用H30实测-目标，其余用视觉）；true只代表这一帧进入死区。
 bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);
 
 // 非阻塞等待：仅在新帧到达时调用，同时更新 PID；连续 5 帧进入死区返回 true。

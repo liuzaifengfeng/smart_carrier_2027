@@ -226,6 +226,7 @@ uint32_t SubmitLidarPoseAction(bool fromCommand,bool allowRepeat) {
  */
 void TickVisualAlignment() {
     static bool alignedReported=false;
+    static bool discHeadingUnavailable=false;
     static uint32_t lastFeedbackMs=0,lastLogMs=0,previousGeneration=0,previousFrameSequence=0;
     if(!xAlignmentMotionMutex)return;
     xSemaphoreTake(xAlignmentMotionMutex,portMAX_DELAY);
@@ -233,6 +234,7 @@ void TickVisualAlignment() {
     if(alignmentStopPending){OmniMove(0,0,0,0);alignmentStopPending=false;}
     if(generation!=previousGeneration) {
         alignedReported=false;lastFeedbackMs=0;
+        discHeadingUnavailable=false;
         previousGeneration=generation;previousFrameSequence=0;
     }
     if(autoAlignmentState==AutoAlignmentState::WAITING&&millis()-autoAlignmentStartedMs>=AUTO_ALIGN_TIMEOUT_MS) {
@@ -252,12 +254,32 @@ void TickVisualAlignment() {
     previousFrameSequence=alignment.sequence;
     const auto mode=alignmentOwner==VisionStartMode::NONE?VisionStartMode::DISC:alignmentOwner;
     traceVisionFirstFrame(mode);
-    const bool aligned=WaitForAlignment(mode,alignment.angleDeg,alignment.visualX,alignment.visualY,dt,ALIGN_PID_MAX_SPEED_RPM);
+    float angleError=alignment.angleDeg;
+    const char *headingError=nullptr;
+    if(mode==VisionStartMode::DISC) {
+        float heading=0;uint32_t ageMs=0;
+        headingError=H30UsbGetHeading(heading,ageMs);
+        // OmniMove正旋转使地图航向增加，现有角度PID输出在底盘映射时取负，故输入为实测-目标。
+        angleError=headingError?0.0f:remainderf(heading-DISC_AREA_HEADING,360.0f);
+        if(headingError&&!discHeadingUnavailable)
+            Serial.printf("{EVT,VISION,DISC_HEADING,ERR,%s}\n",headingError);
+        if(!headingError&&discHeadingUnavailable)Serial.println("{EVT,VISION,DISC_HEADING,OK}");
+        discHeadingUnavailable=headingError!=nullptr;
+    }
+    bool aligned=false;
+    if(headingError) {
+        // 不沿用旧角度或退回摄像头角度；零角差复位角度PID，X/Y仍使用当前视觉反馈。
+        AlignToVisionContinuous(mode,0.0f,alignment.visualX,alignment.visualY,dt,ALIGN_PID_MAX_SPEED_RPM);
+        ResetAlignmentWait();
+    } else {
+        aligned=WaitForAlignment(mode,angleError,alignment.visualX,alignment.visualY,dt,ALIGN_PID_MAX_SPEED_RPM);
+    }
     if(aligned&&autoAlignmentState==AutoAlignmentState::WAITING)autoAlignmentState=AutoAlignmentState::DONE;
     if(aligned&&!alignedReported)Serial.println("{EVT,VISION,ALIGN_DONE}");
     alignedReported=aligned;
     if(!aligned&&now-lastLogMs>=ALIGN_LOG_INTERVAL_MS) {
-        Serial.printf("[Align] running: angle=%.2f deg, x=%.1f, y=%.1f, dt=%.3f\n",alignment.angleDeg,alignment.visualX,alignment.visualY,dt);
+        Serial.printf("[Align] running: angle=%.2f deg, x=%.1f, y=%.1f, dt=%.3f, source=%s\n",angleError,alignment.visualX,alignment.visualY,dt,
+            mode==VisionStartMode::DISC?(headingError?"IMU_UNAVAILABLE":"IMU"):"VISION");
         lastLogMs=now;
     }
     // 沿用项目当前设置：300ms 断流停车分支未启用，不扩大故障判定范围。

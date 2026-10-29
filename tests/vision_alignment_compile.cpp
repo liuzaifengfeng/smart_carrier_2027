@@ -8,6 +8,10 @@ static_assert(VisionModeUsesAlignment(VisionStartMode::WORK_AREA_LOADED), "loade
 static_assert(VisionModeUsesAlignment(VisionStartMode::CORNER), "CORNER couples alignment");
 static_assert(!VisionModeUsesAlignment(VisionStartMode::DISC_MATERIAL), "material recognition stays separate");
 static_assert(!VisionModeUsesAlignment(VisionStartMode::NONE), "no mode stays separate");
+static_assert(RequiredAlignmentFrames(VisionStartMode::DISC) == 1, "disc alignment finishes in one frame");
+static_assert(RequiredAlignmentFrames(VisionStartMode::WORK_AREA) == 5, "work area still requires five frames");
+static_assert(RequiredAlignmentFrames(VisionStartMode::WORK_AREA_LOADED) == 5, "loaded area still requires five frames");
+static_assert(RequiredAlignmentFrames(VisionStartMode::CORNER) == 5, "corner still requires five frames");
 
 constexpr uint8_t feed(unsigned frames, uint8_t count = 0) {
     return frames == 0 ? count : feed(frames - 1, NextAlignmentFrameCount(count, true, true));
