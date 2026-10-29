@@ -29,7 +29,7 @@ constexpr bool IsWithinAlignmentDeadzone(const VisionAlignmentDeadzone &zone, fl
         && (angle<0?-angle:angle) <= zone.angleDeg;
 }
 
-constexpr uint8_t ALIGNMENT_REQUIRED_FRAMES = 2;
+constexpr uint8_t ALIGNMENT_REQUIRED_FRAMES = 5;
 
 /**
  * @brief 根据本帧死区判定和模式是否连续，更新连续到位帧数。

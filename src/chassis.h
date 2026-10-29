@@ -120,7 +120,7 @@ void ResetDiscAlignmentPid();
 // 通用单帧 PID：按模式使用独立 X/Y/角度死区，true 只代表这一帧进入死区。
 bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);
 
-// 非阻塞等待：仅在新帧到达时调用，同时更新 PID；连续 2 帧进入死区返回 true。
+// 非阻塞等待：仅在新帧到达时调用，同时更新 PID；连续 5 帧进入死区返回 true。
 // 调用方应在启停、断流、反馈丢帧或无效反馈时调用 ResetAlignmentWait。
 bool WaitForAlignment(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);
 void ResetAlignmentWait();
