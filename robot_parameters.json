@@ -55,14 +55,14 @@
           "integer": false
         },
         "搬运/工作区1/伸出(mm)": {
-          "value": 71.0,
+          "value": 71.5,
           "description": "工作区1：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区1/转台(deg)": {
-          "value": 49.7999992,
+          "value": 50.0,
           "description": "工作区1：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
