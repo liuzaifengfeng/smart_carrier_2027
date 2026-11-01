@@ -569,21 +569,21 @@
           "integer": false
         },
         "对齐/CORNER/X死区": {
-          "value": 8.0,
+          "value": 10.0,
           "description": "角点/归位对齐：X死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/CORNER/Y死区": {
-          "value": 8.0,
+          "value": 10.0,
           "description": "角点/归位对齐：Y死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/CORNER/角度死区(deg)": {
-          "value": 0.300000012,
+          "value": 0.400000012,
           "description": "角点/归位对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,

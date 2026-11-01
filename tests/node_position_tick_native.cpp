@@ -116,6 +116,36 @@ struct HoldSim : ProfileSim {
     }
 };
 void middleHold() {
+    // 航向始终正确，单独注入编码器可见的横移，验证左右偏移都能在行驶中拉回。
+    struct LateralSim : Sim {
+        Vec entry;float shift=0;bool injected=false,corrected=false;
+        void wait(uint32_t ms)override {
+            Sim::wait(ms);
+            if(velocityMode&&!injected&&norm(location-entry)>300) {
+                const float pulses=shift*13.3f;
+                actual[0]-=pulses;actual[1]-=pulses;actual[2]+=pulses;actual[3]+=pulses;
+                location=location+bodyToWorld(Vec{shift,0},heading);injected=true;
+            }
+        }
+        const char *velocity(const WheelCommand &command)override {
+            if(injected&&command.body.x*shift<0)corrected=true;
+            return Sim::velocity(command);
+        }
+    };
+    for(float heading:{0.0f,90.0f})for(bool reverse:{false,true})for(float shift:{-30.0f,30.0f})for(int polarity:{-1,1}) {
+        Vec origin{1200,1200};
+        Vec finish=origin+bodyToWorld(Vec{0,reverse?-800.0f:800.0f},heading);
+        Node points[]={{origin,0,true},{finish,0,true}};
+        Config cfg;cfg.policy=2;cfg.count=2;cfg.startHeading=cfg.endHeading=heading;
+        Route path;assert(!path.build(points,cfg));
+        Settings settings;settings.middleSpeedMmS=250;settings.middleAccelMmS2=500;
+        LateralSim car;car.heading=heading;car.location=car.entry=origin;car.shift=shift;
+        for(int i=0;i<4;++i)car.encoderPolarity[i]=polarity;
+        Result result;assert(!run(path,settings,car,result));
+        assert(car.injected&&car.corrected);
+        assert(fabsf(worldToBody(car.location-finish,heading).x)<2);
+        assert(norm(result.estimated-car.location)<2);
+    }
     for(bool reverse:{false,true})for(float disturbance:{-3.0f,3.0f})for(int polarity:{-1,1}) {
         Node points[]={{{reverse?1900.0f:400.0f,1200},0,true},{{reverse?400.0f:1900.0f,1200},0,true}};
         Config cfg;cfg.policy=2;cfg.count=2;cfg.startHeading=cfg.endHeading=0;

@@ -102,7 +102,7 @@ const char *Runner::updateProgress(float progress,const H30Attitude &m,bool idle
         io->report("HEADING_ERROR",*output,targetHeading);return "HEADING_ERROR";
     }
     if(!rotating) {
-        output->estimated=start+(end-start)*progress;
+        if(stage!=MIDDLE)output->estimated=start+(end-start)*progress;
         output->s=baseS+fabsf(delta)*progress;
         return field::check(output->estimated.x,output->estimated.y,output->heading,0);
     }
@@ -223,34 +223,40 @@ void Runner::middleTick() {
     const float dt=(cycleAt-previous)*.001f;previous=cycleAt;
     if(cycleAt-started>deadline){fail("MOTOR_ARRIVAL_TIMEOUT");return;}
     const char *failure=nullptr;
-    if(middleStopping) {
-        bool idle=true;
-        for(uint8_t id=1;id<=4;++id) {
-            failure=io->read(id,stopped[id-1]);if(failure){fail(failure);return;}
-            if(abs(stopped[id-1].rpm)>3)idle=false;
-        }
-        if(idle) {
-            io->timing("STRAIGHT_ARRIVED");valid=true;arrived();
-            settleNext=stage;headingStable.begin(io->now());stage=SETTLE;
-        } else due=io->now()+1;
-        return;
-    }
+    bool idle=true;
     float wheelTravel[4];
     for(uint8_t id=1;id<=4;++id) {
         const int i=id-1;int64_t position;
-        failure=io->readPosition(id,position);if(failure){fail(failure);return;}
+        if(middleStopping) {
+            failure=io->read(id,stopped[i]);position=stopped[i].position;
+            if(abs(stopped[i].rpm)>3)idle=false;
+        } else failure=io->readPosition(id,position);
+        if(failure){fail(failure);return;}
         const int64_t change=position-positions[i];
         if(!encoderSign[i]&&change&&applied.rpm[i])
             encoderSign[i]=(change>=0?1:-1)*(applied.rpm[i]>=0?1:-1);
         wheelTravel[i]=static_cast<float>(change*encoderSign[i])*PULSES_PER_REV/65536;
         positions[i]=position;
     }
-    // [+,-,+,-]直行分量取平均，抵消四轮同向的旋转分量；倒车仍按正向行程累计。
+    // 解算车体横向/前后位移，四轮同向旋转分量在组合中抵消。
+    const float lateral=(-wheelTravel[0]-wheelTravel[1]+wheelTravel[2]+wheelTravel[3])/(4*route->config.lateralPpm);
     const float forward=(wheelTravel[0]-wheelTravel[1]+wheelTravel[2]-wheelTravel[3])/(4*ppm);
-    straightTravel+=forward*(distance>=0?1:-1);
+    const float oldHeading=output->heading;
     H30Attitude m;failure=sample(m);if(failure){fail(failure);return;}
+    output->estimated=output->estimated+bodyToWorld(Vec{lateral,forward},oldHeading+turn(oldHeading,output->heading)*.5f);
+    const Vec lineStart=route->segments[index].start;
+    const Vec tangent=(end-lineStart)*(1/norm(end-lineStart));
+    const Vec normal{-tangent.y,tangent.x};
+    straightTravel=dot(output->estimated-start,tangent);
     const float progress=clamp(straightTravel/fabsf(distance),0,1);
-    failure=updateProgress(progress,m,false);if(failure){fail(failure);return;}
+    failure=updateProgress(progress,m,middleStopping&&idle);if(failure){fail(failure);return;}
+    if(middleStopping) {
+        if(idle) {
+            io->timing("STRAIGHT_ARRIVED");valid=true;arrived();
+            settleNext=stage;headingStable.begin(io->now());stage=SETTLE;
+        } else due=io->now()+1;
+        return;
+    }
     const float remaining=fabsf(distance)-straightTravel;
     if(remaining<=1) {
         failure=io->velocity(WheelCommand{});if(failure){fail(failure);return;}
@@ -266,7 +272,9 @@ void Runner::middleTick() {
     else headingHold.reset();
     Config wheelConfig=route->config;
     wheelConfig.maxRpm=5000; // 沿用节点位置模式的驱动轮速上限，不套用连续试跑的maxRpm。
-    const WheelCommand command=wheels(Vec{0,straightSpeed*(distance>=0?1:-1)},omega,wheelConfig);
+    const float lateralError=dot(lineStart-output->estimated,normal);
+    const Vec velocity=tangent*straightSpeed+normal*(MIDDLE_LATERAL_KP*lateralError);
+    const WheelCommand command=wheels(worldToBody(velocity,output->heading),omega,wheelConfig);
     failure=io->velocity(command);if(failure){fail(failure);return;}
     applied=command;
     if(!sent){sent=true;io->timing("STRAIGHT_HOLD_SENT");}
