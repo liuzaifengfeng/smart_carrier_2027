@@ -41,7 +41,7 @@
           "integer": false
         },
         "搬运/载物台1/转台(deg)": {
-          "value": 242.300003,
+          "value": 241.5,
           "description": "载物台1：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -62,7 +62,7 @@
           "integer": false
         },
         "搬运/工作区1/转台(deg)": {
-          "value": 50.0,
+          "value": 49.7999992,
           "description": "工作区1：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -76,14 +76,14 @@
           "integer": false
         },
         "搬运/载物台2/伸出(mm)": {
-          "value": 21.5,
+          "value": 21.0,
           "description": "载物台2：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/载物台2/转台(deg)": {
-          "value": 271.700012,
+          "value": 271.0,
           "description": "载物台2：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -97,7 +97,7 @@
           "integer": false
         },
         "搬运/工作区2/伸出(mm)": {
-          "value": 8.5,
+          "value": 7.80000019,
           "description": "工作区2：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
@@ -118,14 +118,14 @@
           "integer": false
         },
         "搬运/载物台3/伸出(mm)": {
-          "value": 21.0,
+          "value": 22.0,
           "description": "载物台3：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/载物台3/转台(deg)": {
-          "value": 302.0,
+          "value": 300.5,
           "description": "载物台3：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -139,21 +139,21 @@
           "integer": false
         },
         "搬运/工作区3/伸出(mm)": {
-          "value": 44.5,
+          "value": 44.2000008,
           "description": "工作区3：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区3/转台(deg)": {
-          "value": 124.400002,
+          "value": 124.0,
           "description": "工作区3：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
           "integer": false
         },
         "搬运/安全高度(mm)": {
-          "value": 170.0,
+          "value": 165.0,
           "description": "转向目标、抓取后抬升、放置后抬升时使用的高度。",
           "minimum": 0.0,
           "maximum": 175.0,
@@ -583,7 +583,7 @@
           "integer": false
         },
         "对齐/CORNER/角度死区(deg)": {
-          "value": 0.400000012,
+          "value": 0.400000006,
           "description": "角点/归位对齐：角度死区(deg)，单位为度。",
           "minimum": 0.0,
           "maximum": 180.0,
