@@ -387,6 +387,14 @@ public:
             MotionRequest request;
             request.kind=MotionKind::PLACE_ROUND;
             io.task(request,secondRound); // 将本轮三件物料的颜色和位置填入动作请求。
+            if(secondRound) {
+                MotionRequest firstRound;
+                io.task(firstRound,false);
+                // 第四段只规定粗加工位置；暂存保持第二批顺序，叠到第一批同色物料上。
+                for(int i=0;i<3;++i)
+                    for(int j=0;j<3;++j)
+                        if(request.colors[i]==firstRound.colors[j])request.positions[i]=firstRound.positions[j];
+            }
             request.layer=secondRound?2:1;
             io.display(secondRound?"STACK T2":"PLACE T1");
             if(motion(request)==1) { // 提交并等待本轮暂存放料或第二层叠放。

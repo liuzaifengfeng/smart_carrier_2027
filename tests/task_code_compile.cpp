@@ -1,7 +1,10 @@
 #include "task_code.h"
 
 static_assert(IsTaskCodeValid("156+123+516+231"), "valid task");
-static_assert(IsTaskCodeValid("111+321+666+132"), "valid color bounds and position permutations");
+static_assert(IsTaskCodeValid("126+321+612+132"), "valid color bounds and position permutations");
+static_assert(!IsTaskCodeValid("111+321+666+132"), "duplicate colors rejected");
+static_assert(!IsTaskCodeValid("156+123+551+231"), "duplicate second-round colors rejected");
+static_assert(!IsTaskCodeValid("156+123+526+231"), "different color sets rejected");
 static_assert(!IsTaskCodeValid(nullptr), "null rejected");
 static_assert(!IsTaskCodeValid(""), "empty rejected");
 static_assert(!IsTaskCodeValid("156+123+516+231x"), "trailing garbage rejected");

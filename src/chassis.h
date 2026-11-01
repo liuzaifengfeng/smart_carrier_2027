@@ -2,6 +2,7 @@
 #define CHASSIS_H
 
 #include <Arduino.h>
+#include "turret_motor.h"
 #include <initializer_list>
 #include "vision_alignment.h"
 
@@ -132,8 +133,8 @@ void ResetAlignmentWait();
 // 契约：目标在机械行程内，速度为正；RPM 在写入协议时饱和。
 // 串口和参数入口负责校验；-1 跳过对应轴。
 // slowLower仅将升降轴转速及实际加速度减半，伸缩、转台和夹爪保持原参数。
-// turretRampMs 保留动作接口兼容；张大头转盘使用turret_motor.h里的独立曲线。
-bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed, uint16_t turretRampMs=600, bool slowLower=false);
+// turretAcceleration 使用张大头原生加速度档位（0~255，0表示不使用加减速）。
+bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed, uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, bool slowLower=false);
 
 // 读取7号张大头转盘实际多圈角度并检查线缆范围；失败时不改写 angle，也不更新目标缓存。
 /**
@@ -145,10 +146,10 @@ bool ReadArmTurretAngle(float &angle);
 // 其他三轴仍以 -1 跳过；速度、计时、保护和返回值含义与 MoveArm 相同。
 /**
  * @brief 按已规划的多圈绝对转台目标发令，保留全部圈数；其他轴的-1仍表示跳过。
- * @param turretRampMs 旧动作阶段参数；张大头转盘曲线独立配置，不再按该参数设置。
+ * @param turretAcceleration 张大头原生加速度档位（0~255）。
  * @return true 指令下发成功，不表示实测到位。
  */
-bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed, uint16_t turretRampMs=600, bool slowLower=false);
+bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed, uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, bool slowLower=false);
 
 /**
  * @brief 按0~24节点导航：全部路段位置模式，到节点停车转向，不漂移切弯。

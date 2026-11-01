@@ -126,6 +126,10 @@ def validate_task_code(code: str) -> str:
         raise ValueError("任务码格式应为 156+123+516+231：四组三位数，用 + 分隔")
     if any(not all("1" <= digit <= "6" for digit in parts[i]) for i in (0, 2)):
         raise ValueError("第一、三组颜色编号只能为 1～6")
+    if any(len(set(parts[i])) != 3 for i in (0, 2)):
+        raise ValueError("每批必须是三种不同颜色")
+    if set(parts[0]) != set(parts[2]):
+        raise ValueError("两批必须使用相同的三种颜色，顺序可以不同")
     if any(set(parts[i]) != {"1", "2", "3"} for i in (1, 3)):
         raise ValueError("第二、四组位置码必须各包含 1、2、3，不能重复")
     return code

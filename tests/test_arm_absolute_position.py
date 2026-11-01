@@ -21,7 +21,7 @@ class ArmAbsolutePositionTests(unittest.TestCase):
         names = ("ARM_HEIGHT_LIMIT_MM", "TURRET_CABLE_MIN_DEG", "TURRET_CABLE_MAX_DEG")
         limits = "\n".join(re.search(r"constexpr float " + name + r"\s*=[^;]+;",
                                       header).group() for name in names)
-        move = move.replace("uint16_t turretRampMs, bool slowLower)", "uint16_t turretRampMs=600, bool slowLower=false)")
+        move = move.replace("uint8_t turretAcceleration, bool slowLower)", "uint8_t turretAcceleration=191, bool slowLower=false)")
         harness = r'''
 #include <stdint.h>
 #include <float.h>

@@ -17,10 +17,11 @@ constexpr size_t TaskCodeLength(const char *text) {
     return text == nullptr || *text == '\0' ? 0 : 1 + TaskCodeLength(text + 1);
 }
 /**
- * @brief 检查三个任务颜色字符是否都在1~6之间。
+ * @brief 检查三个任务颜色字符是否在1~6之间且互不重复。
  */
 constexpr bool TaskColorsValid(char a, char b, char c) {
-    return a >= '1' && a <= '6' && b >= '1' && b <= '6' && c >= '1' && c <= '6';
+    return a >= '1' && a <= '6' && b >= '1' && b <= '6' && c >= '1' && c <= '6'
+        && a != b && b != c && a != c;
 }
 /**
  * @brief 检查三个工位字符是否为1~3且互不重复。
@@ -38,6 +39,9 @@ constexpr bool IsTaskCodeValid(const char *text) {
         && TaskColorsValid(text[0], text[1], text[2])
         && TaskPositionsValid(text[4], text[5], text[6])
         && TaskColorsValid(text[8], text[9], text[10])
+        && (text[8] == text[0] || text[8] == text[1] || text[8] == text[2])
+        && (text[9] == text[0] || text[9] == text[1] || text[9] == text[2])
+        && (text[10] == text[0] || text[10] == text[1] || text[10] == text[2])
         && TaskPositionsValid(text[12], text[13], text[14]);
 }
 /**

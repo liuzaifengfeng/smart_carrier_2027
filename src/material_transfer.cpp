@@ -155,7 +155,7 @@ bool waitForTurret() {
 // 移动到目标上方
 bool moveAbove(const MaterialStationPose &pose, float clawAngle,
                const MaterialApproachDelays &delays, const float *plannedAngle = nullptr,
-               uint16_t turretRampMs = 20) {
+               uint8_t turretAcceleration = TURRET_ACCELERATION_FAST) {
     // 升降、伸缩同时发令；等待后转向。两次等待分别保留，供上位机逐项调整。
     if (!MoveArm(materialTransferLayout.approachHeight, pose.length,
                  -1, clawAngle, materialMotionSteps.approachTranslateSpeed)) return false;
@@ -163,9 +163,9 @@ bool moveAbove(const MaterialStationPose &pose, float clawAngle,
     waitForArm(delays.settleMs);
     if (!(plannedAngle
             ? MoveArmPlanned(materialTransferLayout.approachHeight, pose.length,
-                             *plannedAngle, -1, materialMotionSteps.approachRotateSpeed, turretRampMs)
+                             *plannedAngle, -1, materialMotionSteps.approachRotateSpeed, turretAcceleration)
             : MoveArm(materialTransferLayout.approachHeight, pose.length,
-                      pose.turretAngle, -1, materialMotionSteps.approachRotateSpeed, turretRampMs))) return false;
+                      pose.turretAngle, -1, materialMotionSteps.approachRotateSpeed, turretAcceleration))) return false;
     if(!waitForTurret())return false;
     return true;
 }
@@ -174,9 +174,9 @@ bool moveAbove(const MaterialStationPose &pose, float clawAngle,
 bool pickAt(const MaterialStationPose &pose,
             const MaterialTransferDelays &delays = commonMaterialDelays,
             bool retractAfterGrip = false, bool retractWithLift = false,
-            const float *plannedAngle = nullptr, uint16_t turretRampMs = 20) {
+            const float *plannedAngle = nullptr, uint8_t turretAcceleration = TURRET_ACCELERATION_FAST) {
     // 载物台出料先抬升、等待后再缩回；工作区取回可同时抬升并缩回到 0。
-    if (!moveAbove(pose, materialTransferLayout.clawOpenAngle, delays.pickAbove, plannedAngle, turretRampMs)) return false;
+    if (!moveAbove(pose, materialTransferLayout.clawOpenAngle, delays.pickAbove, plannedAngle, turretAcceleration)) return false;
     if (!MoveArm(pose.high, -1, -1, -1,
                  materialMotionSteps.pickDescendSpeed)) return false;
     waitForArm(delays.pickDescendMs);
@@ -196,31 +196,31 @@ bool pickAt(const MaterialStationPose &pose,
 //@param targetHeight 目标高度
 bool placeAt(const MaterialStationPose &pose, float targetHeight,
              const MaterialTransferDelays &delays = commonMaterialDelays,
-             bool fromRetracted = false, const float *plannedAngle = nullptr, uint16_t turretRampMs = 20, bool workPlacement = false) {
+             bool fromRetracted = false, const float *plannedAngle = nullptr, uint8_t turretAcceleration = TURRET_ACCELERATION_FAST, bool workPlacement = false) {
     if (fromRetracted) {
         // pickAt 已完成抬升和缩回；此处额外等待并稳定，再保持缩回转向。
         waitForArm(delays.placeAbove.translateMs);
         waitForArm(delays.placeAbove.settleMs);
         if (!(plannedAngle
-                ? MoveArmPlanned(-1, -1, *plannedAngle, -1, materialMotionSteps.approachRotateSpeed, turretRampMs)
-                : MoveArm(-1, -1, pose.turretAngle, -1, materialMotionSteps.approachRotateSpeed, turretRampMs))) return false;
+                ? MoveArmPlanned(-1, -1, *plannedAngle, -1, materialMotionSteps.approachRotateSpeed, turretAcceleration)
+                : MoveArm(-1, -1, pose.turretAngle, -1, materialMotionSteps.approachRotateSpeed, turretAcceleration))) return false;
         if(!waitForTurret())return false;
     } else if (!moveAbove(pose, -1,
-                          delays.placeAbove, plannedAngle, turretRampMs)) return false;
-    if(turretRampMs==500) {
+                          delays.placeAbove, plannedAngle, turretAcceleration)) return false;
+    if(turretAcceleration==TURRET_ACCELERATION_SLOW) {
         // 第一段沿用原下降延时，最后10mm只等待100ms，不查到位反馈。
         if(!MoveArm(10,fromRetracted?pose.length:-1,-1,
-                    -1,materialMotionSteps.placeDescendSpeed,turretRampMs,true))return false;
+                    -1,materialMotionSteps.placeDescendSpeed,turretAcceleration,true))return false;
         waitForArm(delays.placeDescendMs);
-        if(!MoveArm(0,-1,-1,-1,materialMotionSteps.placeDescendSpeed,turretRampMs,true))return false;
+        if(!MoveArm(0,-1,-1,-1,materialMotionSteps.placeDescendSpeed,turretAcceleration,true))return false;
         waitForArm(100);
     } else {
         if(!MoveArm(targetHeight,fromRetracted?pose.length:-1,-1,
-                    -1,materialMotionSteps.placeDescendSpeed,turretRampMs))return false;
+                    -1,materialMotionSteps.placeDescendSpeed,turretAcceleration))return false;
         waitForArm(delays.placeDescendMs);
     }
     if(workPlacement)LogArmPlacementReadback(0,static_cast<uint8_t>(&pose-materialTransferLayout.workArea+1),currentArm.turret_angle,currentArm.length);
-    if(turretRampMs==500) { // 仅工位第一层放料，载物台和二层不分段松爪。
+    if(turretAcceleration==TURRET_ACCELERATION_SLOW) { // 仅工位第一层放料，载物台和二层不分段松爪。
         if(!MoveArm(-1,-1,-1,0,materialMotionSteps.placeReleaseSpeed))return false;
         waitForArm(300);
     }
@@ -282,9 +282,9 @@ bool executeWorkTransfer(const MaterialStationPose &source, const MaterialStatio
         angles = plan.anglesDeg;
     }
     // 使用局部规划，不污染普通 MoveArm 和圆盘流程；每次旋转由底层再次回读校验。
-    const uint16_t turretRampMs=retrieve||layer!=1?20:500;
-    return pickAt(source, delays, !retrieve, retrieve, angles, turretRampMs)
-        && placeAt(destination, height, delays, true, angles + 1, turretRampMs, !retrieve);
+    const uint8_t turretAcceleration=retrieve||layer!=1?TURRET_ACCELERATION_FAST:TURRET_ACCELERATION_SLOW;
+    return pickAt(source, delays, !retrieve, retrieve, angles, turretAcceleration)
+        && placeAt(destination, height, delays, true, angles + 1, turretAcceleration, !retrieve);
 }
 
 bool validateCodeArrays(const int *first, const int *second, bool firstIsMaterial) {

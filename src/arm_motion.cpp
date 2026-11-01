@@ -13,7 +13,7 @@ namespace {
  * @param hold 反馈完成后的夹持或释放保持时间(ms)。
  */
 void arm(Program &p,const char *name,float h,float l,float t,float claw,float speed,uint32_t wait=0,bool planned=false,uint32_t hold=0) {
-    Step s;s.kind=StepKind::ARM;s.name=name;s.high=h;s.length=l;s.turret=t;s.pawl=claw;s.speed=speed;s.waitMs=wait;s.planned=planned;s.holdMs=hold;s.turretRampMs=20;p.append(s);
+    Step s;s.kind=StepKind::ARM;s.name=name;s.high=h;s.length=l;s.turret=t;s.pawl=claw;s.speed=speed;s.waitMs=wait;s.planned=planned;s.holdMs=hold;s.turretAcceleration=TURRET_ACCELERATION_FAST;p.append(s);
 }
 /** @brief 追加转台到位检查步骤，忽略旧旋转延时；其他轴仍只发令。 */
 void rotateArm(Program &p,const char *name,float h,float l,float t,float claw,float speed,bool planned=false) {
@@ -107,6 +107,12 @@ const char *transfer(const MotionRequest &r,Program &p) {
         const float height=destination.high+(retrieve?0:(r.layer-1)*materialTransferLayout.secondLayerOffset);
         pick(p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i]);
         place(p,destination,height,d,true,&selected.anglesDeg[2*i+1],!retrieve&&r.layer==1,retrieve?0:works[i]);
+        if(!retrieve&&r.layer==2) {
+            p.steps[p.count-1].stackLiftArrival=true;
+            p.steps[p.count-1].waitMs=0;
+        }
+        p.steps[p.count-1].materialEvent=retrieve?"WORK_PICK":"WORK_PLACE";
+        p.steps[p.count-1].materialPosition=works[i];
         commit(p,cargos[i],retrieve?(demo?MATERIAL_RED:single?r.color:r.colors[i]):MATERIAL_NONE);
     }
     return nullptr;
@@ -181,7 +187,11 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
                 arm(p,"DISC_LIFT",materialTransferLayout.approachHeight,0,-1,-1,materialMotionSteps.discLiftSpeed,commonMaterialDelays.pickLiftMs);
             }
             // 圆盘抓后与工作区取回一样：抬升缩回，再转向，同时伸出下降；共用公共延时表。
-            place(p,destination,destination.high,commonMaterialDelays,true,nullptr);commit(p,cargo,color);
+            place(p,destination,destination.high,commonMaterialDelays,true,nullptr);
+            if(r.kind!=MotionKind::HELD_DISC) {
+                p.steps[p.count-1].materialEvent="DISC_PICK";p.steps[p.count-1].materialPosition=r.position;
+            }
+            commit(p,cargo,color);
         }
         break;
     }
@@ -202,7 +212,7 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         break;
     case MotionKind::HOME_RETURN: {
         observation(p,ArmObservation::START,r.zone);
-               position(p,r.zone==1?-105:-70,r.zone==1?-180:200,0,200);break;
+        position(p,r.zone==1?-100:-70,r.zone==1?-180:200,0,200);break;
     }
     case MotionKind::POSITION: position(p,r.x,r.y,r.theta,r.speed);break;
     case MotionKind::GOTO: {Step s;s.kind=StepKind::GOTO;s.name="GOTO";s.high=r.x;s.length=r.y;s.turret=r.theta;p.append(s);break;}
@@ -213,18 +223,22 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
     default: break;
     }
     // 整段搬运使用同一曲线：第一层放料慢，收料和第二层叠放快；圆盘全程快。
-    uint16_t turretRampMs=20;
+    uint8_t turretAcceleration=TURRET_ACCELERATION_FAST;
     switch(r.kind) {
     case MotionKind::DISC_GRAB: case MotionKind::LOAD_ROUND: case MotionKind::HELD_DISC:
-        turretRampMs=20;break;
+        turretAcceleration=TURRET_ACCELERATION_FAST;break;
     case MotionKind::RETRIEVE: case MotionKind::RETRIEVE_ROUND: case MotionKind::DEMO_RETRIEVE:
-        turretRampMs=20;break;
+        turretAcceleration=TURRET_ACCELERATION_FAST;break;
     case MotionKind::TRANSFER: case MotionKind::PLACE_ROUND:
-        turretRampMs=r.layer==1?500:20;break;
+        turretAcceleration=r.layer==1?TURRET_ACCELERATION_SLOW:TURRET_ACCELERATION_FAST;break;
+    case MotionKind::HOME_OBSERVE: // 返家角点观察姿态使用慢档。
     case MotionKind::DEMO_PLACE:
-        turretRampMs=500;break;
+        turretAcceleration=TURRET_ACCELERATION_SLOW;break;
+    case MotionKind::ARM_POSE:
+        if(r.observation==ArmObservation::LOOK4)turretAcceleration=TURRET_ACCELERATION_SLOW;
+        break;
     default: break;
     }
-    for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==StepKind::ARM)p.steps[i].turretRampMs=turretRampMs;
+    for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==StepKind::ARM)p.steps[i].turretAcceleration=turretAcceleration;
     return nullptr;
 }

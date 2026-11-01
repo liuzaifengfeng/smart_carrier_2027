@@ -71,7 +71,7 @@ struct Runtime : CompetitionIO {
     int progress()override{return progressValue;}
     void clearProgress()override{progressValue=0;}
     void task(MotionRequest &r,bool second)override{
-        const int colors[3]={second?6:1,second?1:6,second?6:1},positions[3]={3,1,2};
+        const int colors[3]={second?5:1,second?1:5,6},positions[3]={second?2:1,second?3:2,second?1:3};
         for(int i=0;i<3;++i){r.colors[i]=colors[i];r.positions[i]=positions[i];}
     }
     uint32_t submit(const MotionRequest &r)override {
@@ -152,9 +152,18 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
             } else assert(request.observation==(request.endNode==14?ArmObservation::LOOK2:ArmObservation::LOOK));
         }
         if(request.kind==MotionKind::NAVIGATE&&request.startNode==10)assert(previous==MotionKind::RETRIEVE_ROUND);
-        if(request.kind==MotionKind::PLACE_ROUND){++places;assert(request.positions[0]==3&&request.positions[1]==1&&request.positions[2]==2);}
+        if(request.kind==MotionKind::PLACE_ROUND){
+            ++places;
+            const int expected[4][3]={{1,2,3},{1,2,3},{2,3,1},{2,1,3}};
+            for(int i=0;i<3;++i)assert(request.positions[i]==expected[places-1][i]);
+            assert(request.colors[0]==(places<=2?1:5)&&request.colors[1]==(places<=2?5:1)&&request.colors[2]==6);
+        }
         if(request.kind==MotionKind::PLACE_ROUND)assert(request.layer==(places==4?2:1));
-        if(request.kind==MotionKind::RETRIEVE_ROUND)++retrieves;
+        if(request.kind==MotionKind::RETRIEVE_ROUND){
+            ++retrieves;
+            const int expected[2][3]={{1,2,3},{2,3,1}};
+            for(int i=0;i<3;++i)assert(request.positions[i]==expected[retrieves-1][i]);
+        }
         if(request.kind==MotionKind::HOME_RETURN||request.kind==MotionKind::HOME_OBSERVE)assert(request.zone==zone);
         if(request.kind==MotionKind::HOME_OBSERVE)assert(request.armPrepared&&previous==MotionKind::NAVIGATE);
         previous=request.kind;

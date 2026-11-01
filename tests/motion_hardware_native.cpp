@@ -24,8 +24,8 @@ float HEIGHT_PULSE=80,LENGTH_PULSE=30.2f;
 ArmPose currentArm{100,20,90,50};
 CargoPlatform cargoPlatforms[3]={{MATERIAL_NONE},{MATERIAL_NONE},{MATERIAL_NONE}};
 bool cancelled(){return stop;}
-bool MoveArm(float,float,float,float,float,uint16_t ramp,bool slowLower){++issued;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
-bool MoveArmPlanned(float,float,float,float,float,uint16_t ramp,bool slowLower){++issued;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
+bool MoveArm(float,float,float,float,float,uint8_t ramp,bool slowLower){++issued;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
+bool MoveArmPlanned(float,float,float,float,float,uint8_t ramp,bool slowLower){++issued;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
 bool BeginPositionMove(float,float,float,float){++issued;return true;}
 void TickPositionMove(){}
 bool PositionMoveActive(){return false;}
@@ -85,8 +85,8 @@ void feedback() {
     motorAtTarget=true;turretMeasured=70;assert(!hardware.ready(s,done)&&!done);
     turretMeasured=90;clawMeasured=30;assert(!hardware.ready(s,done)&&!done);
     clawMeasured=50;assert(!hardware.ready(s,done)&&done);
-    s.turretRampMs=20;assert(!hardware.issue(s)&&issuedRamp==20&&!issuedSlowLower);
-    s.planned=true;s.turretRampMs=500;s.slowLower=true;assert(!hardware.issue(s)&&issuedRamp==500&&issuedSlowLower);
+    s.turretAcceleration=TURRET_ACCELERATION_FAST;assert(!hardware.issue(s)&&issuedRamp==TURRET_ACCELERATION_FAST&&!issuedSlowLower);
+    s.planned=true;s.turretAcceleration=TURRET_ACCELERATION_SLOW;s.slowLower=true;assert(!hardware.issue(s)&&issuedRamp==TURRET_ACCELERATION_SLOW&&issuedSlowLower);
     issued=0;
     stop=true;assert(hardware.issue(s)&&!issued);
     stop=false;s.kind=motion::StepKind::COMMIT;s.cargo=1;s.color=6;

@@ -6,13 +6,14 @@ from upper_computer import build_task_code_command, parse_task_code_response, Up
 
 class TaskCodeTests(unittest.TestCase):
     def test_valid_codes_and_outer_spaces(self):
-        for code in ("156+123+516+231", "111+321+666+132"):
+        for code in ("156+123+516+231", "126+321+612+132"):
             self.assertEqual(build_task_code_command("  " + code + "  "), f"{{CMD,TASK,SET,{code}}}")
 
     def test_invalid_task_format_and_ranges(self):
         for code in ("", "156+123+516", "156+123+516+231x", "156-123+516+231",
                      "056+123+516+231", "156+123+716+231", "156+112+516+231",
-                     "156+123+516+241", "１５６+123+516+231", "156+123+51 6+231"):
+                     "156+123+516+241", "１５６+123+516+231", "156+123+51 6+231",
+                     "111+321+666+132", "156+123+551+231", "156+123+526+231"):
             with self.subTest(code=code), self.assertRaises(ValueError):
                 build_task_code_command(code)
 

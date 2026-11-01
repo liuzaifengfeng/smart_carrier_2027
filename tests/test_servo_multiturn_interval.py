@@ -127,7 +127,7 @@ static_assert(legacyClawPacket(), "ID 1 retains simple multiturn packet");
             "bool MoveArm(", "bool MoveArmPlanned("))
         actual = re.sub(r"(?:static )?bool (ReadArmTurretAngle|MoveArmInternal|MoveArm|MoveArmPlanned)\(",
                         r"constexpr bool \1(", actual)
-        actual = actual.replace("uint16_t turretRampMs, bool slowLower)", "uint16_t turretRampMs=600, bool slowLower=false)")
+        actual = actual.replace("uint8_t turretAcceleration, bool slowLower)", "uint8_t turretAcceleration=191, bool slowLower=false)")
         harness = r'''
 #include <stdint.h>
 constexpr float INFINITY=__builtin_inff();

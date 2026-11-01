@@ -25,12 +25,12 @@ bool MovePosition(float,float,float,float,bool (*)()){return true;}
 std::vector<motion::Step> issuedArm;
 std::vector<uint32_t> armWaits;
 void vTaskDelay(uint32_t ticks){armWaits.push_back(ticks);}
-bool MoveArm(float high,float length,float turret,float pawl,float speed,uint16_t ramp,bool slowLower) {
-    motion::Step s;s.high=high;s.length=length;s.turret=turret;s.pawl=pawl;s.speed=speed;s.turretRampMs=ramp;s.slowLower=slowLower;
+bool MoveArm(float high,float length,float turret,float pawl,float speed,uint8_t ramp,bool slowLower) {
+    motion::Step s;s.high=high;s.length=length;s.turret=turret;s.pawl=pawl;s.speed=speed;s.turretAcceleration=ramp;s.slowLower=slowLower;
     if(turret!=-1){currentArm.turret_angle=turret;measuredTurret=turret;}
     issuedArm.push_back(s);return true;
 }
-bool MoveArmPlanned(float high,float length,float turret,float pawl,float speed,uint16_t ramp,bool slowLower) {
+bool MoveArmPlanned(float high,float length,float turret,float pawl,float speed,uint8_t ramp,bool slowLower) {
     return MoveArm(high,length,turret,pawl,speed,ramp,slowLower);
 }
 float NODE_PATH_ACCEL_MM_S2=2000,NODE_PATH_TURN_DEG_S=300,NODE_PATH_TURN_ACCEL_DEG_S2=400,NODE_PATH_HEADING_DEADBAND_DEG=1;
@@ -58,7 +58,7 @@ void forward() {
             if(s.placementPosition){assert(s.placementPosition==w&&!strcmp(s.name,"PLACE_DESCEND"));++readbacks;}
             if(!strcmp(s.name,"APPROACH_ROTATE")||!strcmp(s.name,"PICK_DESCEND")||!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_10"))assert(s.pawl==-1);
             if(!strcmp(s.name,"APPROACH_ROTATE")||!strcmp(s.name,"PLACE_ROTATE"))assert(s.turretArrival&&s.waitMs==0);
-            if(s.kind==motion::StepKind::ARM)assert(s.turretRampMs==(layer==1?500:20));
+            if(s.kind==motion::StepKind::ARM)assert(s.turretAcceleration==(layer==1?TURRET_ACCELERATION_SLOW:TURRET_ACCELERATION_FAST));
             assert(s.slowLower==((!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_10"))&&layer==1));
             if(s.slowLower)assert(s.timed);
             if(!strcmp(s.name,"PICK_RETRACT")){assert(s.length==0);retract=true;}
@@ -81,7 +81,7 @@ void reverse() {
         cargoPlatforms[c-1].material=MATERIAL_NONE;
         MotionRequest r;r.kind=MotionKind::RETRIEVE;r.cargo=c;r.work=w;r.color=6;
         motion::Program p;assert(!BuildArmProgram(r,p));
-        for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretRampMs==20&&!p.steps[i].slowLower);
+        for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretAcceleration==TURRET_ACCELERATION_FAST&&!p.steps[i].slowLower);
         for(size_t i=0;i<p.count;++i)assert(strcmp(p.steps[i].name,"PLACE_RELEASE_ZERO")&&!p.steps[i].placementPosition);
         assert(p.steps[0].waitMs==workAreaToCargoDelays[w-1][c-1].pickAbove.translateMs);
         bool lift=false;
@@ -99,7 +99,7 @@ void rounds() {
     for(uint8_t layer:{1,2}) {
         r.layer=layer;assert(!BuildArmProgram(r,p));
         assert(p.count==(layer==1?48:42));
-        for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretRampMs==(layer==1?500:20));
+        for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretAcceleration==(layer==1?TURRET_ACCELERATION_SLOW:TURRET_ACCELERATION_FAST));
     }
     angleAvailable=false;assert(BuildArmProgram(r,p));
     for(const auto &cargo:cargoPlatforms)assert(cargo.material==MATERIAL_RED);
@@ -131,7 +131,7 @@ void discs() {
         MotionRequest r;r.kind=MotionKind::DISC_GRAB;r.cargo=cargo;r.color=6;r.position=pos;
         motion::Program p;assert(!BuildArmProgram(r,p));
         checkTail(p,p.count-7,cargo);
-        for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretRampMs==20&&!p.steps[i].slowLower);
+        for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretAcceleration==TURRET_ACCELERATION_FAST&&!p.steps[i].slowLower);
         for(size_t i=0;i<p.count;++i)assert(!p.steps[i].placementPosition);
         assert(p.steps[p.count-9].waitMs==d.pickGripMs&&p.steps[p.count-9].holdMs==37);
         if(pos>=1&&pos<=3) {
@@ -197,8 +197,8 @@ void poses() {
             currentArm.high=heights[i];
             MotionRequest r;r.kind=MotionKind::ARM_POSE;r.observation=pose;r.zone=1;
             motion::Program p;assert(!BuildArmProgram(r,p));assert(p.steps[0].waitMs==waits[i]);
-            if(pose==ArmObservation::LOOK2||pose==ArmObservation::LOOK3)assert(p.steps[0].turretRampMs==20);
-            if(pose==ArmObservation::LOOK)assert(p.steps[0].turretRampMs==20);
+            if(pose==ArmObservation::LOOK2||pose==ArmObservation::LOOK3)assert(p.steps[0].turretAcceleration==TURRET_ACCELERATION_FAST);
+            if(pose==ArmObservation::LOOK)assert(p.steps[0].turretAcceleration==TURRET_ACCELERATION_FAST);
         }
     }
     currentArm.high=0;
@@ -213,18 +213,18 @@ void poses() {
     // 同步入口同样采用第一层放料全程慢、圆盘全程快。
     cargoPlatforms[0].material=MATERIAL_RED;issuedArm.clear();
     assert(MoveCargoToWorkArea(1,1));
-    assert(issuedArm[1].turretRampMs==500);
-    assert(issuedArm[6].turretRampMs==500);
+    assert(issuedArm[1].turretAcceleration==TURRET_ACCELERATION_SLOW);
+    assert(issuedArm[6].turretAcceleration==TURRET_ACCELERATION_SLOW);
     assert(issuedArm[7].slowLower);
     assert(issuedArm[7].high==10&&issuedArm[7].pawl==-1&&issuedArm[8].high==0&&issuedArm[8].slowLower);
     assert(issuedArm[9].pawl==0&&issuedArm[10].pawl==materialTransferLayout.clawOpenAngle);
     issuedArm.clear();assert(MoveDiscToCargo(1,1));
-    assert(issuedArm[1].turretRampMs==20);
-    assert(issuedArm[5].turretRampMs==20);
+    assert(issuedArm[1].turretAcceleration==TURRET_ACCELERATION_FAST);
+    assert(issuedArm[5].turretAcceleration==TURRET_ACCELERATION_FAST);
     issuedArm.clear();assert(StackCargoToWorkArea(1,1));
-    for(const auto &s:issuedArm)if(s.turret!=-1)assert(s.turretRampMs==20);
+    for(const auto &s:issuedArm)if(s.turret!=-1)assert(s.turretAcceleration==TURRET_ACCELERATION_FAST);
     issuedArm.clear();assert(MoveWorkAreaToCargo(1,1,1));
-    for(const auto &s:issuedArm)if(s.turret!=-1)assert(s.turretRampMs==20);
+    for(const auto &s:issuedArm)if(s.turret!=-1)assert(s.turretAcceleration==TURRET_ACCELERATION_FAST);
 }
 void registry() {
     registrationTail();assert(entries.size()==246);

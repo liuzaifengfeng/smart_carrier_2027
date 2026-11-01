@@ -236,7 +236,7 @@ bool ReadArmTurretAngle(float &angle) {
  * @param speed 速度 (mm/s)
  * @note 规划模式下转台使用精确多圈角度；其他情况下 -1 表示不操作该轴
  */
-static bool MoveArmInternal(float high, float length, float turret_angle, float pawl_angle, float speed, bool absoluteTurret, uint16_t turretRampMs, bool slowLower) {
+static bool MoveArmInternal(float high, float length, float turret_angle, float pawl_angle, float speed, bool absoluteTurret, uint8_t turretAcceleration, bool slowLower) {
     if (taskMotionAborted) return false;
     // 夹爪原标定为 speed=200 对应约90°/s；时间缩短至1/5后等效为450°/s。
     // 实际指令耗时按回读角度到最近等效目标的行程计算，不再使用与角度无关的线性映射。
@@ -275,7 +275,7 @@ static bool MoveArmInternal(float high, float length, float turret_angle, float 
 
     if (taskMotionAborted) return false;
     if (moveTurret) {
-        if(!TurretMotorMove(safeTurretTarget, turretRampMs))return false;
+        if(!TurretMotorMove(safeTurretTarget, turretAcceleration))return false;
         currentArm.turret_angle = safeTurretTarget;
     }
 
@@ -302,16 +302,16 @@ static bool MoveArmInternal(float high, float length, float turret_angle, float 
     return true;
 }
 
-bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed, uint16_t turretRampMs, bool slowLower) {
-    return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, false, turretRampMs, slowLower);
+bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed, uint8_t turretAcceleration, bool slowLower) {
+    return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, false, turretAcceleration, slowLower);
 }
 
 /**
  * @brief 按已规划的多圈绝对转台目标发令，不再选择最近等效角；其他轴的-1仍表示跳过。
  * @return true 指令下发成功，不表示实测到位。
  */
-bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed, uint16_t turretRampMs, bool slowLower) {
-    return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, true, turretRampMs, slowLower);
+bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed, uint8_t turretAcceleration, bool slowLower) {
+    return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, true, turretAcceleration, slowLower);
 }
 
 

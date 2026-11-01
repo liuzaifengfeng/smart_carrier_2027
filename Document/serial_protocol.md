@@ -64,7 +64,7 @@ Debug空闲时按BOOT0（GPIO0，低电平）等效执行 `{CMD,SYS,RELEASE}`，
 
 手动强制抓取：`{CMD,VISION,FORCE_GRAB,color,cargo}`，color=1～6、cargo=1～3，Debug/Release 均可用。无需开启 DISC_MATERIAL、任务码或任务顺序；先取消业务对齐等待，向统一运动任务提交抓放。接令返回 `{RSP,VISION,FORCE_GRAB,ACK,color,cargo}` 与 `{EVT,VISION,FORCE_GRAB,REQUESTED,color,cargo}`，二者只表示提交。动作结束后发送 `{EVT,VISION,FORCE_GRAB,DONE,color,cargo}` 或 `FAILED`；上位机等待匹配颜色/载物台的终态。目标载物台已有料时仍发送 `{EVT,VISION,FORCE_GRAB,WARN,OCCUPIED,原颜色,cargo}` 并继续；原有动作边界和标定继续生效。成功末端更新载物台记录，提前失败保留原记录，不推进自动任务进度。错误参数 RANGE、参数数量错误 FORMAT。
 
-上位机“视觉 → 手动输入任务码”输入 `156+123+516+231` 后点击下发或按回车，发送 `{CMD,TASK,SET,156+123+516+231}`。固件回传 `{RSP,TASK,SET,OK,任务码}` 并发送 TASK_CODE 显示事件；界面仅在确认后更新当前任务码。四组都须恰好三位，第一/三组颜色为 1～6，第二/四组各为 1、2、3 的排列；格式或数值错误回复 RANGE，参数数量错误回复 FORMAT，不覆盖已有任务码。
+上位机“视觉 → 手动输入任务码”输入 `156+123+516+231` 后点击下发或按回车，发送 `{CMD,TASK,SET,156+123+516+231}`。固件回传 `{RSP,TASK,SET,OK,任务码}` 并发送 TASK_CODE 显示事件；界面仅在确认后更新当前任务码。四组都须恰好三位，第一/三组颜色为 1～6、各不重复且两组颜色集合相同，第二/四组各为 1、2、3 的排列；格式或数值错误回复 RANGE，参数数量错误回复 FORMAT，不覆盖已有任务码。
 
 TASK SET 在 Debug 可修改任务码并重置抓取进度为 0；开启 DISC_MATERIAL 且停止连续对齐后，COLOR 按第一轮任务顺序判断，并在目标载物台为空时调用现有抓取动作。下发任务码不会清空载物台记录。Release 只允许 WAIT_START 预置或 READ_TASK 尚未收到任务时输入；进入抓取/放置等执行阶段回复 BUSY。手动预置的任务码在进入 READ_TASK 时直接使用，扫码等待期间收到手动码也会结束扫码并停车；迟到的扫码结果不能覆盖已接受的手动码。任务码仅在 RAM 中保存，重启清空。手动码不确认车辆位置，后续导航仍要求车辆实际位于路径起点。
 

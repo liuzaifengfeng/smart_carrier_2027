@@ -64,16 +64,16 @@ int main(){
     zeroLoaded=false;zeroEncoder=0;motorOriginAngle=999;
     snapshot(16384,0);
     assert(TurretMotorReadAngle(angle)&&angle==90&&writes==1&&zeroCommands==1);
-    TurretMotorMove(0,20);
-    assert(direction==0&&targetPulses==800&&speed==83&&acceleration==126&&absolute&&!sync);
-    TurretMotorMove(360,500);
+    TurretMotorMove(0,TURRET_ACCELERATION_FAST);
+    assert(direction==0&&targetPulses==800&&speed==83&&acceleration==TURRET_ACCELERATION_FAST&&absolute&&!sync);
+    TurretMotorMove(360,TURRET_ACCELERATION_SLOW);
     assert(direction==1&&targetPulses==2400&&acceleration==126&&absolute);
     assert(driverPid[0]==62000&&driverPid[1]==100&&driverPid[2]==62000&&pidBaselineWrites==0&&pidWrites==0);
     driverPid[2]=20000;
-    assert(TurretMotorMove(360,500)&&driverPid[2]==20000&&pidWrites==0);
+    assert(TurretMotorMove(360,TURRET_ACCELERATION_SLOW)&&driverPid[2]==20000&&pidWrites==0);
     snapshot(16384,-49152);
     assert(TurretMotorReadAngle(angle)&&angle==360);
-    TurretMotorMove(0,20);assert(direction==0&&targetPulses==800&&absolute); // 从360返回0，不就近取等效角。
+    TurretMotorMove(0,TURRET_ACCELERATION_FAST);assert(direction==0&&targetPulses==800&&absolute); // 从360返回0，不就近取等效角。
     snapshot(16384,-65536);
     assert(TurretMotorReadAngle(angle)&&angle==450); // 完整累计圈数继续保留。
     snapshot(16384,32768);
@@ -81,7 +81,7 @@ int main(){
     // 只给电机断电：主控RAM不复位，180度重新上电后仍恢复正确坐标。
     snapshot(32768,0);
     assert(TurretMotorReadAngle(angle)&&angle==180);
-    TurretMotorMove(90,600);assert(direction==0&&targetPulses==800&&acceleration==126);
+    TurretMotorMove(90,TURRET_ACCELERATION_SLOW);assert(direction==0&&targetPulses==800&&acceleration==126);
     available=false;angle=777;
     assert(!TurretMotorReadAngle(angle)&&angle==777);
     const int previousZeros=zeroCommands;
@@ -90,10 +90,10 @@ int main(){
     assert(!TurretMotorSetZero(angle)&&angle==777&&writes==1);
     writeAvailable=true;
     assert(TurretMotorSetZero(angle)&&angle==0&&writes==2&&!transactionDepth);
-    TurretMotorMove(-90,20);assert(direction==0&&targetPulses==800);
-    TurretMotorMove(360,20);assert(direction==1&&targetPulses==3200);
-    TurretMotorMove(0,20);assert(targetPulses==0&&absolute);
-    assert(TurretMotorMove(90,20));
+    TurretMotorMove(-90,TURRET_ACCELERATION_FAST);assert(direction==0&&targetPulses==800);
+    TurretMotorMove(360,TURRET_ACCELERATION_FAST);assert(direction==1&&targetPulses==3200);
+    TurretMotorMove(0,TURRET_ACCELERATION_FAST);assert(targetPulses==0&&absolute);
+    assert(TurretMotorMove(90,TURRET_ACCELERATION_FAST));
     const int commandsBeforeTrace=moves;
     snapshot(0,-17476);measuredRpm=-5;measuredFlags=1;clockMs+=50;
     TurretMotorPoll();assert(TurretMotorTracking()&&trace.overshoot>5.9f&&moves==commandsBeforeTrace);
@@ -103,7 +103,7 @@ int main(){
     assert(!TurretMotorTracking()&&moves==commandsBeforeTrace);
     assert(Serial.text.find("SETTLED")!=std::string::npos);
     // PID写入接口不可用不应阻断位置运动，也不自动覆盖手动参数。
-    pidWriteAvailable=false;assert(TurretMotorMove(90,20)&&driverPid[2]==20000&&pidWrites==0);
+    pidWriteAvailable=false;assert(TurretMotorMove(90,TURRET_ACCELERATION_FAST)&&driverPid[2]==20000&&pidWrites==0);
     TurretMotorCancelTrace();assert(!TurretMotorTracking());
     snapshot(0,0);measuredRpm=0;measuredFlags=3;
     assert(TurretMotorTrial(90,120,200,10,100));

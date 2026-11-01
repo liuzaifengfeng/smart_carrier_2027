@@ -21,8 +21,8 @@ const char *MotionHardware::issue(const Step &s) {
     if(cancelled())return "STOPPED";
     switch(s.kind) {
     case StepKind::ARM:
-        if(!(s.planned?MoveArmPlanned(s.high,s.length,s.turret,s.pawl,s.speed,s.turretRampMs,s.slowLower):
-             MoveArm(s.high,s.length,s.turret,s.pawl,s.speed,s.turretRampMs,s.slowLower)))return "EXECUTION";
+        if(!(s.planned?MoveArmPlanned(s.high,s.length,s.turret,s.pawl,s.speed,s.turretAcceleration,s.slowLower):
+             MoveArm(s.high,s.length,s.turret,s.pawl,s.speed,s.turretAcceleration,s.slowLower)))return "EXECUTION";
         if(s.turretArrival)turretTarget=currentArm.turret_angle;
         return nullptr;
     case StepKind::POSITION: return BeginPositionMove(s.high,s.length,s.turret,s.speed)?nullptr:"EXECUTION";
@@ -41,7 +41,7 @@ const char *MotionHardware::issue(const Step &s) {
  */
 bool MotionHardware::feedback(const Step &s) {
     return s.kind==StepKind::POSITION||s.kind==StepKind::TURRET_READY||
-        (s.kind==StepKind::ARM&&(s.liftArrival||s.turretArrival||ARM_FEEDBACK_ENABLED)&&!s.timed);
+        (s.kind==StepKind::ARM&&(s.liftArrival||s.stackLiftArrival||s.turretArrival||ARM_FEEDBACK_ENABLED)&&!s.timed);
 }
 /**
  * @brief 检查位置移动、转台或机械臂实测到位条件，并通过 done 返回本次结果。
@@ -55,12 +55,13 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
         if(ReadArmTurretAngle(angle)&&fabsf(angle-s.turret)<=5){done=true;return nullptr;}
         return millis()-turretStarted>=s.waitMs?"EXECUTION":nullptr;
     }
-    if(s.liftArrival) {
+    if(s.liftArrival||s.stackLiftArrival) {
         node_position::Motor state;
         const char *error=ReadMotorFeedback(5,state);if(error)return error;
         // 升降正方向为CCW，位置反馈为负；保留符号，不把反向位置当作抬升到位。
         const double measured=-static_cast<double>(state.position)*3200.0/65536.0/HEIGHT_PULSE;
-        done=(state.flags&2)&&fabs(measured-s.high)<=1.0;
+        done=s.stackLiftArrival ? fabs(measured-s.high)<10.0
+            : (state.flags&2)&&fabs(measured-s.high)<=1.0;
         if(done)Serial.printf("{EVT,MOTION,LIFT_ARRIVED,%lu,%.3f,%.3f}\n",
             static_cast<unsigned long>(job),s.high,measured);
         return nullptr;
@@ -94,6 +95,12 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
  * @brief 输出当前作业的 STEP 开始/结束日志，index 为步骤下标。
  */
 void MotionHardware::event(size_t index,const Step &step,bool begin) {
+    if(!begin&&step.materialEvent) {
+        char message[48];
+        snprintf(message,sizeof(message),"%s %u",step.materialEvent,step.materialPosition);
+        Serial.printf("{EVT,MATERIAL,%s,%u,%lu}\n",step.materialEvent,step.materialPosition,static_cast<unsigned long>(job));
+        updateDisplay("DISPLAY","DEBUG",message);
+    }
     if(!begin&&step.placementPosition)
         LogArmPlacementReadback(job,step.placementPosition,currentArm.turret_angle,currentArm.length);
     Serial.printf("{EVT,MOTION,STEP,%lu,%lu,%u,%s,%s}\n",static_cast<unsigned long>(job),
