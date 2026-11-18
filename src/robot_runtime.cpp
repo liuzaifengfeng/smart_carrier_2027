@@ -4,6 +4,7 @@
 #include "h30_usb.h"
 #include "motion_executor.h"
 #include "led_pwm.h"
+#include "battery_monitor.h"
 
 // ================= 基础配置 =================
 
@@ -24,7 +25,7 @@ CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 // 运动标定系数
 float X_PULSE     = 13.3f;    // X向 每毫米脉冲
 float Y_PULSE     = 13.6f;    // Y向 每毫米脉冲
-float THETA_PULSE = 51.8f;    // 旋转 每度脉冲
+float THETA_PULSE = 49.353889f;    // 旋转 每度脉冲
 float HEIGHT_PULSE = 80.0f;  // 升降机械臂 每毫米脉冲
 float LENGTH_PULSE = 30.2f;  // 伸缩机械臂 每毫米脉冲
 

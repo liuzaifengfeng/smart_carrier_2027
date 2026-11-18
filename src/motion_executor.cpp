@@ -71,6 +71,7 @@ void flag(const char *name) {
 void stopHardware() {
     ContinuousMotionCancel();
     CancelPositionMove();
+    hardware.stopTray();
     MotorBusGuard transaction;
     for(uint8_t id=5;id<=6;++id)Emm_V5_Stop_Now(id,false);
     Emm_V5_Stop_Now(TURRET_MOTOR_ID,false);

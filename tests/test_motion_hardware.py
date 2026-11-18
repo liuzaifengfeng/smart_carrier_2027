@@ -13,6 +13,9 @@ def build_motion_hardware():
 
 
 class MotionHardwareTests(unittest.TestCase):
+    def test_tray_requires_measured_multiturn_arrival_and_can_be_stopped(self):
+        run_native(build_motion_hardware(), "tray")
+
     def test_placement_logs_signed_measured_errors_and_read_failures(self):
         run_native(build_motion_hardware(), "placement")
 

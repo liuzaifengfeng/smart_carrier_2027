@@ -3,8 +3,8 @@
 
 #include <Arduino.h>
 
-#define SERIAL1_TXD_PIN 17
-#define SERIAL1_RXD_PIN 18
+#define SERIAL1_TXD_PIN 16
+#define SERIAL1_RXD_PIN 15
 
 typedef enum {
   S_VER   = 0,      /* 读取固件版本和对应的硬件版本 */

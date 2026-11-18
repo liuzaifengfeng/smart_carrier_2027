@@ -54,7 +54,7 @@ struct Config {
     uint32_t id=0;
     uint8_t count=0;
     float startHeading=0,endHeading=0,maxRpm=80,accel=200,lateralAccel=300;
-    float lateralPpm=13.3f,forwardPpm=13.6f,rotationPpd=51.8f;
+    float lateralPpm=13.3f,forwardPpm=13.6f,rotationPpd=49.353889f;
     float kp=2,maxOmega=45,correction=20,omegaAccel=90;
     uint8_t policy=0; // 0旧模型；试跑1自动/2停转；3正式外圈连续、内侧位置模式。
     float outset=60,margin=20;

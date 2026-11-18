@@ -73,6 +73,22 @@ class MotionLogTests(unittest.TestCase):
         self.assertEqual(result["components"], [])
         self.assertEqual(len(result["unfinished"]), 3)
 
+    def test_timeline_preserves_job_identity_and_surfaces_unmatched_end(self):
+        result = report(
+            "{EVT,MOTION,RUN_START,0,100}",
+            "{EVT,MOTION,SPAN,12,110,NAVIGATION,BEGIN}",
+            "{EVT,MOTION,STEP,12,130,0,LOOK_LIFT,END}",
+            "{EVT,MOTION,SPAN,12,150,NAVIGATION,END}",
+            "{EVT,MOTION,RESULT,12,160,DONE,90}",
+            "{EVT,MOTION,RUN_RESULT,0,200,DONE,100}",
+        )
+        self.assertEqual(result["intervals"], [
+            ("RESULT", "DONE", "12", 100, 160),
+            ("SPAN", "NAVIGATION", "12", 110, 150),
+        ])
+        self.assertEqual(result["job_sum_ms"], 60)
+        self.assertEqual(result["unmatched_ends"], [("12", "STEP_LOOK_LIFT", 130)])
+
     def test_rx_prefix_is_ignored_and_device_clock_orders_events(self):
         events = parse_events(["[12:34:56.123] [RX] {EVT,MOTION,PHASE,0,200,READ_TASK}",
                                "[12:34:57.000] [RX] {EVT,MOTION,RUN_START,0,100}"])

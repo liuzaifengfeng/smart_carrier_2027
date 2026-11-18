@@ -17,6 +17,8 @@
 #include <vector>
 
 NativeSerial Serial;
+bool restarted = false;
+struct { void restart() { restarted = true; } } ESP;
 using TaskHandle_t=void *;
 using TimerHandle_t=void *;
 using portMUX_TYPE=int;
@@ -62,7 +64,7 @@ uint8_t nodePathBuffer[25];size_t nodePathLen=0;
 constexpr uint8_t DISC_AREA_NODE=14,COARSE_AREA_NODE=10,TEMP_AREA_NODE=22;
 constexpr float START_ZONE_HEADING=180;
 float NODE_PATH_SPEED_MM_S=2500;
-constexpr uint8_t SERVO_ID_BROADCAST=0xFE;
+#include "servo.h"
 RobotPose currentPose{2250,150,180};ArmPose currentArm{};
 CargoPlatform cargoPlatforms[3]={{MATERIAL_NONE},{MATERIAL_NONE},{MATERIAL_NONE}};
 bool active=false,trialActive=false;
@@ -125,7 +127,7 @@ int transactionDepth=0;
 std::vector<int> startupCommands;
 void MotorBusInit(){busInitialized=true;}
 struct MotorBusGuard {MotorBusGuard(){++transactionDepth;}~MotorBusGuard(){--transactionDepth;}};
-constexpr int SERIAL_8N1=0,SERIAL1_RXD_PIN=18,SERIAL1_TXD_PIN=17;
+constexpr int SERIAL_8N1=0,SERIAL1_RXD_PIN=15,SERIAL1_TXD_PIN=16;
 struct {void begin(int,int,int,int){serialInitialized=true;}void flush(){}} Serial1;
 void recordCommand(int value){assert(busInitialized&&serialInitialized&&transactionDepth);startupCommands.push_back(value);}
 void Emm_V5_Reset_Clog_Pro(uint8_t id){recordCommand(100+id);}
@@ -150,6 +152,10 @@ const char *ConfigureEmmMotor(uint8_t,uint8_t,uint8_t,bool){assert(false);return
 
 // 编译实际运行时代码和完整串口分发；仅替换硬件及 FreeRTOS 边界。
 #include "lidar_motion_actual.inc"
+static uint32_t batteryThreshold = 0;
+uint32_t BatteryVoltageMv() { return 22000; }
+uint32_t BatteryAlarmMv() { return batteryThreshold; }
+bool BatterySetAlarmMv(uint32_t value) { batteryThreshold = value; return true; }
 #include "serial_motion_actual.inc"
 
 void dispatch(const char *command) {
@@ -178,8 +184,8 @@ void positions() {
     dispatch("{CMD,CHASSIS,MOVE,0,0,1}");assert(!active&&cancels==1&&!roundProgress);
 }
 void maintenance() {
-    dispatch("{CMD,ARM,SERVO_PID_GET,2}");assert(pidId==255);
-    assert(Serial.text.find("UNSUPPORTED")!=std::string::npos);
+    dispatch("{CMD,ARM,SERVO_PID_GET,3}");assert(pidId==3);
+    assert(Serial.text.find("{RSP,ARM,SERVO_PID_GET,READBACK,3,")!=std::string::npos);
     dispatch("{CMD,ARM,SERVO_PID_GET,1}");assert(pidId==1);
     assert(Serial.text.find("{RSP,ARM,SERVO_PID_GET,READBACK,1,100,20,3,4,50,6,7}")!=std::string::npos);
     dispatch("{CMD,ARM,SERVO_PID_SET,1,200,30,5,6,70,8,9}");assert(pidId==1&&pidValues[0]==200&&pidValues[6]==9);
@@ -188,7 +194,7 @@ void maintenance() {
     assert(Serial.text.find("{RSP,ARM,SERVO_ZERO,READBACK,2,0.000,0.000}")!=std::string::npos);
 
     dispatch("{CMD,ARM,INIT_START}");assert(captured.kind==MotionKind::ARM_POSE&&active);
-    dispatch("{CMD,ARM,SERVO_PID_SET,2,1,2,3,4,5,6,7}");assert(pidValues[0]==200);
+    dispatch("{CMD,ARM,SERVO_PID_SET,3,1,2,3,4,5,6,7}");assert(pidId==1&&pidValues[0]==200);
     dispatch("{CMD,IMU,GET}");dispatch("{CMD,POSE,GET}");dispatch("{CMD,CFG,GET,7}");assert(active&&poseQueries==1&&configQueries==1);
     dispatch("{CMD,ARM,DEMO1}");assert(submissions==1&&Serial.text.find("ERR,BUSY")!=std::string::npos);
     dispatch("{CMD,NAV,STOP}");finish();
@@ -309,5 +315,37 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"trial"))trial();else if(!strcmp(argv[1],"boot"))boot();
     else if(!strcmp(argv[1],"axis-trial"))axisTrial();
     else if(!strcmp(argv[1],"startup"))startup();else if(!strcmp(argv[1],"zones"))zones();
-    else if(!strcmp(argv[1],"linear-zero"))linearZero();else assert(false);
+    else if(!strcmp(argv[1],"linear-zero"))linearZero();
+    else if(!strcmp(argv[1],"battery")){
+        active=true;
+        dispatch("{CMD,BAT,GET}");
+        assert(Serial.text=="{RSP,BAT,GET,OK,22000,0,0}\n");
+        Serial.text.clear();
+        dispatch("{CMD,BAT,SET,22100}");
+        assert(Serial.text=="{RSP,BAT,SET,OK,22000,22100,1}\n");
+        Serial.text.clear();
+        dispatch("{CMD,BAT,SET,22000}");
+        assert(Serial.text=="{RSP,BAT,SET,OK,22000,22000,0}\n");
+    }
+    else if(!strcmp(argv[1],"tray")){
+        serialDebugMode=true;
+        dispatch("{CMD,TRAY,ZERO}");
+        assert(originId==3&&Serial.text=="{RSP,TRAY,ZERO,READBACK,3,0.000,0.000}\n");
+        Serial.text.clear();
+        dispatch("{CMD,ARM,SERVO_PID_GET,3}");
+        assert(pidId==3&&Serial.text.find("{RSP,ARM,SERVO_PID_GET,READBACK,3,")==0);
+        Serial.text.clear();
+        dispatch("{CMD,ARM,SERVO_PID_SET,3,1,2,3,4,5,6,7}");
+        assert(pidId==3&&pidValues[0]==1&&pidValues[6]==7);
+        Serial.text.clear();
+        dispatch("{CMD,TRAY,ROTATE,260,900,450}");
+        assert(Serial.text=="{RSP,TRAY,ROTATE,ACK}\n"&&launches==1);
+        assert(captured.kind==MotionKind::TRAY_ROTATE&&captured.turret==260);
+        assert(captured.trayIntervalMs==900&&captured.trayPowerMw==450);
+    }
+    else if(!strcmp(argv[1],"reboot")){
+        active=true;
+        dispatch("{CMD,SYS,REBOOT}");
+        assert(restarted&&Serial.text=="{RSP,SYS,REBOOT,ACK}\n");
+    }else assert(false);
 }

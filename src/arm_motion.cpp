@@ -28,6 +28,10 @@ void wait(Program &p,const char *name,uint32_t ms){Step s;s.name=name;s.waitMs=m
  * @brief 追加载物台物料登记步骤；执行到这里才更新指定cargo的颜色。
  */
 void commit(Program &p,uint8_t cargo,uint8_t color){Step s;s.kind=StepKind::COMMIT;s.name="CARGO_COMMIT";s.cargo=cargo;s.color=color;p.append(s);}
+void rotateTray(Program &p,float angle,uint32_t interval=0,uint16_t power=0) {
+    Step s;s.kind=StepKind::TRAY_ROTATE;s.name="TRAY_ROTATE";
+    s.turret=angle;s.waitMs=interval;s.trayPowerMw=power;p.append(s);
+}
 /**
  * @brief 追加底盘相对位置动作，x/y为mm、theta为转角deg、speed为最大RPM。
  */
@@ -35,16 +39,17 @@ void position(Program &p,float x,float y,float theta,float speed){Step s;s.kind=
 /**
  * @brief 构建到工位上方的平移、稳定和转向步骤；angle可指定规划后的多圈转台角。
  */
-void above(Program &p,const MaterialStationPose &pose,float claw,const MaterialApproachDelays &d,const float *angle) {
+void above(Program &p,const MaterialStationPose &pose,float claw,const MaterialApproachDelays &d,const float *angle,uint8_t cargo=0) {
     arm(p,"APPROACH_TRANSLATE",materialTransferLayout.approachHeight,pose.length,-1,claw,materialMotionSteps.approachTranslateSpeed,d.translateMs);
     wait(p,"APPROACH_SETTLE",d.settleMs);
+    if(cargo)rotateTray(p,cargoTrayAngles[cargo-1]);
     rotateArm(p,"APPROACH_ROTATE",materialTransferLayout.approachHeight,pose.length,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,angle);
 }
 /**
  * @brief 构建到位、下降、夹紧、抬升及可选缩回的取料序列；retract和together选择缩回衔接方式。
  */
-void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelays &d,bool retract,bool together,const float *angle) {
-    above(p,pose,materialTransferLayout.clawOpenAngle,d.pickAbove,angle);
+void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelays &d,bool retract,bool together,const float *angle,uint8_t cargo=0) {
+    above(p,pose,materialTransferLayout.clawOpenAngle,d.pickAbove,angle,cargo);
     arm(p,"PICK_DESCEND",pose.high,-1,-1,-1,materialMotionSteps.pickDescendSpeed,d.pickDescendMs);
     arm(p,"PICK_GRIP",-1,-1,-1,materialTransferLayout.clawClosedAngle,materialMotionSteps.pickGripSpeed,d.pickGripMs,false,ARM_GRIP_HOLD_MS);
     arm(p,"PICK_LIFT",materialTransferLayout.approachHeight,together?0:-1,-1,-1,materialMotionSteps.pickLiftSpeed,d.pickLiftMs);
@@ -93,7 +98,7 @@ const char *transfer(const MotionRequest &r,Program &p) {
     for(uint8_t i=0;i<count;++i) {
         cargos[i]=single?r.cargo:r.kind==MotionKind::DEMO_RETRIEVE?3-i:i+1;
         works[i]=single?r.work:demo?i+1:r.positions[i];
-        const auto &cargo=materialTransferLayout.cargo[cargos[i]-1],&work=materialTransferLayout.workArea[works[i]-1];
+        const auto &cargo=materialTransferLayout.cargo,&work=materialTransferLayout.workArea[works[i]-1];
         if(retrieve&&cargoPlatforms[cargos[i]-1].material!=MATERIAL_NONE)return "OCCUPIED";
         if(!retrieve&&!demo&&!r.debug&&cargoPlatforms[cargos[i]-1].material==MATERIAL_NONE)return "EXECUTION";
         angles[2*i]=retrieve?work.turretAngle:cargo.turretAngle;
@@ -101,11 +106,12 @@ const char *transfer(const MotionRequest &r,Program &p) {
     }
     TurretPathPlan selected;if(!plan(angles,2*count,selected))return "EXECUTION";
     for(uint8_t i=0;i<count;++i) {
-        const auto &cargo=materialTransferLayout.cargo[cargos[i]-1],&work=materialTransferLayout.workArea[works[i]-1];
+        const auto &cargo=materialTransferLayout.cargo,&work=materialTransferLayout.workArea[works[i]-1];
         const auto &d=retrieve?workAreaToCargoDelays[works[i]-1][cargos[i]-1]:cargoToWorkAreaDelays[cargos[i]-1][works[i]-1];
         const auto &source=retrieve?work:cargo,&destination=retrieve?cargo:work;
         const float height=destination.high+(retrieve?0:(r.layer-1)*materialTransferLayout.secondLayerOffset);
-        pick(p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i]);
+        pick(p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i],retrieve?0:cargos[i]);
+        if(retrieve)rotateTray(p,cargoTrayAngles[cargos[i]-1]);
         place(p,destination,height,d,true,&selected.anglesDeg[2*i+1],!retrieve&&r.layer==1,retrieve?0:works[i]);
         if(!retrieve&&r.layer==2) {
             p.steps[p.count-1].stackLiftArrival=true;
@@ -127,7 +133,7 @@ void observation(Program &p,ArmObservation pose,uint8_t zone) {
     case ArmObservation::START:
         arm(p,"INIT_LIFT",160,-1,-1,0,300,0);
         p.steps[p.count-1].liftArrival=true;
-        rotateArm(p,"INIT_TURN",-1,-1,-55,-1,300);arm(p,"INIT_RETRACT",154,40,-1,0,300,500);break;
+        rotateArm(p,"INIT_TURN",-1,-1,-58,-1,300);arm(p,"INIT_RETRACT",154,40,-1,0,300,500);break;
     case ArmObservation::LOOK:
         arm(p,"LOOK_LIFT",170,0,-1,60,200,liftWait);rotateArm(p,"LOOK_TURN",-1,0,90,80,200);arm(p,"LOOK_READY",170,-1,-1,80,200);break;
     case ArmObservation::LOOK2:
@@ -169,7 +175,7 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         }
         for(uint8_t i=0;i<count;++i) {
             const uint8_t cargo=r.kind==MotionKind::LOAD_ROUND?i+1:r.cargo,color=r.kind==MotionKind::LOAD_ROUND?r.colors[i]:r.color;
-            const auto &destination=materialTransferLayout.cargo[cargo-1];
+            const auto &destination=materialTransferLayout.cargo;
             if(r.kind!=MotionKind::HELD_DISC) {
                 if(r.position>=1&&r.position<=3) {
                     const float length=r.position==2?0:150,angle=r.position==1?71:r.position==2?90:102;
@@ -187,6 +193,7 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
                 arm(p,"DISC_LIFT",materialTransferLayout.approachHeight,0,-1,-1,materialMotionSteps.discLiftSpeed,commonMaterialDelays.pickLiftMs);
             }
             // 圆盘抓后与工作区取回一样：抬升缩回，再转向，同时伸出下降；共用公共延时表。
+            rotateTray(p,cargoTrayAngles[cargo-1]);
             place(p,destination,destination.high,commonMaterialDelays,true,nullptr);
             if(r.kind!=MotionKind::HELD_DISC) {
                 p.steps[p.count-1].materialEvent="DISC_PICK";p.steps[p.count-1].materialPosition=r.position;
@@ -212,12 +219,13 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         break;
     case MotionKind::HOME_RETURN: {
         observation(p,ArmObservation::START,r.zone);
-        position(p,r.zone==1?-100:-70,r.zone==1?-180:200,0,200);break;
+        position(p,r.zone==1?-115:-70,r.zone==1?-175:200,0,200);break;
     }
     case MotionKind::POSITION: position(p,r.x,r.y,r.theta,r.speed);break;
     case MotionKind::GOTO: {Step s;s.kind=StepKind::GOTO;s.name="GOTO";s.high=r.x;s.length=r.y;s.turret=r.theta;p.append(s);break;}
     case MotionKind::ARM_RAW: arm(p,"ARM_RAW",r.high,r.length,r.turret,r.pawl,r.speed,0,r.planned);break;
     case MotionKind::SERVO_RAW: {Step s;s.kind=StepKind::RAW_SERVO;s.name="SERVO";s.cargo=r.cargo;s.turret=r.turret;p.append(s);break;}
+    case MotionKind::TRAY_ROTATE: rotateTray(p,r.turret,r.trayIntervalMs,r.trayPowerMw);break;
     case MotionKind::ENABLE: {Step s;s.kind=StepKind::ENABLE;s.name="ENABLE";s.cargo=r.force;p.append(s);break;}
     case MotionKind::VELOCITY: {Step s;s.kind=StepKind::VELOCITY;s.name="VELOCITY";s.cargo=r.position;s.speed=r.speed;s.color=r.force;p.append(s);break;}
     default: break;

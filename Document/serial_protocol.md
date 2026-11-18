@@ -13,6 +13,8 @@
 
 ## 2. 命令总表与旧版迁移对照
 
+电池监测支持 `{CMD,BAT,GET}` 和 `{CMD,BAT,SET,报警毫伏}`，回复 `{RSP,BAT,GET|SET,OK,当前毫伏,报警毫伏,低压报警}`，报警状态为 0 或 1。阈值写入主控 NVS，0 表示关闭报警。低于阈值时 GPIO9 持续高电平驱动有源蜂鸣器；电压达到阈值时停止鸣响。测量点是 5 V 降压前的 BAT_5V，由 GPIO10 读取经 100 kΩ / 10 kΩ 分压的电压。读取和设置在运动中均可使用。
+
 Debug空闲时按BOOT0（GPIO0，低电平）等效执行 `{CMD,SYS,RELEASE}`，使用相同回复及自动开局流程；40 ms消抖，长按只触发一次，上电按住需先松开。串口动作执行或半帧接收期间按下不会排队，Release中不重复创建自动任务。切换后仍需选区及发送SYS START。
 
 下表中的参数顺序就是实际发送顺序。`两者` 指 Debug 与 Release；`Debug` 指上电调试模式。错误通常为 `{RSP,类别,动作,ERR,原因}`。下表未标为 Release 的 Debug 动作在 Release 中回复 `MODE`，不会执行。
@@ -27,6 +29,9 @@ Debug空闲时按BOOT0（GPIO0，低电平）等效执行 `{CMD,SYS,RELEASE}`，
 | `{ready}` | `{CMD,SYS,READY}` | Release | `{RSP,SYS,READY,OK}` |
 | `{start}` | `{CMD,SYS,START}` | Release | `{RSP,SYS,START,OK}`；上位机“姿态 → 启动位置 → 雷达扫描完成（继续运行）”可代发，解除 `WAIT START` 等待并进入扫码行驶 |
 | `{help}` | `{CMD,SYS,HELP}` | 两者 | `{RSP,SYS,HELP,OK}`；帮助文字参见本文件 |
+| 无 | `{CMD,SYS,REBOOT}` | 两者（运动忙时也受理） | `{RSP,SYS,REBOOT,ACK}`，随后重启主控 |
+| 旋转料盘 | `{CMD,TRAY,ROTATE,角度,时长ms,功率mW}` | Debug | 先回 `{RSP,TRAY,ROTATE,ACK}`，绝对多圈角度到位后回 `{EVT,TRAY,ROTATE,DONE}`，作业失败或取消时回 `{EVT,TRAY,ROTATE,FAILED}`。时长 0 为尽快到达，功率 0 使用舵机默认值 |
+| 旋转料盘 | `{CMD,TRAY,ZERO}` | Debug | 将总线舵机 3 的当前位置设为料盘零点，回 `{RSP,TRAY,ZERO,READBACK,3,单圈角度,多圈角度}` |
 | `{StartZone:1}` / `:2` | `{CMD,NAV,START_ZONE,1}` / `2` | 两者 | `{RSP,NAV,START_ZONE,OK,1}` / `2` |
 | `{way:0-1-8}` | `{CMD,NAV,ROUTE,0,1,8}` | 两者 | `{RSP,NAV,ROUTE,ACK,3}`，随后路径事件 |
 | 无 | `{CMD,NAV,STOP}` | 两者 | `{RSP,NAV,STOP,ACK}`，请求取消当前节点导航/试跑，等待RESULT或终态确认停车 |
@@ -348,7 +353,9 @@ SERVO_ZERO补充（仅华馨京舵机，逻辑ID 2转盘不适用）：按厂商
 
 ## 转盘张大头电机
 
-转盘与底盘共用Serial1，115200bps，主控TX=17、RX=18。转盘物理地址为7，16细分（3200脉冲/圈），传动比1:1；配置常量在`src/turret_motor.h`。
+机械臂转台是 EMM 地址 7，旋转料盘是总线舵机地址 3。旧 `ARM SERVO` 和 `ARM SERVO_ZERO` 的逻辑轴 2 仍指机械臂转台。料盘旋转和设零分别使用 `TRAY ROTATE` 和 `TRAY ZERO`。`ARM SERVO_PID_GET/SET` 按实际舵机地址访问，1 对应夹爪，3 对应旋转料盘。
+
+转盘与底盘共用Serial1，115200bps，主控TX=GPIO16、RX=GPIO15。转盘物理地址为7，16细分（3200脉冲/圈），传动比1:1；配置常量在`src/turret_motor.h`。
 
 原机械臂角度命令、路径规划与线缆范围-150～360度保持使用。`{CMD,ARM,SERVO,2,角度}`中的2是兼容上位机的逻辑轴号，实际发送7号张大头绝对位置指令，不再发送2号华馨京舵机指令。正角度对应电机CCW（与原舵机一致）；转盘通过0x43系统状态同步读取单圈编码器和累计位置，按保存的机械零位换算，保留符号与圈数。`POSE GET`转盘回读失败返回`{RSP,POSE,GET,ERR,MOTOR_READ,7}`。
 
@@ -403,11 +410,10 @@ SERVO_ZERO补充（仅华馨京舵机，逻辑ID 2转盘不适用）：按厂商
 
 转盘位置发令不再读写或自动放大 PID。此前的 Kd×1.5 候选逻辑已移除，旧 NVS 的 `turret/pid_base` 不再使用，机械零点存储不受影响。驱动器当前 PID 由 EMM 参数页显式读写；固件更新本身不会把电机 RAM 中已生效的旧 PID 恢复为原值。
 
-后台每50ms读取同一0x43帧的绝对角、转速和电机标志，输出：
+普通转台动作仍在后台每 50 ms 从同一 0x43 帧读取绝对角、转速和电机标志，串口只输出指令和结果。逐点 `TURRET,SAMPLE` 由 EMM 往返试验输出。
 
 ```text
 {EVT,TURRET,COMMAND,转动号,毫秒,目标角,起始角,RPM,加速度档位}
-{EVT,TURRET,SAMPLE,转动号,毫秒,目标角,实测角,有符号RPM,电机标志,采样最大过冲角}
 {EVT,TURRET,RESULT,转动号,耗时毫秒,状态,目标角,最近实测角,采样最大过冲角}
 ```
 

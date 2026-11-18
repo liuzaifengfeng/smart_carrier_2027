@@ -11,6 +11,8 @@ class Hardware : public node_position::IO {
     uint32_t version;bool (*cancel)();
     bool warned=false,referenceLost=false;
     const char *motionSpan=nullptr;
+    const char *reportedStage=nullptr;
+    uint32_t lastPositionReport=0;
     const char *reply(uint8_t id,uint8_t fn,EmmReply &out) {
         EmmFeedbackParser parser;uint32_t start=millis();
         bool commandError=false;
@@ -50,7 +52,9 @@ class Hardware : public node_position::IO {
     void drain(){for(int i=0;i<512&&Serial1.available();++i)Serial1.read();}
 public:
     Hardware(uint32_t v,bool (*c)()):version(v),cancel(c){}
-    void configure(uint32_t v,bool (*c)()){version=v;cancel=c;warned=referenceLost=false;motionSpan=nullptr;}
+    void configure(uint32_t v,bool (*c)()){
+        version=v;cancel=c;warned=referenceLost=false;motionSpan=nullptr;reportedStage=nullptr;
+    }
     uint32_t now()override{return millis();}
     void wait(uint32_t ms)override{vTaskDelay(pdMS_TO_TICKS(ms));}
     bool cancelled()override{return taskMotionAborted||(cancel&&cancel());}
@@ -198,8 +202,16 @@ public:
         if(motionSpan){Serial.printf("{EVT,MOTION,SPAN,%lu,%lu,%s,END}\n",static_cast<unsigned long>(CurrentMotionId()),static_cast<unsigned long>(millis()),motionSpan);motionSpan=nullptr;}
     }
     void report(const char *stage,const node_position::Result &r,float reference)override {
-        Serial.printf("{EVT,NAV,ROUTE_PHASE,0,%s}\n",stage);
-        Serial.printf("{EVT,NAV,ROUTE_POSITION,%.2f,%.2f,%.2f,%.3f,%.3f}\n",r.s,r.estimated.x,r.estimated.y,reference,r.heading);
+        const uint32_t now=millis();
+        const bool changed=!reportedStage||strcmp(reportedStage,stage)!=0;
+        if(changed) {
+            reportedStage=stage;
+            Serial.printf("{EVT,NAV,ROUTE_PHASE,0,%s}\n",stage);
+        }
+        if(changed||now-lastPositionReport>=1000) {
+            lastPositionReport=now;
+            Serial.printf("{EVT,NAV,ROUTE_POSITION,%.2f,%.2f,%.2f,%.3f,%.3f}\n",r.s,r.estimated.x,r.estimated.y,reference,r.heading);
+        }
     }
     void headingStable(float heading)override {
         Serial.printf("{EVT,NAV,ROUTE_IMU_STABLE,%lu,%lu,3,%.3f}\n",
@@ -227,12 +239,13 @@ public:
             static_cast<unsigned long>(millis()),residual,
             m[0].flags,m[0].rpm,m[1].flags,m[1].rpm,m[2].flags,m[2].rpm,m[3].flags,m[3].rpm);
     }
-    /** @brief 记录停转后完整检查耗时、额外等待及四轮转速/有符号位置残差；各轮依次采样。 */
+    /** @brief 记录最终到位时的检查耗时、额外等待及四轮残差。 */
     void arrivalComparison(uint8_t representative,uint32_t readMs,uint32_t waitMs,
         bool arrived,bool rotating,const float (&residual)[4],const node_position::Motor (&m)[4])override {
-        Serial.printf("{EVT,NAV,ROUTE_CHECK,%lu,%lu,%u,%lu,%lu,%s,%s,%d,%.3f,%d,%.3f,%d,%.3f,%d,%.3f}\n",
+        if(!arrived)return;
+        Serial.printf("{EVT,NAV,ROUTE_CHECK,%lu,%lu,%u,%lu,%lu,PASS,%s,%d,%.3f,%d,%.3f,%d,%.3f,%d,%.3f}\n",
             static_cast<unsigned long>(CurrentMotionId()),static_cast<unsigned long>(millis()),representative,
-            static_cast<unsigned long>(readMs),static_cast<unsigned long>(waitMs),arrived?"PASS":"WAIT",rotating?"deg":"mm",
+            static_cast<unsigned long>(readMs),static_cast<unsigned long>(waitMs),rotating?"deg":"mm",
             m[0].rpm,residual[0],m[1].rpm,residual[1],m[2].rpm,residual[2],m[3].rpm,residual[3]);
     }
 };

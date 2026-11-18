@@ -79,15 +79,24 @@ def summarize(events):
 
     # 作业各自的墙钟耗时可相互重叠，不能把它们相加作为比赛耗时。
     jobs = []
+    intervals = []
     for event in events:
         if event.kind == "RESULT" and event.job != "0":
             duration = int(event.fields[1])
             if duration < 0 or duration > event.time:
                 raise ValueError("作业耗时无效；日志需来自同一次开机且 millis 未回绕")
-            jobs.append((event.time - duration, event.time))
+            begin = event.time - duration
+            finish = event.time
+            if start is not None:
+                begin = max(begin, start)
+            if end is not None:
+                finish = min(finish, end)
+            if finish >= begin:
+                jobs.append((begin, finish))
+                intervals.append(("RESULT", event.fields[0], event.job, begin, finish))
     serial = sum(finish - begin for begin, finish in jobs)
     wall = union_ms(jobs)
-    opened, components, unfinished = {}, {}, []
+    opened, components, unfinished, unmatched_ends = {}, {}, [], []
     for event in events:
         if event.kind not in ("SPAN", "STEP"):
             continue
@@ -107,12 +116,16 @@ def summarize(events):
                 finish = min(finish, end)
             if finish >= begin:
                 components.setdefault(name, []).append((begin, finish))
+                intervals.append((event.kind, name, event.job, begin, finish))
+        elif edge == "END":
+            unmatched_ends.append((event.job, name, event.time))
     unfinished.extend((key[1], key[2], begin) for key, begin in opened.items())
     component_rows = [(name, len(intervals), sum(b-a for a, b in intervals), union_ms(intervals))
                       for name, intervals in sorted(components.items())]
     return dict(status=status, total_ms=total, phases=rows, jobs=len(jobs),
                 job_sum_ms=serial, job_wall_ms=wall, job_overlap_ms=serial - wall,
-                components=component_rows, unfinished=unfinished)
+                components=component_rows, unfinished=unfinished, unmatched_ends=unmatched_ends,
+                intervals=intervals)
 
 
 def render(report):

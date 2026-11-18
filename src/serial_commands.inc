@@ -76,9 +76,10 @@ static void serialCfgError(const SerialFrame &frame, const char *reason) {
 static bool serialKnownAction(const SerialFrame &frame) {
     static const char *const names[][2] = {
         {"SYS", "HELLO"}, {"SYS", "RELEASE"}, {"SYS", "READY"},
-        {"SYS", "START"}, {"SYS", "HELP"},
+        {"SYS", "START"}, {"SYS", "HELP"}, {"SYS", "REBOOT"},
         {"MOTION", "STATUS"},
         {"EMM", "AXIS_TRIAL"},
+        {"TRAY", "ROTATE"}, {"TRAY", "ZERO"},
         {"TASK", "SET"},
         {"LED", "SET"}, {"LED", "GET"}, {"LED", "FREQ"},
         {"NAV", "START_ZONE"}, {"NAV", "ROUTE"}, {"NAV", "STOP"},
@@ -396,6 +397,27 @@ static void serialRetrieve(const SerialFrame &frame) {
  * @brief 串口业务总分发入口：按类别和动作处理系统、视觉、底盘、机械臂及参数请求。
  */
 static void serialDispatch(const SerialFrame &frame) {
+    if (frame.is("SYS", "REBOOT", 0)) {
+        serialReply(frame, "ACK");
+        Serial.flush();
+        ESP.restart();
+        return;
+    }
+    if (frame.starts("BAT", "GET") || frame.starts("BAT", "SET")) {
+        if (frame.is("BAT", "SET", 1)) {
+            uint32_t alarm = 0;
+            if (!serialUInt(frame.fields[3], alarm, UINT32_MAX)) { serialError(frame, "RANGE"); return; }
+            if (!BatterySetAlarmMv(alarm)) { serialError(frame, "STORAGE"); return; }
+        } else if (!frame.is("BAT", "GET", 0)) {
+            serialError(frame, "FORMAT");
+            return;
+        }
+        const auto voltage = BatteryVoltageMv();
+        const auto alarm = BatteryAlarmMv();
+        Serial.printf("{RSP,BAT,%s,OK,%lu,%lu,%u}\n", frame.fields[2],
+            static_cast<unsigned long>(voltage), static_cast<unsigned long>(alarm), voltage < alarm ? 1u : 0u);
+        return;
+    }
     const bool motionStop=frame.is("CHASSIS","MOVE",3)&&strcmp(frame.fields[5],"1")==0;
     if(motionStop) {
         uint32_t direction=0,stop=0;float speed=0;
@@ -779,8 +801,6 @@ static void serialDispatch(const SerialFrame &frame) {
         if(!serialDebugMode){serialError(frame,"MODE");return;}
         uint32_t id=0;
         if(!serialUInt(frame.fields[3],id,253)){serialError(frame,"RANGE");return;}
-        // 旧协议中的逻辑轴2仍代表转盘；该轴已不使用华馨京舵机PID。
-        if(id==2){serialError(frame,"UNSUPPORTED");return;}
         uint16_t values[7];
         if(strcmp(frame.fields[2],"SERVO_PID_SET")==0) {
             for(uint8_t i=0;i<7;++i){uint32_t value=0;
@@ -792,11 +812,12 @@ static void serialDispatch(const SerialFrame &frame) {
         if(!Servo_ReadPid(id,values)){serialError(frame,"SERVO_READ");return;}
         Serial.printf("{RSP,ARM,%s,READBACK,%u,%u,%u,%u,%u,%u,%u,%u}\n",frame.fields[2],
             static_cast<unsigned>(id),values[0],values[1],values[2],values[3],values[4],values[5],values[6]);
-    } else if (frame.is("ARM", "SERVO_ZERO", 1)) {
+    } else if (frame.is("ARM", "SERVO_ZERO", 1) || frame.is("TRAY", "ZERO", 0)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
-        uint32_t id=0;
-        if(!serialUInt(frame.fields[3],id,253)){serialError(frame,"RANGE");return;}
-        if(id==5||id==6) {
+        const bool tray=frame.is("TRAY","ZERO",0);
+        uint32_t id=SERVO_ID_CARGO_TRAY;
+        if(!tray&&!serialUInt(frame.fields[3],id,253)){serialError(frame,"RANGE");return;}
+        if(!tray&&(id==5||id==6)) {
             MotorBusGuard transaction;
             if(ZeroMotorEncoderPosition(id)){serialError(frame,"MOTOR_WRITE");return;}
             int64_t position=0;
@@ -808,7 +829,7 @@ static void serialDispatch(const SerialFrame &frame) {
             Serial.printf("{RSP,ARM,SERVO_ZERO,READBACK,%u,%.3f,%.3f}\n",static_cast<unsigned>(id),measured,measured);
             return;
         }
-        if(id==2) {
+        if(!tray&&id==2) { // ARM 旧逻辑轴 2 对应 EMM 7，和总线舵机地址无关。
             float angle=0;
             if(!TurretMotorSetZero(angle)){serialError(frame,"MOTOR_READ");return;}
             currentArm.turret_angle=angle;
@@ -820,8 +841,8 @@ static void serialDispatch(const SerialFrame &frame) {
         if(!Servo_QueryAngle(id,single,100)||!Servo_QueryAngleMTurn(id,multi,100)){
             serialError(frame,"SERVO_READ");return;
         }
-        if(id==1)currentArm.pawl_angle=multi;
-        Serial.printf("{RSP,ARM,SERVO_ZERO,READBACK,%u,%.3f,%.3f}\n",static_cast<unsigned>(id),single,multi);
+        if(id==SERVO_ID_CLAW)currentArm.pawl_angle=multi;
+        Serial.printf("{RSP,%s,%s,READBACK,%u,%.3f,%.3f}\n",frame.fields[1],frame.fields[2],static_cast<unsigned>(id),single,multi);
     } else if (frame.is("ARM", "SERVO", 2)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         uint32_t id = 0;
@@ -833,9 +854,21 @@ static void serialDispatch(const SerialFrame &frame) {
                                 id == 2 ? TURRET_CABLE_MAX_DEG : 135.0f)) {
             serialError(frame, "RANGE"); return;
         }
+        // ARM SERVO 保留旧逻辑轴 2；料盘旋转通过 TRAY ROTATE。
         MotionRequest r;r.kind=id==2?MotionKind::ARM_RAW:MotionKind::SERVO_RAW;r.cargo=id;r.turret=angle;r.speed=150;
         const uint32_t motionId=serialPrepareMotion(frame,r);if(!motionId)return;
         Serial.printf("{RSP,ARM,SERVO,ACK,%u,%.3f}\n",static_cast<unsigned>(id),angle);LaunchMotion(motionId);
+    } else if (frame.is("TRAY", "ROTATE", 3)) {
+        if (!serialDebugMode) { serialError(frame, "MODE"); return; }
+        MotionRequest r;r.kind=MotionKind::TRAY_ROTATE;
+        uint32_t power=0;
+        if(!serialFloat(frame.fields[3],r.turret,-368640,368640)
+            ||!serialUInt(frame.fields[4],r.trayIntervalMs,UINT32_MAX)
+            ||!serialUInt(frame.fields[5],power,UINT16_MAX)) {
+            serialError(frame,"RANGE");return;
+        }
+        r.trayPowerMw=static_cast<uint16_t>(power);
+        serialMotion(frame,r);
     } else if (frame.is("ARM", "ENABLE", 1)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         uint32_t enabled = 0;

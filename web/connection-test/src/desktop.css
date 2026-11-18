@@ -1,0 +1,48 @@
+:root:has(.desktop) { color-scheme: light; background: #f0f0f0; color: #202830; font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; --muted:#59636e; --accent:#2468a0; --border:#adb5be; }
+.desktop { width: min(100% - 24px, 1600px); }
+.desktop h1 { font-size: 18px; margin: 8px 0 4px; }
+.desktop fieldset { border: 1px solid #aab2bb; border-radius: 3px; padding: 12px; margin: 8px 0 14px; min-width: 0; }
+.desktop legend { padding: 0 6px; font-size: 15px; }
+.desktop button { background: #f8f8f8; color: #202830; border-radius: 3px; margin: 4px 4px 4px 0; padding: 6px 12px; }
+.desktop button:hover:not(:disabled) { background: #e5f0fb; border-color: #3c7fb1; }
+.desktop input, .desktop select { background: white; color: #202830; border-radius: 2px; }
+.desktop input[type=checkbox] { display: inline; width: 20px; min-height: 20px; }
+.desktop label { margin: 5px 0; }
+.desktop .connection { margin: 4px 0 8px; padding: 4px 8px 6px; font-size: 14px; }
+.desktop .connection legend { font-size: 13px; }
+.desktop .connection .actions { gap: 4px 8px; }
+.desktop .connection .actions label { display: flex; align-items: center; margin: 0; }
+.desktop .connection input { width: 96px; }
+.desktop .connection button, .desktop .connection input { margin: 0; padding: 3px 8px; }
+.desktop .connection-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.desktop .connection-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+@media (pointer: fine) {
+  .desktop .connection button, .desktop .connection input { min-height: 30px; }
+}
+.desktop-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(440px, .95fr); gap: 16px; align-items: start; }
+.desktop .notebook { min-width: 0; border: 1px solid #aab2bb; }
+.desktop nav { display: flex; flex-wrap: wrap; background: #e5e7e9; padding: 4px; gap: 2px; }
+.desktop nav button { padding: 5px 8px; margin: 0; font-size: 14px; }
+.desktop nav button[aria-pressed=true] { background: white; border-bottom: 3px solid #3d83b4; }
+.desktop .tab-content { padding: 12px; max-height: 78vh; overflow: auto; }
+.desktop .table-wrap { overflow: auto; }
+.desktop table { border-collapse: collapse; width: 100%; background: white; font-size: 14px; }
+.desktop td, .desktop th { border: 1px solid #cbd1d8; padding: 5px; text-align: left; }
+.desktop td input { min-width: 90px; }
+.desktop small { display:block; color:#59636e; }
+.desktop .console { background: white; color: #202830; max-height: 55vh; }
+.desktop .error { color: #ab211c; }
+.desktop .last-response { overflow-wrap: anywhere; margin-top: 12px; border-top: 1px solid #adb5be; padding-top: 10px; }
+.desktop output { display: block; overflow-wrap: anywhere; }
+.desktop .map-target .actions label { flex: 1; min-width: 80px; }
+.desktop svg { width: 100%; background: white; }
+.desktop p { margin: 6px 0; }
+@media(max-width:850px) { .desktop-columns { grid-template-columns: 1fr; } .desktop .tab-content { max-height:none; } }

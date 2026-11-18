@@ -138,9 +138,7 @@ void TurretMotorPoll() {
         if(millis()-trace.started>=trace.durationMs)finishTrace("OBSERVED");
         return;
     }
-    Serial.printf("{EVT,TURRET,SAMPLE,%lu,%lu,%.3f,%.3f,%d,%u,%.3f}\n",(unsigned long)trace.id,
-        (unsigned long)millis(),trace.target,state.angle,state.rpm,state.flags,trace.overshoot);
-    // 仅结束后台记录，不参与动作放行；原有±5度放行及动作重叠保持不变。
+    // 普通动作只记录指令及结果，保留内部采样用于计算超调和判断稳定。
     if((state.flags&2)&&state.rpm==0&&fabsf(error)<=1.0f)++trace.stableSamples;
     else trace.stableSamples=0;
     if(trace.stableSamples==3)finishTrace("SETTLED");

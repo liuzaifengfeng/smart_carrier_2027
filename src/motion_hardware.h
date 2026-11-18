@@ -4,12 +4,14 @@
 class MotionHardware : public motion::SequenceIO {
     uint32_t job=0,turretStarted=0;
     float turretTarget=0; // 保存本次发令后实际选择的等效多圈目标。
+    bool trayMoving=false;
     bool (*cancel)()=nullptr;
 public:
     /**
      * @brief 绑定当前作业编号与取消回调，供步骤执行和日志记录使用。
      */
     void configure(uint32_t id,bool (*cancelled)()){job=id;cancel=cancelled;}
+    void stopTray();
     /**
      * @brief 读取系统毫秒计时。
      */

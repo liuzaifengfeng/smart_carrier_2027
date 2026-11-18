@@ -9,25 +9,23 @@
  * 硬件说明:
  *  - 型号: HA8-U25H-M (12-bit 磁编码高压总线舵机)
  *  - 通信方式: UART / TTL 半双工异步串行通信 (波特率默认 115200)
- *  - 默认引脚 (ESP32-S3): UART2 TX=15, RX=16
  *  - 接线说明: ESP32-S3 串口连接总线舵机转接板 (或半双工驱动电路)
  ******************************************************************************/
 
 // 默认串口引脚定义 (ESP32-S3 可在 Servo_Init 中自定义引脚)
 #ifndef SERVO_UART_TX_PIN
-#define SERVO_UART_TX_PIN 15
+#define SERVO_UART_TX_PIN 18
 #endif
 
 #ifndef SERVO_UART_RX_PIN
-#define SERVO_UART_RX_PIN 16
+#define SERVO_UART_RX_PIN 17
 #endif
 
 #define SERVO_UART_BAUDRATE 115200
 
 // 常用机械结构舵机 ID 宏定义 (可按实际硬件分配调整)
-#define SERVO_ID_ARM_BIG    1    // 大臂舵机
-#define SERVO_ID_ARM_FORE   2    // 夹臂舵机
-#define SERVO_ID_CLAW       3    // 夹爪舵机
+#define SERVO_ID_CLAW       1    // 夹爪舵机
+#define SERVO_ID_CARGO_TRAY 3    // 旋转载物料盘，与夹爪共用总线
 #define SERVO_ID_CYLINDER   5    // 料筒/料仓舵机
 #define SERVO_ID_BROADCAST  0xFE // 广播 ID (0xFE / 0xFF)
 
@@ -64,8 +62,8 @@
  * @brief 总线舵机模块初始化
  * @param serialPort 使用的 HardwareSerial (如 &Serial2)
  * @param baudrate 通信波特率 (默认 115200)
- * @param rxPin RX 引脚号 (默认 16)
- * @param txPin TX 引脚号 (默认 15)
+ * @param rxPin RX 引脚号 (默认 SERVO_UART_RX_PIN)
+ * @param txPin TX 引脚号 (默认 SERVO_UART_TX_PIN)
  */
 void Servo_Init(HardwareSerial *serialPort = &Serial2, uint32_t baudrate = SERVO_UART_BAUDRATE, int rxPin = SERVO_UART_RX_PIN, int txPin = SERVO_UART_TX_PIN);
 
@@ -160,5 +158,6 @@ void Servo_SetWheelMode(uint8_t servoId, float speed);
  * @param servoId 舵机 ID
  */
 void Servo_Stop(uint8_t servoId);
+void Servo_HoldPosition(uint8_t servoId);
 
 #endif // FASHIONSTAR_SERVO_H

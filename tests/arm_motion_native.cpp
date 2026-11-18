@@ -1,4 +1,5 @@
 #include "arm_motion.h"
+#include "servo.h"
 #include "material_transfer.h"
 #include "motion_executor.h"
 #include "disc_position_grab.h"
@@ -16,6 +17,10 @@ uint32_t ARM_FEEDBACK_ENABLED=0,ARM_GRIP_HOLD_MS=37,ARM_RELEASE_HOLD_MS=41;
 float MOTION_LOOK_LEAD_MM=0,MOTION_LOOK2_LEAD_MM=0;
 int armSpeed=500;
 bool angleAvailable=true;float measuredTurret=170;
+float measuredTray=0;
+void Servo_SetAngleMTurn(uint8_t id,float angle,uint32_t,uint16_t){assert(id==SERVO_ID_CARGO_TRAY);measuredTray=angle;}
+bool Servo_QueryAngleMTurn(uint8_t id,float &angle,uint32_t){assert(id==SERVO_ID_CARGO_TRAY);angle=measuredTray;return true;}
+void Servo_HoldPosition(uint8_t){}
 bool ReadArmTurretAngle(float &angle){angle=measuredTurret;return angleAvailable;}
 float LENGTH_PULSE=30.2f;
 const char *ReadMotorEncoderPosition(uint8_t,int64_t &position){position=0;return nullptr;}
@@ -51,7 +56,9 @@ void forward() {
         assert(cargoPlatforms[c-1].material==MATERIAL_BLUE); // 构建、提交不是搬运完成。
         const auto &delays=cargoToWorkAreaDelays[c-1][w-1];
         assert(p.steps[0].waitMs==delays.pickAbove.translateMs);
-        assert(near(p.steps[0].length,materialTransferLayout.cargo[c-1].length));
+        assert(near(p.steps[0].length,materialTransferLayout.cargo.length));
+        assert(p.steps[2].kind==motion::StepKind::TRAY_ROTATE&&p.steps[2].turret==cargoTrayAngles[c-1]);
+        assert(!strcmp(p.steps[3].name,"APPROACH_ROTATE"));
         bool release=false,retract=false;int commits=0,partialReleases=0,readbacks=0;
         for(size_t i=0;i<p.count;++i) {
             const auto &s=p.steps[i];
@@ -84,21 +91,25 @@ void reverse() {
         for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretAcceleration==TURRET_ACCELERATION_FAST&&!p.steps[i].slowLower);
         for(size_t i=0;i<p.count;++i)assert(strcmp(p.steps[i].name,"PLACE_RELEASE_ZERO")&&!p.steps[i].placementPosition);
         assert(p.steps[0].waitMs==workAreaToCargoDelays[w-1][c-1].pickAbove.translateMs);
-        bool lift=false;
+        bool lift=false,tray=false;
         for(size_t i=0;i<p.count;++i)if(!strcmp(p.steps[i].name,"PICK_LIFT")){assert(p.steps[i].length==0);lift=true;}
-        assert(lift&&p.steps[p.count-1].color==6&&p.steps[p.count-1].cargo==c);
+        for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::TRAY_ROTATE){
+            assert(p.steps[i].turret==cargoTrayAngles[c-1]&&!strcmp(p.steps[i-1].name,"PICK_LIFT"));
+            tray=true;
+        }
+        assert(lift&&tray&&p.steps[p.count-1].color==6&&p.steps[p.count-1].cargo==c);
         assert(cargoPlatforms[c-1].material==MATERIAL_NONE);
     }
 }
 void rounds() {
     MotionRequest r;r.kind=MotionKind::PLACE_ROUND;r.layer=2;
     const int positions[3]={3,1,2};for(int i=0;i<3;++i){r.positions[i]=positions[i];cargoPlatforms[i].material=MATERIAL_RED;}
-    motion::Program p;assert(!BuildArmProgram(r,p));assert(p.count==42);
+    motion::Program p;assert(!BuildArmProgram(r,p));assert(p.count==45);
     int commits=0;for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::COMMIT){++commits;assert(p.steps[i].cargo==commits);}
     assert(commits==3);
     for(uint8_t layer:{1,2}) {
         r.layer=layer;assert(!BuildArmProgram(r,p));
-        assert(p.count==(layer==1?48:42));
+        assert(p.count==(layer==1?51:45));
         for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretAcceleration==(layer==1?TURRET_ACCELERATION_SLOW:TURRET_ACCELERATION_FAST));
     }
     angleAvailable=false;assert(BuildArmProgram(r,p));
@@ -117,8 +128,9 @@ void discs() {
         const char *names[]={"PLACE_TRANSLATE_WAIT","PLACE_SETTLE","PLACE_ROTATE","PLACE_DESCEND","PLACE_RELEASE","PLACE_LIFT","CARGO_COMMIT"};
         const uint32_t waits[]={d.placeAbove.translateMs,d.placeAbove.settleMs,0,d.placeDescendMs,d.placeReleaseMs,d.placeLiftMs,0};
         for(size_t i=0;i<7;++i){assert(!strcmp(p.steps[start+i].name,names[i]));assert(p.steps[start+i].waitMs==waits[i]);}
-        const auto &lift=p.steps[start-1],&turn=p.steps[start+2],&down=p.steps[start+3];
-        const auto &target=materialTransferLayout.cargo[cargo-1];
+        const auto &lift=p.steps[start-2],&turn=p.steps[start+2],&down=p.steps[start+3];
+        const auto &target=materialTransferLayout.cargo;
+        assert(p.steps[start-1].kind==motion::StepKind::TRAY_ROTATE&&p.steps[start-1].turret==cargoTrayAngles[cargo-1]);
         assert(lift.high==165&&lift.length==0&&lift.turret==-1&&lift.pawl==-1&&lift.waitMs==d.pickLiftMs);
         assert(turn.high==-1&&turn.length==-1&&turn.pawl==-1&&near(turn.turret,target.turretAngle)&&!turn.planned);
         assert(near(down.high,target.high)&&near(down.length,target.length)&&down.turret==-1&&down.pawl==-1);
@@ -133,11 +145,11 @@ void discs() {
         checkTail(p,p.count-7,cargo);
         for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::ARM)assert(p.steps[i].turretAcceleration==TURRET_ACCELERATION_FAST&&!p.steps[i].slowLower);
         for(size_t i=0;i<p.count;++i)assert(!p.steps[i].placementPosition);
-        assert(p.steps[p.count-9].waitMs==d.pickGripMs&&p.steps[p.count-9].holdMs==37);
+        assert(p.steps[p.count-10].waitMs==d.pickGripMs&&p.steps[p.count-10].holdMs==37);
         if(pos>=1&&pos<=3) {
             const float angle=pos==1?71:pos==2?90:102,length=pos==2?0:150;
 
-            assert(p.count==10);
+            assert(p.count==11);
             assert(p.steps[0].high==80&&p.steps[0].pawl==80&&p.steps[1].high==80&&p.steps[1].pawl==-8);
             assert(p.steps[0].waitMs==(pos==3?400:500));
             for(int i=0;i<2;++i)assert(p.steps[i].turret==angle&&p.steps[i].length==length&&p.steps[i].speed==armSpeed);
@@ -146,21 +158,22 @@ void discs() {
             assert(p.steps[0].high==materialMotionSteps.discApproach.high);
             assert(p.steps[0].waitMs==materialAuxiliaryDelays.discApproachMs);
             assert(p.steps[2].speed==materialMotionSteps.discLiftSpeed);
-        } else assert(p.steps[p.count-8].speed==materialMotionSteps.pickLiftSpeed);
+        } else assert(p.steps[p.count-9].speed==materialMotionSteps.pickLiftSpeed);
         assert(cargoPlatforms[cargo-1].material==MATERIAL_NONE);
         r.kind=MotionKind::HELD_DISC;assert(!BuildArmProgram(r,p));
-        assert(p.count==8);checkTail(p,1,cargo);
+        assert(p.count==9);checkTail(p,2,cargo);
     }
     for(auto &cargo:cargoPlatforms)cargo.material=MATERIAL_NONE;
     MotionRequest load;load.kind=MotionKind::LOAD_ROUND;
     for(int i=0;i<3;++i)load.colors[i]=6;
-    motion::Program loaded;assert(!BuildArmProgram(load,loaded));assert(loaded.count==39);
-    for(int i=0;i<3;++i)checkTail(loaded,13*i+6,i+1);
+    motion::Program loaded;assert(!BuildArmProgram(load,loaded));assert(loaded.count==42);
+    for(int i=0;i<3;++i)checkTail(loaded,14*i+7,i+1);
     // 同步旧入口仍在当前工程中，核对它们与执行器使用相同的夹后衔接。
     for(uint8_t cargo=1;cargo<=3;++cargo)for(int mode=0;mode<3;++mode) {
         cargoPlatforms[cargo-1].material=MATERIAL_NONE;issuedArm.clear();armWaits.clear();
         assert(mode==0?MoveDiscToCargo(6,cargo):mode==1?GrabDiscMaterial(6,cargo):PlaceHeldDiscMaterialToCargo(6,cargo));
-        const auto &target=materialTransferLayout.cargo[cargo-1];
+        const auto &target=materialTransferLayout.cargo;
+        assert(measuredTray==cargoTrayAngles[cargo-1]);
         const size_t start=issuedArm.size()-5;
         assert(issuedArm[start].high==165&&issuedArm[start].length==0&&issuedArm[start].turret==-1&&issuedArm[start].pawl==-1);
         assert(issuedArm[start+1].high==-1&&issuedArm[start+1].length==-1&&near(issuedArm[start+1].turret,target.turretAngle));

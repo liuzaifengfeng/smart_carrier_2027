@@ -4,12 +4,13 @@
 #include <stddef.h>
 
 namespace motion {
-enum class StepKind : uint8_t { ARM, WAIT, TURRET_READY, POSITION, GOTO, COMMIT, RAW_SERVO, ENABLE, VELOCITY };
+enum class StepKind : uint8_t { ARM, WAIT, TURRET_READY, POSITION, GOTO, COMMIT, RAW_SERVO, ENABLE, VELOCITY, TRAY_ROTATE };
 struct Step {
     StepKind kind=StepKind::WAIT;
     const char *name="WAIT";
     float high=-1,length=-1,turret=-1,pawl=-1,speed=0;
     uint32_t waitMs=0,holdMs=0;
+    uint16_t trayPowerMw=0;
     uint8_t cargo=0,color=0;
     const char *materialEvent=nullptr;
     uint8_t materialPosition=0;
@@ -23,7 +24,7 @@ struct Step {
     uint8_t turretAcceleration=TURRET_ACCELERATION_FAST; // 张大头原生加速度档位，由动作阶段指定。
 };
 struct Program {
-    // 整组三件第一层放料最多48步；静态存储，运行中不申请堆内存。
+    // 静态存储，运行中不申请堆内存。
     static constexpr size_t CAPACITY=64;
     Step steps[CAPACITY];
     size_t count=0;

@@ -6,7 +6,7 @@ constexpr bool MOTOR_STALL_CHECK_ENABLED=false; // 临时禁用所有底盘电�
 constexpr float PULSES_PER_REV=3200; // 要求底盘驱动配置为16细分，实车验收时核对
 constexpr double STRAIGHT_ARRIVAL_ENCODER_TOLERANCE=5000; // 每轮65536单位/圈坐标中的允许误差
 constexpr float MIDDLE_HEADING_KP=4; // 中间直行航向比例增益：偏差1度给4度/秒修正，再叠加原积分和阻尼。
-constexpr float MIDDLE_LATERAL_KP=2; // 横向位置比例增益(1/s)：偏离10mm时给20mm/s平移修正。
+constexpr float MIDDLE_LATERAL_KP=3; // 横向位置比例增益(1/s)：偏离10mm时给30mm/s平移修正。
 struct Settings {
     float speedMmS=2000,accelMmS2=2000,turnDegS=200,turnAccelDegS2=400,headingDeadbandDeg=1;
     float middleSpeedMmS=2000,middleAccelMmS2=2000;

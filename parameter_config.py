@@ -43,11 +43,15 @@ def load_config(path):
 def config_edits(data, parameters):
     """全量校验后返回编辑；范围以连接设备的固件回读值为准。"""
     by_name = {p.name: p for p in parameters.values()}
+    obsolete_poses = {
+        f"搬运/载物台{i}/{field}" for i in range(1, 4)
+        for field in ("高度(mm)", "伸出(mm)", "转台(deg)")
+    } if "搬运/待操作区/高度(mm)" in by_name else set()
     edits = {}
     for group in data["groups"].values():
         for name, entry in group["parameters"].items():
             # 旧 JSON 中的地图坐标不再导入，节点默认坐标由固件源码维护。
-            if name.startswith("地图/"):
+            if name.startswith("地图/") or name in obsolete_poses:
                 continue
             if name not in by_name:
                 raise ValueError(f"当前固件不支持参数：{name}")

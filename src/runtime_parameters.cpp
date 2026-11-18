@@ -117,10 +117,11 @@ void initialize() {
     if (initialized) return;
     initialized = true;
     registerPose("搬运/圆盘", materialTransferLayout.disc);
+    registerPose("搬运/待操作区", materialTransferLayout.cargo);
     for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
         char name[64];
-        snprintf(name, sizeof(name), "搬运/载物台%u", i + 1);
-        registerPose(name, materialTransferLayout.cargo[i]);
+        snprintf(name, sizeof(name), "搬运/旋转料盘%u/角度(deg)", i + 1);
+        RegisterRuntimeFloat(name, cargoTrayAngles[i], -368640, 368640);
         snprintf(name, sizeof(name), "搬运/工作区%u", i + 1);
         registerPose(name, materialTransferLayout.workArea[i]);
     }

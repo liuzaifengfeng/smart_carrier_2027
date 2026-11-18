@@ -4,12 +4,17 @@
 #include "chassis.h"
 #include "material_transfer.h"
 #include "arm_placement_log.h"
+#include "servo.h"
 #include <assert.h>
 #include <string.h>
 
 NativeSerial Serial;
 uint32_t clockMs=0;bool stop=false,servoAvailable=true;
 float turretMeasured=0,clawMeasured=0;
+float trayMeasured=0,trayTarget=0;
+uint32_t trayInterval=0;
+uint16_t trayPower=0;
+bool trayHeld=false;
 uint8_t flags=3;
 bool motorAtTarget=true;
 bool customMotor=false;
@@ -30,11 +35,18 @@ bool BeginPositionMove(float,float,float,float){++issued;return true;}
 void TickPositionMove(){}
 bool PositionMoveActive(){return false;}
 void GotoPose(float,float,float,bool){++issued;}
+bool updateDisplay(const char *,const char *,const char *){return true;}
 void Servo_SetAngle(uint8_t,float,uint16_t,uint16_t){++issued;}
+void Servo_SetAngleMTurn(uint8_t id,float angle,uint32_t interval,uint16_t power){
+    assert(id==SERVO_ID_CARGO_TRAY);trayTarget=angle;trayInterval=interval;trayPower=power;
+}
+void Servo_HoldPosition(uint8_t id){assert(id==SERVO_ID_CARGO_TRAY);trayHeld=true;}
 void Emm_V5_En_Control_all(bool){++issued;}
 void MovePose(int,float,bool){++issued;}
 bool ReadArmTurretAngle(float &angle){angle=turretMeasured;return servoAvailable;}
-bool Servo_QueryAngleMTurn(uint8_t id,float &angle,uint32_t){angle=id==2?turretMeasured:clawMeasured;return servoAvailable;}
+bool Servo_QueryAngleMTurn(uint8_t id,float &angle,uint32_t){
+    angle=id==SERVO_ID_CARGO_TRAY?trayMeasured:id==2?turretMeasured:clawMeasured;return servoAvailable;
+}
 const char *ReadMotorFeedback(uint8_t id,node_position::Motor &state) {
     if(customMotor){assert(id==5);state.flags=flags;state.position=customPosition;return motorError;}
     state.flags=flags;
@@ -46,6 +58,20 @@ const char *ReadMotorEncoderPosition(uint8_t id,int64_t &position) {
     assert(id==6);++placementReads;position=customPosition;return motorError;
 }
 #include "motion_hardware_actual.inc"
+void trayArrival() {
+    MotionHardware hardware;hardware.configure(22,cancelled);
+    motion::Step s;s.kind=motion::StepKind::TRAY_ROTATE;s.turret=260;s.waitMs=900;s.trayPowerMw=450;
+    assert(!hardware.issue(s)&&hardware.feedback(s));
+    assert(trayTarget==260&&trayInterval==900&&trayPower==450);
+    bool done=false;trayMeasured=-100;
+    assert(!hardware.ready(s,done)&&!done);
+    trayMeasured=259.5f;
+    assert(!hardware.ready(s,done)&&done);
+    hardware.stopTray();assert(!trayHeld);
+    assert(!hardware.issue(s));servoAvailable=false;
+    assert(hardware.ready(s,done)&&!done);
+    hardware.stopTray();assert(trayHeld);
+}
 void look3() {
     MotionHardware hardware;hardware.configure(1,cancelled);
     motion::Step s;s.kind=motion::StepKind::TURRET_READY;s.turret=90;s.waitMs=1500;
@@ -134,5 +160,5 @@ void placement() {
     hardware.event(1,s,false);assert(placementReads==2);
 }
 int main(int argc,char **argv) {
-    assert(argc==2);if(!strcmp(argv[1],"look3"))look3();else if(!strcmp(argv[1],"feedback"))feedback();else if(!strcmp(argv[1],"turret"))turretArrival();else if(!strcmp(argv[1],"lift"))liftArrival();else if(!strcmp(argv[1],"placement"))placement();else assert(false);
+    assert(argc==2);if(!strcmp(argv[1],"look3"))look3();else if(!strcmp(argv[1],"feedback"))feedback();else if(!strcmp(argv[1],"turret"))turretArrival();else if(!strcmp(argv[1],"lift"))liftArrival();else if(!strcmp(argv[1],"placement"))placement();else if(!strcmp(argv[1],"tray"))trayArrival();else assert(false);
 }

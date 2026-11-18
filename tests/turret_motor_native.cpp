@@ -102,6 +102,7 @@ int main(){
     clockMs+=50;TurretMotorPoll();clockMs+=50;TurretMotorPoll();
     assert(!TurretMotorTracking()&&moves==commandsBeforeTrace);
     assert(Serial.text.find("SETTLED")!=std::string::npos);
+    assert(Serial.text.find("{EVT,TURRET,SAMPLE,")==std::string::npos);
     // PID写入接口不可用不应阻断位置运动，也不自动覆盖手动参数。
     pidWriteAvailable=false;assert(TurretMotorMove(90,TURRET_ACCELERATION_FAST)&&driverPid[2]==20000&&pidWrites==0);
     TurretMotorCancelTrace();assert(!TurretMotorTracking());
@@ -113,6 +114,7 @@ int main(){
     assert(trace.stableSamples==0); // 即使到位也必须继续观察，不能提前结束。
     clockMs+=100;TurretMotorPoll();assert(!TurretMotorTracking());
     assert(Serial.text.find("OBSERVED")!=std::string::npos);
+    assert(Serial.text.find("{EVT,TURRET,SAMPLE,")!=std::string::npos);
     assert(driverPid[2]==20000&&pidWrites==0);
     // 官方0x43示例帧：单圈编码器与累计位置来自同一回复，位置为-65536。
     EmmFeedbackParser parser;EmmReply reply;

@@ -344,6 +344,7 @@ def parameter_matches_stage(name: str, stage: str) -> bool:
     common = name.startswith(("搬运/安全高度", "搬运/速度", "搬运/夹爪",
                               "搬运/等待时间", "标定/升降", "标定/伸缩"))
     pid = name.startswith("PID/")
+    tray = name.startswith(("搬运/待操作区/", "搬运/旋转料盘"))
     if stage == "机械臂公共参数":
         return common
     if stage == "底盘导航与标定":
@@ -351,13 +352,13 @@ def parameter_matches_stage(name: str, stage: str) -> bool:
     if stage == "开局与扫码":
         return name.startswith(("地图/节点0/", "地图/节点2/", "底盘/", "标定/X", "标定/Y", "标定/旋转"))
     if stage == "圆盘抓取（两轮）":
-        return (common or pid or name.startswith(("搬运/圆盘/", "搬运/圆盘预抓/", "搬运/圆盘提起/", "搬运/载物台", "对齐/DISC/",
+        return (common or pid or tray or name.startswith(("搬运/圆盘/", "搬运/圆盘预抓/", "搬运/圆盘提起/", "搬运/载物台", "对齐/DISC/",
                        "对齐/DISC_MATERIAL/", "地图/节点14/"))
                 or name in ("对齐/最大轮速(RPM)", "底盘/节点导航速度(mm/s)"))
     if stage in ("粗加工（两轮）", "暂存第一层", "暂存第二层"):
         mode = "WORK_AREA_LOADED" if stage == "暂存第二层" else "WORK_AREA"
         node = "10" if stage == "粗加工（两轮）" else "22"
-        return (common or pid or name.startswith(("搬运/载物台", "搬运/工作区",
+        return (common or pid or tray or name.startswith(("搬运/载物台", "搬运/工作区",
                        f"对齐/{mode}/", f"地图/节点{node}/"))
                 or name in ("对齐/最大轮速(RPM)", "底盘/节点导航速度(mm/s)")
                 or (stage == "暂存第二层" and name == "搬运/二层高度增量(mm)"))
@@ -1499,7 +1500,7 @@ COMMAND_FIELDS = {
     "MoveArm_1": (("大臂高度", "-1"), ("伸缩距离", "-1"), ("速度", "80")),
     "MoveArm_2": (("舵盘角度", "-1"), ("夹爪角度", "-1"), ("速度", "80")),
     "SERVO": (("舵机 ID", "1"), ("角度", "0")),
-    "SERVO_ZERO": (("逻辑轴 ID（1夹爪、2转盘、5升降、6伸缩）", "2"),),
+    "SERVO_ZERO": (("机械臂逻辑轴（1 夹爪、2 EMM 转台、5 升降、6 伸缩）", "2"),),
     "SERVO_PID_GET": (("舵机 ID", "1"),),
     "SERVO_PID_SET": (("舵机 ID", "1"),) + tuple((name, "") for name in ("Kp", "Kd", "Ki", "PwmBias", "HoldKp", "HoldKd", "HoldPwmBias")),
 }
@@ -2709,6 +2710,22 @@ class UpperComputerApp:
         notebook.add(emm_page, text="EMM 电机")
         self.emm_panel = EmmPanel(emm_page.content, self.serial_link.send_line, self.append_log, parse_frame)
         self.emm_panel.pack(fill=tk.BOTH, expand=True)
+        tray_page = ScrollableTab(notebook, padding=12)
+        notebook.add(tray_page, text="旋转料盘")
+        tray_form = ttk.LabelFrame(tray_page.content, text="绝对角度控制", padding=10)
+        tray_form.pack(fill=tk.X)
+        self.tray_values = [tk.StringVar(value="0") for _ in range(3)]
+        self.tray_status = tk.StringVar()
+        for row, (label, variable) in enumerate(zip(
+            ("目标角度（°）", "运动时长（ms，0 为尽快到达）", "功率限制（mW，0 为舵机默认）"),
+            self.tray_values,
+        )):
+            ttk.Label(tray_form, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=4)
+            ttk.Entry(tray_form, textvariable=variable, width=14).grid(row=row, column=1, sticky="w", pady=4)
+        ttk.Button(tray_form, text="旋转", command=self.send_tray_rotation).grid(row=3, column=0, sticky="w", pady=6)
+        ttk.Button(tray_form, text="将当前位置设为料盘零点",
+                   command=lambda: self.send_tray_rotation("ZERO")).grid(row=3, column=1, sticky="w", pady=6)
+        ttk.Label(tray_form, textvariable=self.tray_status).grid(row=4, column=0, columnspan=2, sticky="w")
         notebook.add(arm_page, text="机械臂")
         notebook.add(keyboard_page, text="键盘控制")
         notebook.add(log_tab, text="日志")
@@ -3123,7 +3140,7 @@ class UpperComputerApp:
         zero_group.pack(fill=tk.X, pady=(10, 0))
         zero_id = tk.StringVar(value="2")
         self.command_vars["SERVO_ZERO"] = [zero_id]
-        ttk.Label(zero_group, text="逻辑轴 ID（1夹爪、2转盘、5升降、6伸缩）：").pack(anchor="w")
+        ttk.Label(zero_group, text="机械臂逻辑轴（1 夹爪、2 EMM 转台、5 升降、6 伸缩）").pack(anchor="w")
         ttk.Combobox(zero_group, textvariable=zero_id, values=("1", "2", "5", "6"), width=8).pack(anchor="w", pady=3)
         ttk.Button(zero_group, text="将当前位置设为零点",
                    command=lambda: self.send_command("SERVO_ZERO")).pack(fill=tk.X)
@@ -3133,7 +3150,7 @@ class UpperComputerApp:
         pid_group.pack(fill=tk.X, pady=(10, 0))
         self.servo_pid_id = tk.StringVar(value="1")
         self.servo_pid_values = [tk.StringVar() for _ in range(7)]
-        self.servo_pid_status = tk.StringVar(value="1号夹爪舵机；转盘已改用7号张大头电机，不适用此PID。")
+        self.servo_pid_status = tk.StringVar(value="总线舵机地址 1 为夹爪，3 为旋转料盘。机械臂转台 PID 在 EMM 电机页调节（地址 7）。")
         self.command_vars["SERVO_PID_GET"] = [self.servo_pid_id]
         self.command_vars["SERVO_PID_SET"] = [self.servo_pid_id, *self.servo_pid_values]
         ttk.Label(pid_group, text="舵机 ID").grid(row=0, column=0, sticky="w")
@@ -3482,6 +3499,20 @@ class UpperComputerApp:
             return
         self.led_status.set("频率命令已发送，等待固件回读；若无回复请重新查询")
         self.append_log("TX", line)
+
+    def send_tray_rotation(self, action: str = "ROTATE") -> None:
+        try:
+            values = ()
+            if action == "ROTATE":
+                angle, interval, power = (variable.get().strip() for variable in self.tray_values)
+                values = (float(angle), int(interval), int(power))
+            line = build_frame("CMD", "TRAY", action, *values)
+            self.serial_link.send_line(line)
+        except (ValueError, RuntimeError, OSError) as exc:
+            self.tray_status.set(f"命令未发送 · {exc}")
+            return
+        self.append_log("TX", line)
+        self.tray_status.set("等待主控应答")
 
     def send_motor_enable(self, enabled: bool) -> None:
         self.command_vars["En_C"][0].set("1" if enabled else "0")
@@ -4214,6 +4245,14 @@ class UpperComputerApp:
                 was_reading = self.parameter_panel.mode == "read"
                 self.parameter_panel.receive(text)
                 self.emm_panel.receive(text)
+                if fields is not None and len(fields) >= 4 and fields[1] == "TRAY":
+                    if fields[0] == "RSP":
+                        if fields[2] == "ZERO" and fields[3] == "READBACK" and len(fields) == 7:
+                            self.tray_status.set(f"料盘设零后回读 · 多圈 {fields[6]}°")
+                        else:
+                            self.tray_status.set("料盘正在旋转" if fields[3] == "ACK" else f"指令未受理 · {text}")
+                    elif fields[0] == "EVT":
+                        self.tray_status.set("料盘已到位" if fields[3] == "DONE" else "旋转未完成")
                 self.parameter_panel.receive_test_result(text)
                 if was_reading and self.parameter_panel.ready:
                     # 节点数组回读成功后同步地图，避免画面坐标与车上配置不一致。

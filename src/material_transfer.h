@@ -35,14 +35,14 @@ struct MaterialStationPose {
 constexpr uint8_t MATERIAL_STATION_COUNT = 3;
 
 // ================= 全部固定工位和动作参数 =================
-// cargo[0]、cargo[1]、cargo[2] 分别是车上 1、2、3 号载物台。
+// cargo 是车上三个小料盘共用的待操作区。
 // workArea[0]、workArea[1]、workArea[2] 分别是区域内 1、2、3 号物料位。
 //
 // 粗加工区和暂存区虽然位于场地中的不同位置，但小车停好以后，三个物料位
 // 相对于车体的位置相同。因此二者共用 workArea，不需要分别标定两套位姿。
 struct MaterialTransferLayout {
     MaterialStationPose disc;                         // 圆盘取料位
-    MaterialStationPose cargo[MATERIAL_STATION_COUNT];
+    MaterialStationPose cargo;
     MaterialStationPose workArea[MATERIAL_STATION_COUNT];
     float approachHeight;        // 横向运动前的安全高度 (mm)
     float secondLayerOffset;     // 第二层相对第一层的高度增量 (mm)
@@ -71,6 +71,8 @@ struct MaterialMotionSteps {
 };
 
 extern MaterialMotionSteps materialMotionSteps;
+extern float cargoTrayAngles[MATERIAL_STATION_COUNT];
+constexpr float CARGO_TRAY_ARRIVAL_TOLERANCE_DEG = 1.0f;
 
 // 每一项均为毫秒，0 表示跳过该处等待；只控制衔接，不改变 MoveArm 速度。
 struct MaterialApproachDelays {

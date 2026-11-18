@@ -8,6 +8,8 @@
 
 ## 代码约定
 
+上位机新功能统一在 [Web 上位机](web/connection-test/README.md) 实现。Python/Tkinter 上位机（`upper_computer.py`）作为旧版保留，新功能无需同步到 Python 版。
+
 内部运动、搬运和控制函数采用契约式设计：调用方提供有效参数、已标定配置和已解析任务码，内部不重复校验或静默替换参数。串口、扫码、配置文件和硬件协议入口负责检查外部数据。
 
 保留控制算法所需的限幅、协议字段饱和、任务取消、通信错误上报和载物台占用判断。舵机查询失败直接返回错误，后续调用可重新查询；开机角度校验失败不会永久锁住转台，也不阻断 OTA、串口维护通道。
@@ -47,12 +49,14 @@ robot_chassis:
 **关键接线对应（主控侧）**
 | 外设 | 接主控(ESP32) | 接 jetson_nano | 说明 |
 |---|---|---|---|
-| 7x 张大头电机 | ✅ UART BUS | — | 经由双向串行总线控制，直连24V供电 |
-| 12V 舵机控制板 | ✅ UART | — | 控制1号夹爪舵机并反馈数据 |
+| 7x 张大头电机 | Serial1 TX=GPIO16、RX=GPIO15 | — | 经由双向串行总线控制，直连24V供电 |
+| 12V 舵机控制板 | Serial2 TX=GPIO18、RX=GPIO17 | — | 控制1号夹爪舵机并反馈数据 |
 | 二维码扫描 | ✅ UART TTL | — | scan_module |
 | USB 摄像头 ×2 | — | ✅ USB | 前向/俯视视觉 |
 | 雷达模块 | — | ✅ UART | 定位/避障(由 jetson 处理) |
 | jetson_nano | ✅ Type-C UART | — | 双向通信 |
+
+新版主板其余接口的原理图分配为 `ZONE_ADC` GPIO1、`START_ADC` GPIO2、`EXPAND1` GPIO6、`EXPAND2` GPIO7、`PWM1` GPIO8、`BZE` GPIO9、`ADC_BAT` GPIO10、`BUTTON_LED` GPIO11。
 
 ## 目录结构
 

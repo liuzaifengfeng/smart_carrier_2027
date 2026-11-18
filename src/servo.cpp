@@ -364,6 +364,11 @@ void Servo_Stop(uint8_t servoId) {
     }
 }
 
+void Servo_HoldPosition(uint8_t servoId) {
+    const uint8_t hold[]={servoId,0x11,0,0};
+    sendPacket(FSUS_CMD_STOP,hold,sizeof(hold));
+}
+
 // 厂商设置原点指令：ID、reset=0；与重置多圈圈数(0x11)不同。
 bool Servo_SetOrigin(uint8_t servoId) {
     ServoBusGuard guard;

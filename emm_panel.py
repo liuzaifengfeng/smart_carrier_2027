@@ -51,7 +51,7 @@ class EmmPanel(ttk.Frame):
         ttk.Label(row, text="电机地址：").pack(side="left")
         ttk.Combobox(row, textvariable=self.motor, values=tuple(map(str, range(1, 8))), state="readonly", width=5).pack(side="left")
         self.motor.trace_add("write", self.changed_motor)
-        ttk.Label(self, text="1～4：底盘　5：升降　6：伸出　7：转盘").pack(anchor="w")
+        ttk.Label(self, text="EMM 地址　1～4：底盘　5：升降　6：伸出　7：机械臂转台").pack(anchor="w")
         group = ttk.LabelFrame(self, text="驱动器位置环 PID（原始整数）", padding=10)
         group.pack(fill="x", pady=12)
         for name, variable in zip(("Kp", "Ki", "Kd"), self.gains):

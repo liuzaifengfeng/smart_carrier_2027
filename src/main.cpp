@@ -1,4 +1,5 @@
 #include "turret_motor.h"
+#include "battery_monitor.h"
 /**********************************************************
 *** 2027 工创大赛·智能搬运 主控程序框架
 *** 角色：ESP32 主控（运动控制 + 任务编排 + 决策）
@@ -212,6 +213,7 @@ void Task_MainStateMachine(void *) {
  */
 void setup() {
     pinMode(BOOT0_PIN, INPUT_PULLUP);
+    BatteryMonitorBegin();
     const bool ledPwmReady = LedPwm_Init();
     Serial.begin(115200);
     if (!ApplyCompiledParameterDefaults()) {
@@ -219,7 +221,7 @@ void setup() {
     }
     if (!ledPwmReady) Serial.println("[LED] PWM initialization failed");
     Serial.printf("version: %s\n", VERSION);
-    Servo_Init();    // 总线舵机初始化 (默认 Serial2: RX=16, TX=15, 115200bps)
+    Servo_Init();    // 总线舵机初始化
     Emm_V5_Init();   // 电机初始化
     Scanner_Init();  // 扫码模块初始化 (软串口 RX=IO4, 9600bps)
     if (!H30UsbBegin()) Serial.println("[H30] USB Host initialization failed");
@@ -232,6 +234,7 @@ void setup() {
     // 在串口任务启动前读取，避免多个任务同时访问舵机总线。
     // 给上电中的舵机留出启动时间；总线已初始化但舵机不一定立即应答。
     vTaskDelay(pdMS_TO_TICKS(100));
+    Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY, 0);
     if (!TurretMotorReadAngle(currentArm.turret_angle))
         Serial.println("[Turret] startup angle unavailable; continuing startup");
     else Serial.printf("[Turret] startup mechanical angle=%.3f deg (saved zero)\n",currentArm.turret_angle);
@@ -265,6 +268,7 @@ void setup() {
  * @brief 处理后台维护、灯光与按键采样；比赛业务由独立主状态机任务推进。
  */
 void loop() {
+    BatteryMonitorUpdate();
     PollDebugBootButton();
     // 不依赖主状态机：总超时暂停主任务后仍持续闪灯。
     const RobotState state = currentState;

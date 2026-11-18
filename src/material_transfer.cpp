@@ -1,20 +1,17 @@
 #include "material_transfer.h"
 #include "arm_placement_log.h"
 #include "turret_path.h"
+#include "servo.h"
 
 #include <math.h>
 
 // ================= 实车标定区（主要修改这里） =================
 // 每一项的填写顺序都是：{升降高度, 伸出长度, 转台角度}。
-// NAN 表示“尚未标定”。请用实测值替换下面共 7 个位置中的 NAN。
+// NAN 表示“尚未标定”。请用实测值替换下列位置中的 NAN。
 // 在全部位置填写完成前，MaterialTransferPosesReady() 返回 false，机械臂不会动作。
 MaterialTransferLayout materialTransferLayout = {
     {150, 50, 90}, // 圆盘取料位置
-    {
-        {102, 20, 242}, // 1 号载物台
-        {102, 20, 271}, // 2 号载物台
-        {102, 21, 300}, // 3 号载物台
-    },
+    {125, 15, -3.5f}, // 旋转料盘待操作区
     {
         {2.5, 61, 48}, // 粗加工区/暂存区的 1 号位置
         {2.5, 0, 86}, // 粗加工区/暂存区的 2 号位置
@@ -27,6 +24,8 @@ MaterialTransferLayout materialTransferLayout = {
     -5.0f,  // clawClosedAngle
     1,      // motionWaitMs，不传等待参数时的默认毫秒数
 };
+
+float cargoTrayAngles[MATERIAL_STATION_COUNT] = {150, 213, 276};
 
 MaterialMotionSteps materialMotionSteps = {
     {80.0f, 0.0f, 90.0f}, // 圆盘预抓：高度、伸出、转台
@@ -152,15 +151,18 @@ bool waitForTurret() {
     }
 }
 
+bool selectCargoTray(uint8_t cargoCode);
+
 // 移动到目标上方
 bool moveAbove(const MaterialStationPose &pose, float clawAngle,
                const MaterialApproachDelays &delays, const float *plannedAngle = nullptr,
-               uint8_t turretAcceleration = TURRET_ACCELERATION_FAST) {
+               uint8_t turretAcceleration = TURRET_ACCELERATION_FAST, uint8_t cargoCode = 0) {
     // 升降、伸缩同时发令；等待后转向。两次等待分别保留，供上位机逐项调整。
     if (!MoveArm(materialTransferLayout.approachHeight, pose.length,
                  -1, clawAngle, materialMotionSteps.approachTranslateSpeed)) return false;
     waitForArm(delays.translateMs);
     waitForArm(delays.settleMs);
+    if (cargoCode && !selectCargoTray(cargoCode)) return false;
     if (!(plannedAngle
             ? MoveArmPlanned(materialTransferLayout.approachHeight, pose.length,
                              *plannedAngle, -1, materialMotionSteps.approachRotateSpeed, turretAcceleration)
@@ -174,9 +176,9 @@ bool moveAbove(const MaterialStationPose &pose, float clawAngle,
 bool pickAt(const MaterialStationPose &pose,
             const MaterialTransferDelays &delays = commonMaterialDelays,
             bool retractAfterGrip = false, bool retractWithLift = false,
-            const float *plannedAngle = nullptr, uint8_t turretAcceleration = TURRET_ACCELERATION_FAST) {
+            const float *plannedAngle = nullptr, uint8_t turretAcceleration = TURRET_ACCELERATION_FAST, uint8_t cargoCode = 0) {
     // 载物台出料先抬升、等待后再缩回；工作区取回可同时抬升并缩回到 0。
-    if (!moveAbove(pose, materialTransferLayout.clawOpenAngle, delays.pickAbove, plannedAngle, turretAcceleration)) return false;
+    if (!moveAbove(pose, materialTransferLayout.clawOpenAngle, delays.pickAbove, plannedAngle, turretAcceleration, cargoCode)) return false;
     if (!MoveArm(pose.high, -1, -1, -1,
                  materialMotionSteps.pickDescendSpeed)) return false;
     waitForArm(delays.pickDescendMs);
@@ -263,7 +265,7 @@ bool planWorkTransfers(const int *workCodes, const int *cargoCodes,
     float angles[TURRET_PATH_MAX_TARGETS] = {};
     for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
         if (!isStationCodeValid(workCodes[i]) || !isStationCodeValid(cargoCodes[i])) return false;
-        const auto &cargo = materialTransferLayout.cargo[cargoCodes[i] - 1];
+        const auto &cargo = materialTransferLayout.cargo;
         const auto &work = materialTransferLayout.workArea[workCodes[i] - 1];
         if (!validateAction(cargo, work)) return false;
         angles[2 * i] = retrieve ? work.turretAngle : cargo.turretAngle;
@@ -272,7 +274,20 @@ bool planWorkTransfers(const int *workCodes, const int *cargoCodes,
     return planTransferAngles(angles, TURRET_PATH_MAX_TARGETS, plan);
 }
 
-bool executeWorkTransfer(const MaterialStationPose &source, const MaterialStationPose &destination,
+bool selectCargoTray(uint8_t cargoCode) {
+    const float target = cargoTrayAngles[cargoCode - 1];
+    Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY, target);
+    while (!taskMotionAborted) {
+        float measured = 0;
+        if (!Servo_QueryAngleMTurn(SERVO_ID_CARGO_TRAY, measured)) break;
+        if (fabsf(measured - target) <= CARGO_TRAY_ARRIVAL_TOLERANCE_DEG) return true;
+        waitForArm(50);
+    }
+    Servo_HoldPosition(SERVO_ID_CARGO_TRAY);
+    return false;
+}
+
+bool executeWorkTransfer(uint8_t cargoCode, const MaterialStationPose &source, const MaterialStationPose &destination,
                          float height, const MaterialTransferDelays &delays, bool retrieve,
                          const float *angles = nullptr, uint8_t layer = 1) {
     TurretPathPlan plan;
@@ -283,7 +298,8 @@ bool executeWorkTransfer(const MaterialStationPose &source, const MaterialStatio
     }
     // 使用局部规划，不污染普通 MoveArm 和圆盘流程；每次旋转由底层再次回读校验。
     const uint8_t turretAcceleration=retrieve||layer!=1?TURRET_ACCELERATION_FAST:TURRET_ACCELERATION_SLOW;
-    return pickAt(source, delays, !retrieve, retrieve, angles, turretAcceleration)
+    return pickAt(source, delays, !retrieve, retrieve, angles, turretAcceleration, retrieve ? 0 : cargoCode)
+        && (!retrieve || selectCargoTray(cargoCode))
         && placeAt(destination, height, delays, true, angles + 1, turretAcceleration, !retrieve);
 }
 
@@ -311,12 +327,12 @@ bool validateCodeArrays(const int *first, const int *second, bool firstIsMateria
 } // namespace
 
 bool MaterialTransferPosesReady() {
-    // 七个固定位置只要有一个仍是 NAN，整组动作就不能开始。
-    if (!isLayoutParameterValid() || !isPoseValid(materialTransferLayout.disc)) {
+    if (!isLayoutParameterValid() || !isPoseValid(materialTransferLayout.disc)
+        || !isPoseValid(materialTransferLayout.cargo)) {
         return false;
     }
     for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
-        if (!isPoseValid(materialTransferLayout.cargo[i]) || !isPoseValid(materialTransferLayout.workArea[i])) {
+        if (!isPoseValid(materialTransferLayout.workArea[i])) {
             return false;
         }
     }
@@ -334,12 +350,13 @@ bool MoveDiscToCargo(uint8_t materialCode, uint8_t cargoCode) {
         Serial.println("[Material] ERR: cargo platform is occupied");
         return false;
     }
-    const MaterialStationPose &destination = materialTransferLayout.cargo[cargoCode - 1];
+    const MaterialStationPose &destination = materialTransferLayout.cargo;
     if (!validateAction(materialTransferLayout.disc, destination)) return false;
 
     Serial.printf("[Material] disc -> cargo %u, material %u\n", cargoCode, materialCode);
     // 先从圆盘抓起，再放到指定载物台；完成后才更新载物台状态。
     if (!pickAt(materialTransferLayout.disc, commonMaterialDelays, false, true)
+            || !selectCargoTray(cargoCode)
             || !placeAt(destination, destination.high, commonMaterialDelays, true)) return false;
     cargo.material = static_cast<MaterialType>(materialCode);
     return true;
@@ -355,7 +372,7 @@ bool MoveCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
         Serial.println("[Material] ERR: cargo platform is empty");
         return false;
     }
-    const MaterialStationPose &source = materialTransferLayout.cargo[cargoCode - 1];
+    const MaterialStationPose &source = materialTransferLayout.cargo;
     const MaterialStationPose &destination =
         materialTransferLayout.workArea[workAreaCode - 1];
     if (!validateAction(source, destination)) return false;
@@ -365,7 +382,7 @@ bool MoveCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
     // 粗加工区和暂存区使用相同的 workArea 位姿。
     // 小车当前停在哪一个区域，动作就发生在哪一个区域。
     const auto &delays = cargoToWorkAreaDelays[cargoCode - 1][workAreaCode - 1];
-    if (!executeWorkTransfer(source, destination, destination.high, delays, false)) return false;
+    if (!executeWorkTransfer(cargoCode, source, destination, destination.high, delays, false)) return false;
     cargo.material = MATERIAL_NONE;
     return true;
 }
@@ -390,7 +407,7 @@ bool DemoCargoToRoughArea() {
         const MaterialType previousMaterial = cargo.material;
         cargo.material = static_cast<MaterialType>(materialCode);
         const auto &delays = cargoToWorkAreaDelays[cargoCode - 1][workAreaCode - 1];
-        if (!executeWorkTransfer(materialTransferLayout.cargo[cargoCode - 1],
+        if (!executeWorkTransfer(cargoCode, materialTransferLayout.cargo,
                                  materialTransferLayout.workArea[workAreaCode - 1],
                                  materialTransferLayout.workArea[workAreaCode - 1].high,
                                  delays, false, &plan.anglesDeg[2 * (cargoCode - 1)])) {
@@ -415,9 +432,8 @@ bool DemoWorkAreaToCargo() {
             Serial.println("[Material] ERR: cargo platform is occupied");
             return false;
         }
-        const uint8_t cargoIndex = MATERIAL_STATION_COUNT - 1 - i;
         if (!validateAction(materialTransferLayout.workArea[i],
-                            materialTransferLayout.cargo[cargoIndex])) return false;
+                            materialTransferLayout.cargo)) return false;
     }
 
     const int workCodes[] = {1, 2, 3}, cargoCodes[] = {3, 2, 1};
@@ -427,9 +443,9 @@ bool DemoWorkAreaToCargo() {
         // 区域 1→载物台 3、区域 2→载物台 2、区域 3→载物台 1。
         // 单次接口会把外部 1~3 编号转换成数组 0~2 下标；每件放稳、抬升后才取下一件。
         const uint8_t cargoCode = MATERIAL_STATION_COUNT + 1 - workAreaCode;
-        const auto &destination = materialTransferLayout.cargo[cargoCode - 1];
+        const auto &destination = materialTransferLayout.cargo;
         const auto &delays = workAreaToCargoDelays[workAreaCode - 1][cargoCode - 1];
-        if (!executeWorkTransfer(materialTransferLayout.workArea[workAreaCode - 1], destination,
+        if (!executeWorkTransfer(cargoCode, materialTransferLayout.workArea[workAreaCode - 1], destination,
                                  destination.high, delays, true,
                                  &plan.anglesDeg[2 * (workAreaCode - 1)])) return false;
         cargoPlatforms[cargoCode - 1].material = static_cast<MaterialType>(materialCode);
@@ -447,7 +463,7 @@ bool DemoStackCargoToWorkArea() {
         const MaterialStationPose &destination = materialTransferLayout.workArea[i];
         releaseHeights[i] = destination.high + materialTransferLayout.secondLayerOffset;
         // 三个位置全部检查通过后才抓料，避免执行到一半才发现高度越界。
-        if (!validateAction(materialTransferLayout.cargo[i], destination)) return false;
+        if (!validateAction(materialTransferLayout.cargo, destination)) return false;
         if (!isfinite(releaseHeights[i]) || releaseHeights[i] > ARM_HEIGHT_LIMIT_MM) {
             Serial.println("[Material] ERR: invalid demo stacking height");
             return false;
@@ -464,7 +480,7 @@ bool DemoStackCargoToWorkArea() {
         Serial.printf("[Material] demo stack cargo %u -> work area %u, release height %.1f\n",
                       i + 1, i + 1, releaseHeights[i]);
         const auto &delays = cargoToWorkAreaDelays[i][i];
-        if (!executeWorkTransfer(materialTransferLayout.cargo[i], materialTransferLayout.workArea[i],
+        if (!executeWorkTransfer(i + 1, materialTransferLayout.cargo, materialTransferLayout.workArea[i],
                                  releaseHeights[i], delays, false, &plan.anglesDeg[2 * i], 2)) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
@@ -480,7 +496,7 @@ bool DemoStackCargoToWorkArea3() {
         const MaterialStationPose &destination = materialTransferLayout.workArea[i];
         releaseHeights[i] = destination.high + materialTransferLayout.secondLayerOffset * 2;
         // 三个位置全部检查通过后才抓料，避免执行到一半才发现高度越界。
-        if (!validateAction(materialTransferLayout.cargo[i], destination)) return false;
+        if (!validateAction(materialTransferLayout.cargo, destination)) return false;
         if (!isfinite(releaseHeights[i]) || releaseHeights[i] > ARM_HEIGHT_LIMIT_MM) {
             Serial.println("[Material] ERR: invalid demo stacking height");
             return false;
@@ -497,7 +513,7 @@ bool DemoStackCargoToWorkArea3() {
         Serial.printf("[Material] demo stack cargo %u -> work area %u, release height %.1f\n",
                       i + 1, i + 1, releaseHeights[i]);
         const auto &delays = cargoToWorkAreaDelays[i][i];
-        if (!executeWorkTransfer(materialTransferLayout.cargo[i], materialTransferLayout.workArea[i],
+        if (!executeWorkTransfer(i + 1, materialTransferLayout.cargo, materialTransferLayout.workArea[i],
                                  releaseHeights[i], delays, false, &plan.anglesDeg[2 * i], 3)) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
     }
@@ -551,14 +567,14 @@ bool MoveWorkAreaToCargo(uint8_t materialCode, uint8_t workAreaCode, uint8_t car
     }
     const MaterialStationPose &source =
         materialTransferLayout.workArea[workAreaCode - 1];
-    const MaterialStationPose &destination = materialTransferLayout.cargo[cargoCode - 1];
+    const MaterialStationPose &destination = materialTransferLayout.cargo;
     if (!validateAction(source, destination)) return false;
 
     Serial.printf("[Material] work area %u -> cargo %u, material %u\n",
                   workAreaCode, cargoCode, materialCode);
     // 取回：同时抬升、缩回 -> 等待 -> 缩回转向 -> 等待 -> 同时伸出、下降。
     const auto &delays = workAreaToCargoDelays[workAreaCode - 1][cargoCode - 1];
-    if (!executeWorkTransfer(source, destination, destination.high, delays, true)) return false;
+    if (!executeWorkTransfer(cargoCode, source, destination, destination.high, delays, true)) return false;
     // 抓取成功并放到车上以后，记录该载物台装入了什么颜色的物料。
     cargo.material = static_cast<MaterialType>(materialCode);
     return true;
@@ -574,7 +590,7 @@ bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
         Serial.println("[Material] ERR: cargo platform is empty");
         return false;
     }
-    const MaterialStationPose &source = materialTransferLayout.cargo[cargoCode - 1];
+    const MaterialStationPose &source = materialTransferLayout.cargo;
     const MaterialStationPose &destination =
         materialTransferLayout.workArea[workAreaCode - 1];
     // 第二层的放置高度 = 第一层标定高度 + 一个物料的码放高度。
@@ -589,7 +605,7 @@ bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {
     Serial.printf("[Material] cargo %u -> work area %u layer 2, material %u\n",
                   cargoCode, workAreaCode, cargo.material);
     const auto &delays = cargoToWorkAreaDelays[cargoCode - 1][workAreaCode - 1];
-    if (!executeWorkTransfer(source, destination, secondLayerHeight, delays, false, nullptr, 2)) return false;
+    if (!executeWorkTransfer(cargoCode, source, destination, secondLayerHeight, delays, false, nullptr, 2)) return false;
     cargo.material = MATERIAL_NONE;
     return true;
 }
@@ -627,7 +643,7 @@ bool PlaceTaskCargoToWorkArea(
             Serial.println("[Material] ERR: cargo platform is empty");
             return false;
         }
-        const MaterialStationPose &source = materialTransferLayout.cargo[i];
+        const MaterialStationPose &source = materialTransferLayout.cargo;
         const MaterialStationPose &destination =
             materialTransferLayout.workArea[positionCodes[i] - 1];
         releaseHeights[i] = destination.high
@@ -650,7 +666,7 @@ bool PlaceTaskCargoToWorkArea(
         Serial.printf("[Material] cargo %u -> work area %u, layer %u, release height %.1f\n",
                       i + 1, workAreaCode, layer, releaseHeights[i]);
         const auto &delays = cargoToWorkAreaDelays[i][workAreaCode - 1];
-        if (!executeWorkTransfer(materialTransferLayout.cargo[i],
+        if (!executeWorkTransfer(i + 1, materialTransferLayout.cargo,
                                  materialTransferLayout.workArea[workAreaCode - 1],
                                  releaseHeights[i], delays, false, &plan.anglesDeg[2 * i], layer)) return false;
         cargoPlatforms[i].material = MATERIAL_NONE;
@@ -679,9 +695,9 @@ bool RetrieveRoundToCargo(
     TurretPathPlan plan;
     if (!planWorkTransfers(positionCodes, cargoCodes, true, plan)) return false;
     for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {
-        const auto &destination = materialTransferLayout.cargo[i];
+        const auto &destination = materialTransferLayout.cargo;
         const auto &delays = workAreaToCargoDelays[positionCodes[i] - 1][i];
-        if (!executeWorkTransfer(materialTransferLayout.workArea[positionCodes[i] - 1], destination,
+        if (!executeWorkTransfer(i + 1, materialTransferLayout.workArea[positionCodes[i] - 1], destination,
                                  destination.high, delays, true,
                                  &plan.anglesDeg[2 * i])) return false;
         cargoPlatforms[i].material = static_cast<MaterialType>(materialCodes[i]);
@@ -711,7 +727,7 @@ bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force) {
         Serial.printf("[Material] WARN: cargo %u already contains material %u; force grab continues\n",
                       cargoCode, static_cast<unsigned>(cargo.material));
     }
-    const MaterialStationPose &destination = materialTransferLayout.cargo[cargoCode - 1];
+    const MaterialStationPose &destination = materialTransferLayout.cargo;
     if (!isLayoutParameterValid() || !isPoseValid(destination)) {
         Serial.println("[Material] ERR: transfer poses are not calibrated");
         return false;
@@ -738,7 +754,7 @@ bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force) {
                  materialMotionSteps.discLiftSpeed)) return false;
     waitForArm(commonMaterialDelays.pickLiftMs);
 
-    if (!placeAt(destination, destination.high, commonMaterialDelays, true)) return false;
+    if (!selectCargoTray(cargoCode) || !placeAt(destination, destination.high, commonMaterialDelays, true)) return false;
     cargo.material = static_cast<MaterialType>(materialCode);
     Serial.printf("[Material] disc -> cargo %u, material %u placed\n",
                   cargoCode, materialCode);
@@ -754,7 +770,7 @@ bool ValidateDiscPositionTransfer(uint8_t materialCode, uint8_t cargoCode) {
         Serial.println("[DISC_POSITION] ERR: cargo platform is occupied");
         return false;
     }
-    const MaterialStationPose &destination = materialTransferLayout.cargo[cargoCode - 1];
+    const MaterialStationPose &destination = materialTransferLayout.cargo;
     if (!isLayoutParameterValid() || !isPoseValid(destination)) {
         Serial.println("[DISC_POSITION] ERR: cargo pose is not calibrated");
         return false;
@@ -765,11 +781,11 @@ bool ValidateDiscPositionTransfer(uint8_t materialCode, uint8_t cargoCode) {
 bool PlaceHeldDiscMaterialToCargo(uint8_t materialCode, uint8_t cargoCode) {
     if (!ValidateDiscPositionTransfer(materialCode, cargoCode)) return false;
     CargoPlatform &cargo = cargoPlatforms[cargoCode - 1];
-    const MaterialStationPose &destination = materialTransferLayout.cargo[cargoCode - 1];
+    const MaterialStationPose &destination = materialTransferLayout.cargo;
     if (!MoveArm(materialTransferLayout.approachHeight, 0, -1, -1,
                  materialMotionSteps.discLiftSpeed)) return false;
     waitForArm(commonMaterialDelays.pickLiftMs);
-    if (!placeAt(destination, destination.high, commonMaterialDelays, true)) return false;
+    if (!selectCargoTray(cargoCode) || !placeAt(destination, destination.high, commonMaterialDelays, true)) return false;
     cargo.material = static_cast<MaterialType>(materialCode);
     Serial.printf("[DISC_POSITION] material %u placed on cargo %u\n",
                   materialCode, cargoCode);

@@ -1,0 +1,130 @@
+:root {
+  font: 15px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #172739;
+  background: #eef2f5;
+  font-variant-numeric: tabular-nums;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+a { color: #17568b; }
+button, input, select, textarea { font: inherit; }
+button, select, input, textarea {
+  color: inherit;
+  border: 1px solid #a9b9c7;
+  border-radius: 4px;
+  background: #fff;
+  padding: 0.4rem 0.7rem;
+}
+button, select, summary { cursor: pointer; }
+button:hover { background: #edf4fa; }
+button:disabled { opacity: 0.6; cursor: default; }
+:focus-visible { outline: 2px solid #115fa8; outline-offset: 3px; }
+.primary, .primary:hover { color: white; background: #245e8d; border-color: #245e8d; }
+.runs { max-width: 1440px; margin: auto; padding: 1.5rem clamp(0.75rem, 3vw, 2.5rem); }
+.runs > header, .section-head, .selectors {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+h1 { margin: 0.2rem 0 0; font-size: clamp(1.6rem, 4vw, 2.3rem); }
+h2 { margin: 0; font-size: 1.2rem; }
+.panel { margin-top: 1rem; background: white; border: 1px solid #ccd8e1; padding: clamp(0.75rem, 2vw, 1.35rem); }
+.login { display: flex; align-items: end; width: fit-content; gap: 0.75rem; flex-wrap: wrap; }
+.login label, .selectors label { display: grid; gap: 0.3rem; }
+.selectors { justify-content: flex-start; margin: 0.9rem 0; }
+.selectors select, .login input { max-width: 100%; }
+.archive { margin-top: 0.75rem; max-height: 21rem; overflow: auto; }
+.archive > details { border-top: 1px solid #dce4eb; padding: 0.55rem; }
+.archive summary > * { margin-inline-end: 0.9rem; }
+.outline { padding: 0.4rem 0 0.4rem 1rem; }
+.outline dl { display: flex; gap: 0.6rem 1.2rem; flex-wrap: wrap; }
+.outline dd { margin: 0; font-weight: 650; }
+.outline-actions { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: start; gap: 0.45rem; }
+.note-field textarea {
+  display: block;
+  field-sizing: content;
+  min-inline-size: min(12rem, 100%);
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+  resize: none;
+}
+.warning { color: #815011; }
+.error { color: #982a25; }
+.timeline-scroll, .table-scroll { overflow-x: auto; }
+.timeline-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.65rem 1rem; margin: 1rem 0 0.55rem; }
+.timeline-controls select { margin-inline-start: 0.35rem; }
+.timeline-controls input { margin-inline-end: 0.35rem; }
+.timeline-controls button[aria-pressed="true"] { background: #e7f0f8; border-color: #7299bb; }
+.timeline { min-width: 680px; border: 1px solid #ccd8e1; background: #f8fafc; padding: 0.8rem 1rem; }
+.timeline-row { display: grid; grid-template-columns: 7.25rem minmax(0, 1fr); align-items: center; gap: 0.5rem; }
+.timeline-row > span { font-size: 0.85rem; }
+.ruler { font-size: 0.8rem; padding-bottom: 0.45rem; border-bottom: 1px solid #ccd8e1; }
+.ruler > div { position: relative; height: 1.2rem; }
+.ruler > div span { position: absolute; white-space: nowrap; transform: translateX(-50%); }
+.ruler > div span:nth-child(1) { left: 0; transform: none; }
+.ruler > div span:nth-child(2) { left: 20%; }
+.ruler > div span:nth-child(3) { left: 40%; }
+.ruler > div span:nth-child(4) { left: 60%; }
+.ruler > div span:nth-child(5) { left: 80%; }
+.ruler > div span:nth-child(6) { right: 0; transform: none; }
+.timeline-run { --bar: #8a4a26; }
+.timeline-run.baseline { --bar: #245e8d; }
+.timeline-run + .timeline-run { border-top: 1px solid #ccd8e1; }
+.timeline-run { padding-bottom: 0.45rem; }
+.timeline-run h3 { margin: 0.75rem 0; font-size: 0.95rem; }
+.timeline-run h3 strong { margin-left: 0.5rem; color: var(--bar); }
+.timeline-grid {
+  border-inline: 1px solid #c9d6df;
+  background: repeating-linear-gradient(to right, #dfe7ee 0 1px, transparent 1px 20%);
+}
+.lane { position: relative; height: 1.65rem; }
+.muted { color: #526476; padding-left: 0.5rem; font-size: 0.8rem; }
+.time-bar {
+  position: absolute;
+  top: 0.15rem;
+  height: 1.25rem;
+  min-width: 2px;
+  padding: 0;
+  background: var(--bar);
+  border: 0;
+  border-radius: 2px;
+  color: white;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.time-bar:hover, .time-bar:focus-visible { background: #173651; z-index: 1; }
+.time-bar.phase { border-inline: 1px solid #f8fafc; font-weight: 650; container-type: inline-size; }
+.time-bar.phase .bar-label { visibility: hidden; }
+@container (min-width: 6.5em) {
+  .time-bar.phase .bar-label { visibility: visible; }
+}
+.time-bar.span { background: #346f65; }
+.time-bar.step, .time-bar.result { background: #5c657e; }
+.time-bar.selected { outline: 2px solid #172739; z-index: 1; }
+.inspection { min-height: 1.5em; margin: 0.35rem 0 0.55rem; color: #40556b; font-size: 0.85rem; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: right; white-space: nowrap; border-bottom: 1px solid #dce4eb; padding: 0.45rem 0.65rem; }
+th:first-child { text-align: left; }
+thead, .total { background: #edf3f8; }
+.phase-table th:first-child { width: 1%; }
+.phase-table .stage-bars { width: 60%; min-width: 5rem; }
+.stage-bars span { display: block; height: 0.38rem; background: #245e8d; border-radius: 2px; }
+.stage-bars span.comparison { margin-top: 0.18rem; background: #8a4a26; }
+.stage-link { border: 0; padding: 0.15rem 0; background: transparent; color: #17568b; font-weight: 650; }
+.stage-link:hover { background: transparent; text-decoration: underline; }
+.focused-row { background: #e7f0f8; }
+.stage-breakdown { margin-top: 1.15rem; padding: 0.75rem; background: #f7fafc; border: 1px solid #ccd8e1; }
+.stage-breakdown h3 { margin: 0 0 0.55rem; }
+.action-stats { margin-top: 1.4rem; }
+.action-stats h3 { margin-bottom: 0.4rem; }
+.stats-note { margin: 0 0 0.65rem; color: #40556b; font-size: 0.9rem; }
+.stats-table th[scope="colgroup"] { text-align: center; }
+.stats-details { padding: 0.55rem 0; border-bottom: 1px solid #dce4eb; }
+.stats-details summary { color: #17568b; }
+.stats-details .table-scroll { margin-top: 0.55rem; }
+.run-detail { margin-top: 1.25rem; border-top: 1px solid #ccd8e1; }
+.run-detail pre { max-height: 20rem; overflow: auto; background: #f2f6f9; padding: 0.75rem; }

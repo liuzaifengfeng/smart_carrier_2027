@@ -11,10 +11,11 @@ from parameter_config import load_config
 
 def supported_names():
     names = set()
-    for pose in ("圆盘", *(f"载物台{i}" for i in range(1, 4)),
+    for pose in ("圆盘", "待操作区",
                  *(f"工作区{i}" for i in range(1, 4))):
         names.update(f"搬运/{pose}/{field}" for field in
                      ("高度(mm)", "伸出(mm)", "转台(deg)"))
+    names.update(f"搬运/旋转料盘{i}/角度(deg)" for i in range(1, 4))
     names.update("搬运/" + field for field in
                  ("安全高度(mm)", "二层高度增量(mm)", "速度",
                   "夹爪张开(deg)", "夹爪夹紧(deg)", "等待时间(ms)"))

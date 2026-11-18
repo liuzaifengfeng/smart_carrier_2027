@@ -13,6 +13,11 @@ uint32_t MotionHardware::now(){return millis();}
  * @brief 检查总任务及当前作业的取消状态。
  */
 bool MotionHardware::cancelled(){return taskMotionAborted||(cancel&&cancel());}
+void MotionHardware::stopTray() {
+    if(!trayMoving)return;
+    Servo_HoldPosition(SERVO_ID_CARGO_TRAY);
+    trayMoving=false;
+}
 /**
  * @brief 按步骤类型调用 MoveArm、BeginPositionMove 等硬件入口；发令后立即返回。
  * @return nullptr 成功，否则返回执行错误。
@@ -30,6 +35,10 @@ const char *MotionHardware::issue(const Step &s) {
     case StepKind::TURRET_READY: turretStarted=millis();break;
     case StepKind::COMMIT: cargoPlatforms[s.cargo-1].material=static_cast<MaterialType>(s.color);break;
     case StepKind::RAW_SERVO: Servo_SetAngle(s.cargo,s.turret,0,0);break;
+    case StepKind::TRAY_ROTATE:
+        Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY,s.turret,s.waitMs,s.trayPowerMw);
+        trayMoving=true;
+        break;
     case StepKind::ENABLE: Emm_V5_En_Control_all(s.cargo);break;
     case StepKind::VELOCITY: MovePose(s.cargo,s.speed,s.color);break;
     default: break;
@@ -40,7 +49,7 @@ const char *MotionHardware::issue(const Step &s) {
  * @brief 判断当前步骤是否使用反馈完成；POSITION、TURRET_READY 或显式开启的机械臂反馈模式使用反馈。
  */
 bool MotionHardware::feedback(const Step &s) {
-    return s.kind==StepKind::POSITION||s.kind==StepKind::TURRET_READY||
+    return s.kind==StepKind::POSITION||s.kind==StepKind::TURRET_READY||s.kind==StepKind::TRAY_ROTATE||
         (s.kind==StepKind::ARM&&(s.liftArrival||s.stackLiftArrival||s.turretArrival||ARM_FEEDBACK_ENABLED)&&!s.timed);
 }
 /**
@@ -50,6 +59,13 @@ bool MotionHardware::feedback(const Step &s) {
 const char *MotionHardware::ready(const Step &s,bool &done) {
     done=false;if(cancelled())return "STOPPED";
     if(s.kind==StepKind::POSITION){TickPositionMove();done=!PositionMoveActive();return nullptr;}
+    if(s.kind==StepKind::TRAY_ROTATE) {
+        float angle=0;
+        if(!Servo_QueryAngleMTurn(SERVO_ID_CARGO_TRAY,angle))return "SERVO_READ";
+        done=fabsf(angle-s.turret)<=CARGO_TRAY_ARRIVAL_TOLERANCE_DEG;
+        if(done)trayMoving=false;
+        return nullptr;
+    }
     if(s.kind==StepKind::TURRET_READY) {
         float angle=0;
         if(ReadArmTurretAngle(angle)&&fabsf(angle-s.turret)<=5){done=true;return nullptr;}

@@ -1,0 +1,24 @@
+{
+  "name": "carrier-connection-test",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "python prepare-runtime.py && vue-tsc --noEmit && vite build && node build-pwa.mjs",
+    "preview": "vite preview"
+  },
+  "type": "module",
+  "dependencies": {
+    "pyodide": "^314.0.8",
+    "vue": "^3.5.45"
+  },
+  "devDependencies": {
+    "@types/w3c-web-serial": "^1.0.9",
+    "@types/w3c-web-usb": "^1.0.14",
+    "@types/web-bluetooth": "^0.0.22",
+    "@vitejs/plugin-vue": "^6.0.11",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.8",
+    "vue-tsc": "^3.3.14"
+  },
+  "private": true
+}

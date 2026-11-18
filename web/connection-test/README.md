@@ -1,0 +1,30 @@
+# CH9143 连接测试
+
+## Web 上位机
+
+打开 `console.html` 进入 Web USB 上位机。连接后自动发送 SYS HELLO，确认协议 v2 后操作。界面沿用桌面版的浅色分栏、场地图和分页。
+
+- 姿态、底盘、机械臂、视觉和 LED 分页提供对应协议操作，原始命令与回复保留在日志页。
+- 参数页完整读取固件目录，支持分类、编辑、JSON 导入导出、事务写入和回读确认，以及应用参数后试动作。
+- 动作组页读取延时、修改回读、执行正反向搬运，并通过选择原 C++ 文件生成更新后的下载文件。将下载文件替换到工程后重新编译，成为烧录默认值。
+- EMM 页支持 PID、驱动配置与状态、模式切换，以及 5/6/7 号电机的往返试验、曲线、统计和 CSV 导出。
+- 连续试跑复用仓库 Python 规划算法，在浏览器本地计算碰撞检查和轨迹预览，逐帧 ACK 上传，并沿用原试跑状态心跳协议。
+- 键盘页支持 WASD、Q/E、Shift 微调和触控按住运动。
+
+浏览器通过文件选择和下载实现桌面版的本地文件操作。机械臂与场地图采用浏览器绘图，机构示意为简化图。运动功能仍需在实车上逐项验收。
+
+通信复用 `transports.ts` 的 CDC 收发实现；`useController.ts` 管理连接、串行发送、UTF-8 分段解码和协议状态；`Console.vue` 提供操作页面。
+
+连接小车后，上位机自动采集同一次 USB 会话内从 `RUN_START` 到 `RUN_RESULT,DONE` 的结构化任务事件。完赛后可先保存在本浏览器，待网络恢复或队内登录后上传。「查看云端运行日志」打开独立的 `runs.html`，可查看大纲和对比两场。部署时需要在同域提供 `/api/runs` 和 `/api/carrier-session`，Vite 本地转发到 `127.0.0.1:8765`。
+
+在本目录运行 `npm ci`、`python prepare-runtime.py` 和 `npm run dev`，然后打开终端给出的 localhost 地址。运行 `npm run build` 后，将整个 `dist/` 上传到 HTTPS 静态站点子目录。构建会从仓库提取现有纯算法及参数帮助函数，并打包本地 Pyodide 运行时。首次使用规划或源码保存时需要加载约 13 MB 本地站点资源。Vite 输出使用相对资源路径。
+
+## 实机测试
+
+1. **Web Serial**：接入电脑侧 CH9143 的 USB，退出占用该串口的上位机，选择端口。默认使用项目固件的 115200、8N1。
+2. **Web Bluetooth**：设备侧 CH9143 需要以可连接的 BLE 外设身份广播。如果电脑侧模块已建立连接，可先断开它再扫描。留空可测 GATT 连接；要枚举特征值，在选设备前填写实测或资料确认的服务 UUID。连接后选择 UART 透传对应的写入和通知特征值，再点击「订阅通知」。
+3. **固件回包**：在串口或 BLE 连接中点击「查询 LED」。页面发送 `{CMD,LED,GET}\n`，收到 `{RSP,LED,GET,OK,percent,hz}` 才记录毫秒级往返延迟。协议中的查询回包没有请求 ID，发起测量时请避免同时从其他上位机执行相同查询。
+4. **Web USB**：选择 CDC ACM 串口设备并打开，使用「查询 LED」验证双向通信，也可发送自定义命令。接口被其他程序占用时需先释放。可枚举已授权设备并查看描述符。
+5. 各平台分别导出 JSON，报告包含浏览器环境、各接口结果和收发日志。报告与日志由当前浏览器生成。
+
+[Chrome Web Serial 文档](https://developer.chrome.com/docs/capabilities/serial/) · [Chrome Web Bluetooth 文档](https://developer.chrome.com/docs/capabilities/bluetooth) · [沁恒 CH9143 产品资料](https://www.wch.cn/products/CH9143.html)

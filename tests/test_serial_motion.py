@@ -48,3 +48,12 @@ class SerialMotionTests(unittest.TestCase):
 
     def test_boot_release_waits_for_motion_idle(self):
         run_native(self.binary, "boot")
+
+    def test_reboot_acknowledges_and_restarts(self):
+        run_native(self.binary, "reboot")
+
+    def test_manual_tray_rotation_submits_multiturn_parameters(self):
+        run_native(self.binary, "tray")
+
+    def test_battery_read_and_alarm_setting_during_motion(self):
+        run_native(self.binary, "battery")
