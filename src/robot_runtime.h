@@ -33,7 +33,7 @@ constexpr uint8_t BOOT0_PIN = 0; // 板载BOOT按键，低电平按下。
 #define ARM_MOTOR_6   6      // 机械臂电机
 constexpr uint32_t ALIGN_FEEDBACK_TIMEOUT_MS = 300;
 constexpr uint32_t ALIGN_LOG_INTERVAL_MS = 500;
-constexpr uint32_t AUTO_ALIGN_TIMEOUT_MS = 15000; // 包含等待首帧的时间。
+constexpr uint32_t AUTO_ALIGN_TIMEOUT_MS = 5000; // 包含等待首帧的时间。
 extern float NODE_PATH_SPEED_MM_S; // 正式节点路径平移速度，mm/s；不是电机RPM。
 extern float NODE_PATH_ACCEL_MM_S2; // 正式节点导航平移加速度，mm/s²；启动整条路径时冻结。
 extern float NODE_PATH_MIDDLE_SPEED_MM_S; // 中间道路平移速度，mm/s。
@@ -53,8 +53,8 @@ constexpr uint8_t TEMP_AREA_NODE = 22;
 // 启停区附近的地图节点；最终归位由 CORNER 视觉对齐。
 constexpr uint8_t HOME_ZONE1_NODE = 4;
 constexpr uint8_t HOME_ZONE2_NODE = 0;
-// 两个启停区实车车头均朝左；区2向右扫码是后退，不改变车头朝向。
-constexpr float START_ZONE_HEADING = 180.0f;
+constexpr float HOME_ZONE_HEADING = 180.0f;
+constexpr float StartZoneHeading(uint8_t zone) { return zone==1?180.0f:0.0f; }
 constexpr float DISC_AREA_HEADING = 90.0f;
 constexpr float COARSE_AREA_HEADING = 270.0f;
 constexpr float TEMP_AREA_HEADING = 180.0f;
@@ -121,7 +121,7 @@ void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic =
  * @param allowRepeat 是否允许重复执行已完成的正式准备动作。
  * @return 非零作业编号；0 表示未提交或无需重复。
  */
-uint32_t SubmitLidarPoseAction(bool fromCommand=false,bool allowRepeat=false);
+uint32_t SubmitLidarPoseAction(bool fromCommand=false,bool allowRepeat=false,uint8_t startZone=0);
 /**
  * @brief 处理扫码准备作业结束，仅在正式模式成功时登记准备已完成。
  */

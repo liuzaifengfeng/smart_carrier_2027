@@ -60,7 +60,7 @@ struct CompetitionIO {
     /**
      * @brief 提交起始区扫码准备姿态作业；返回作业编号，不在主流程等待物理动作。
      */
-    virtual uint32_t lidar()=0;
+    virtual uint32_t lidar(uint8_t startZone)=0;
     /**
      * @brief 读取指定作业的执行快照；只有终态 DONE 才表示该作业按当前完成策略结束。
      */
@@ -224,9 +224,9 @@ public:
         const auto tempVision=secondRound?VisionStartMode::WORK_AREA_LOADED:VisionStartMode::WORK_AREA;
 
         switch(phase) {
-        // ---------- 启动准备：收臂、锁定起始区、准备扫码姿态、等待启动 ----------
+        // ---------- 启动准备：收臂、锁定起始区、标定航向、等待 Nano 扫描 ----------
         case Phase::START_PREPARE_ARM:
-            if(motion(pose(ArmObservation::START))==1) { // 收臂程序完成后先静置3秒，再采集3秒Yaw。
+            if(motion(pose(ArmObservation::START))==1) {
                 io.beginHeadingCalibration();
                 phase=Phase::START_CALIBRATE_HEADING;
                 io.display("IMU CALIBRATING");
@@ -244,25 +244,17 @@ public:
                 phase=Phase::START_PREPARE_LIDAR;
             }
             break;
-        case Phase::START_PREPARE_LIDAR:
-            if(!ticket.id)ticket.id=io.lidar(); // 提交一次扫码准备姿态动作，保存作业编号。
-            if(!STARTUP_LIDAR_SCAN_ENABLED) {
-                if(!ticket.id)break; // 尚未提交斜移，继续等待提交成功。
-                const auto preparation=io.status(ticket.id);
-                if(!preparation.complete())break;
-                if(preparation.state!=MotionState::DONE){io.fail(STATE_TRANSFER_FAILED);break;}
-                ticket.clear();
-                io.display("AUTO START");
-                io.runStart(); // 跳过雷达时，斜移成功完成即开始正式计时。
-                next(STATE_READ_TASK); // 直接扫码，不再等待外部START。
-                break;
-            }
-            if(!ticket.id||io.status(ticket.id).complete()) {
-                ticket.clear();
-                phase=Phase::START_WAIT_PERMISSION;
-                io.display("WAIT START");
-            }
+        case Phase::START_PREPARE_LIDAR: {
+            if(!ticket.id)ticket.id=io.lidar(homeZone);
+            if(!ticket.id)break;
+            const auto preparation=io.status(ticket.id);
+            if(!preparation.complete())break;
+            if(preparation.state!=MotionState::DONE){io.fail(STATE_TRANSFER_FAILED);break;}
+            ticket.clear();
+            phase=Phase::START_WAIT_PERMISSION;
+            io.display("WAIT START");
             break;
+        }
         case Phase::START_WAIT_PERMISSION:
             if(io.permission()) {
                 io.runStart(); // 启动正式计时并记录 RUN_START。

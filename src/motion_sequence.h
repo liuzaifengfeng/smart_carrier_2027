@@ -4,7 +4,7 @@
 #include <stddef.h>
 
 namespace motion {
-enum class StepKind : uint8_t { ARM, WAIT, TURRET_READY, POSITION, GOTO, COMMIT, RAW_SERVO, ENABLE, VELOCITY, TRAY_ROTATE };
+enum class StepKind : uint8_t { ARM, WAIT, TURRET_READY, POSITION, GOTO, COMMIT, RAW_SERVO, ENABLE, VELOCITY, TRAY_ROTATE, TRAY_START, TRAY_READY };
 struct Step {
     StepKind kind=StepKind::WAIT;
     const char *name="WAIT";
@@ -12,12 +12,15 @@ struct Step {
     uint32_t waitMs=0,holdMs=0;
     uint16_t trayPowerMw=0;
     uint8_t cargo=0,color=0;
+    uint8_t trayClearanceCargo=0; // 放料转向时检查取料盘的相邻小一号盘是否占用。
+    uint8_t trayClearanceWorkPosition=0; // 用于放料转向时选择料盘避让角度。
     const char *materialEvent=nullptr;
     uint8_t materialPosition=0;
     uint8_t placementPosition=0; // 非零：工位放料下降结束时回读角度和伸出长度并记录偏差。
     bool planned=false;
     bool turretArrival=false; // 独立转向步骤由转盘电机实测多圈角度决定完成。
-    bool stackLiftArrival=false; // 仅二层码放后抬升：实测高度误差小于10mm即继续。
+    bool lengthArrival=false; // 装盘转向时同时检查伸缩轴到位。
+    bool workPlaceLiftArrival=false; // 工位放料后抬升：实测高度误差小于10mm即继续。
     bool liftArrival=false; // 初始化抬升实测到位后，才允许后续转盘动作。
     bool timed=false; // 此步按waitMs计时，即使开启机械臂反馈模式也不改为等待到位。
     bool slowLower=false; // 第一层工位放料下降：升降转速和实际加速度各减半。

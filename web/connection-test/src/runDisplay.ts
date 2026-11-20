@@ -14,7 +14,11 @@ const spanLabels: Record<string, string> = {
 }
 
 export const phases = Object.keys(phaseLabels).slice(0, -1)
-export const phaseName = (name: string) => phaseLabels[name] ?? name
+const statusLabels: Record<string, string> = {
+  WAIT_START: '启动准备', SCAN_FAILED: '扫码失败', ROUTE_FAILED: '导航失败', ALIGN_FAILED: '对齐失败',
+  TIMEOUT_FAILED: '任务超时', TRANSFER_FAILED: '搬运失败',
+}
+export const phaseName = (name: string) => phaseLabels[name] ?? statusLabels[name] ?? name
 export const activityName = (name: string) => spanLabels[name] ?? name
   .replace(/^VISION_WAIT_/, '视觉会话 · ')
   .replace(/^VISION_FIRST_FRAME_/, '等待视觉首帧 · ')

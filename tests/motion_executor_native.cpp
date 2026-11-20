@@ -78,7 +78,7 @@ struct Runtime : CompetitionIO {
         assert(!pending);requests.push_back(r);pending=++nextId;
         MotionStatus s;s.id=pending;s.state=MotionState::QUEUED;jobs[pending]=s;return pending;
     }
-    uint32_t lidar()override{MotionRequest r;r.kind=MotionKind::LIDAR_POSE;return submit(r);}
+    uint32_t lidar(uint8_t zone)override{MotionRequest r;r.kind=MotionKind::LIDAR_POSE;r.zone=zone;return submit(r);}
     MotionStatus status(uint32_t id)override{return jobs.at(id);}
     void visionStart(VisionStartMode mode)override{
         assert(!pending&&jobs.at(nextId).state==MotionState::DONE);
@@ -103,18 +103,16 @@ void polling() {
     Runtime r;CompetitionFlow flow(r,CompetitionMap{});
     flow.tick();for(int i=0;i<30;++i)flow.tick();assert(r.requests.size()==1&&r.current==STATE_WAIT_START);
     r.complete();flow.tick();for(int i=0;i<30;++i)flow.tick();assert(r.requests.size()==1);
-    r.startZone=1;flow.tick();flow.tick();assert(r.requests.size()==2);for(int i=0;i<30;++i)flow.tick();assert(r.requests.size()==2);
+    r.startZone=1;flow.tick();flow.tick();flow.tick();assert(r.requests.size()==2);for(int i=0;i<30;++i)flow.tick();assert(r.requests.size()==2);
     r.complete();flow.tick();
-    if(STARTUP_LIDAR_SCAN_ENABLED) {
-        for(int i=0;i<30;++i)flow.tick();assert(r.starts==0);
-        r.runPermission=true;flow.tick();
-    } else assert(r.current==STATE_READ_TASK&&r.starts==1&&r.runPermission);
+    for(int i=0;i<30;++i)flow.tick();assert(r.starts==0&&r.current==STATE_WAIT_START);
+    r.runPermission=true;flow.tick();
     flow.tick();assert(r.current==STATE_READ_TASK&&r.starts==1);
     r.jobs.at(r.pending).state=MotionState::RUNNING;for(int i=0;i<30;++i)flow.tick();assert(r.current==STATE_READ_TASK&&!r.taskPublished);
     r.complete();flow.tick();assert(r.current==STATE_GRAB_ROUND1&&r.taskPublished);
 }
 void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVision=false,bool cancel=false) {
-    Runtime r;r.startZone=zone;r.runPermission=STARTUP_LIDAR_SCAN_ENABLED;CompetitionFlow flow(r,CompetitionMap{});
+    Runtime r;r.startZone=zone;CompetitionFlow flow(r,CompetitionMap{});
     bool failureInjected=false;int discGrabs=0,recognitions=0,delay=0;
     for(int tick=0;tick<1500&&!r.finished;++tick) {
         r.time+=10;
@@ -123,6 +121,7 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
             if(reject)failureInjected=true;
             if(cancel&&!failureInjected&&r.requests.back().kind==MotionKind::PLACE_ROUND){r.current=STATE_TIMEOUT_FAILED;r.abort=true;failureInjected=true;}
             r.complete(!reject);delay=0;
+            if(!reject&&r.requests.back().kind==MotionKind::LIDAR_POSE)r.runPermission=true;
         }
         if(!r.vision.empty()&&r.alignment==AutoAlignmentState::WAITING&&++r.visionPolls>=3)
             r.alignment=failVision?AutoAlignmentState::FAILED:AutoAlignmentState::DONE;
@@ -171,17 +170,18 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
     assert(paths==7&&places==4&&retrieves==2);
 }
 void calibrationWait() {
-    Runtime r;r.startZone=1;r.calibrationReady=false;
+    Runtime r;r.calibrationReady=false;
     CompetitionFlow flow(r,CompetitionMap{});
     flow.tick();assert(!r.calibrationStarted);r.complete();flow.tick();
     assert(r.calibrationStarted&&r.requests.size()==1);
     for(int i=0;i<600;++i){r.time+=10;flow.tick();assert(r.requests.size()==1&&r.starts==0);}
     r.calibrationReady=true;
+    flow.tick();flow.tick();assert(r.requests.size()==1);
+    r.startZone=2;
     for(int i=0;i<3;++i)flow.tick();
-    assert(r.requests.size()==2&&r.requests.back().kind==MotionKind::LIDAR_POSE);
+    assert(r.requests.size()==2&&r.requests.back().kind==MotionKind::LIDAR_POSE&&r.requests.back().zone==2);
 }
 void failedStartupDoesNotStart() {
-    if(STARTUP_LIDAR_SCAN_ENABLED)return;
     for(uint8_t zone:{1,2}) {
         Runtime r;r.startZone=zone;CompetitionFlow flow(r,CompetitionMap{});
         flow.tick();r.complete();flow.tick();flow.tick();flow.tick();flow.tick();

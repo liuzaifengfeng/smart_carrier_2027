@@ -8,6 +8,7 @@ constexpr float TURRET_MOTOR_GEAR_RATIO = 1.0f; // 电机圈数 / 转盘圈数
 constexpr float TURRET_MOTOR_SPEED_DEG_S = 500.0f;
 constexpr uint8_t TURRET_ACCELERATION_SLOW = 126; // 保持当前实际运行曲线。
 constexpr uint8_t TURRET_ACCELERATION_FAST = 191; // 256-档位减半，实际加速度为慢档的2倍。
+constexpr uint8_t TURRET_ACCELERATION_CARGO_PLACE = 170; // 持料转向旋转料盘。
 constexpr uint8_t TURRET_MOTOR_POSITIVE_DIR = 1; // 转盘正角度为CCW，与原舵机方向一致
 constexpr uint32_t TURRET_QUERY_GAP_MS = 5; // 连续总线通信时，查询前留出的验证性帧间隔
 

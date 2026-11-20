@@ -46,6 +46,7 @@
 #define FSUS_CMD_SET_ANGLE_INTERVAL 0x0B// 梯形加减速角度控制
 #define FSUS_CMD_SET_ANGLE_MTURN    0x0D// 多圈绝对角度控制
 #define FSUS_CMD_SET_ANGLE_MTURN_INTERVAL 0x0E // 高级多圈角度控制（基于时间）
+#define FSUS_CMD_SET_ANGLE_MTURN_VELOCITY 0x0F // 高级多圈角度控制（基于速度）
 #define FSUS_CMD_RESET_TURNS        0x11// 重置当前累计圈数（不转动）
 #define FSUS_CMD_SET_ORIGIN        0x17// 将当前位置设置为舵机原点
 #define FSUS_CMD_STOP              0x18// 停止/释放/保持锁力
@@ -84,6 +85,7 @@ void Servo_SetAngle(uint8_t servoId, float angle, uint16_t interval = 0, uint16_
  * @param power 功率限制 (mW)
  */
 void Servo_SetAngleMTurn(uint8_t servoId, float angle, uint32_t interval = 0, uint16_t power = 0);
+void Servo_MoveCargoTray(float angle); // 自动选盘、归零用短斜坡，多圈目标角度单位为度。
 
 /**
  * @brief 高级多圈绝对角度控制（基于时间，指令 0x0E）

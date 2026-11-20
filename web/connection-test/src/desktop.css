@@ -43,6 +43,12 @@
 .desktop .last-response { overflow-wrap: anywhere; margin-top: 12px; border-top: 1px solid #adb5be; padding-top: 10px; }
 .desktop output { display: block; overflow-wrap: anywhere; }
 .desktop .map-target .actions label { flex: 1; min-width: 80px; }
+.desktop .map-status { border: 1px solid var(--border); border-bottom: 0; background: #f8f9fa; padding: 8px 12px; font-size: 13px; }
+.desktop .map-status div { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.desktop .map-status strong { font-variant-numeric: tabular-nums; }
+.desktop .map-status span { color: var(--muted); }
+.desktop .map-route-status { margin-top: 4px; border-top: 1px solid #d8dadd; padding-top: 4px; }
+.desktop .map-route-status strong { color: #087e72; }
 .desktop svg { width: 100%; background: white; }
 .desktop p { margin: 6px 0; }
 @media(max-width:850px) { .desktop-columns { grid-template-columns: 1fr; } .desktop .tab-content { max-height:none; } }

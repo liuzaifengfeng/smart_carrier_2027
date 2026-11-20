@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 
-const props = defineProps<{ pose: number[]; target: number[]; nodes: number[][]; preview?: number[][] }>()
+const props = defineProps<{ pose: number[]; target: number[]; nodes: number[][];
+  preview?: number[][]; route?: number[]; routeActive?: boolean }>()
 const emit = defineEmits<{ target: [x: number, y: number] }>()
 const canvas = ref<HTMLCanvasElement>()
 const width = 760
@@ -105,6 +106,25 @@ function draw() {
     ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2; ctx.stroke()
   }
 
+  const route = props.route?.map(id => props.nodes.find(node => node[0] === id))
+  if (route?.length && route.every(point => point !== undefined)) {
+    const color = props.routeActive ? '#087e72' : '#537c76'
+    ctx.beginPath()
+    route.forEach((point, index) => {
+      const px = x(point![1]!), py = y(point![2]!)
+      if (index === 0) ctx.moveTo(px, py)
+      else ctx.lineTo(px, py)
+    })
+    ctx.strokeStyle = color; ctx.lineWidth = 4
+    if (!props.routeActive) ctx.setLineDash([7, 5])
+    ctx.stroke(); ctx.setLineDash([])
+    for (const point of route) {
+      const [id, px, py] = point!
+      circle(x(px!), y(py!), 11, color, 2, '#eef8f5')
+      label(String(id), x(px!), y(py!), 11, '#164b45', true)
+    }
+  }
+
   function robot(pose: number[], target = false) {
     const [px, py, heading, high = 0, length = 0, turret = 0, pawl = 0] = pose as [number, number, number, ...number[]]
     const color = target ? '#e67e22' : '#145a86'
@@ -126,9 +146,9 @@ function draw() {
     const lane = target ? 0 : -58 * scale
     arrow(target ? 0 : -52 * scale, lane, (target ? 204 : 102) * scale, lane, target ? color : '#111', 4, 13)
     ctx.save(); ctx.translate(target ? 0 : -62 * scale, 0); ctx.rotate(radians(heading))
-    label(target ? '目标' : '理想位置', 0, 0, 12, target ? color : '#fff', true)
+    label(target ? '目标' : '小车', 0, 0, 12, target ? color : '#fff', true)
     ctx.restore()
-    if (!target) {
+    if (!target && pose.length >= 7) {
       ctx.translate(20 * scale, 135 * scale)
       const heightArc = (span: number, stroke: string) => {
         ctx.beginPath(); ctx.arc(0, 0, 84 * scale, Math.PI - span, Math.PI + span)
@@ -156,7 +176,7 @@ function draw() {
   label('+X', left + axis, bottom - 14, 12, '#d9342b')
   label('+Y', left + 18, bottom - axis, 12, '#d9342b')
   if (props.target.length >= 3) robot(props.target, true)
-  robot(props.pose.length >= 3 ? props.pose : [150, 150, 180])
+  if (props.pose.length >= 3) robot(props.pose)
 
   if (pointer) {
     const [px, py] = pointer
@@ -195,7 +215,7 @@ function pick(event: MouseEvent) {
   emit('target', node?.[1] ?? Math.round(px), node?.[2] ?? Math.round(py))
 }
 onMounted(draw)
-watch(() => [props.pose, props.target, props.nodes, props.preview], draw, { deep: true })
+watch(() => [props.pose, props.target, props.nodes, props.preview, props.route, props.routeActive], draw, { deep: true })
 </script>
 
 <template>

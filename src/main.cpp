@@ -82,10 +82,10 @@ public:
      * @brief 读取当前选择的起始区号；主流程在启动准备时锁定返家区号。
      */
     uint8_t zone()override{return static_cast<uint8_t>(currentStartZone);}
-    void beginHeadingCalibration()override{H30UsbBeginHeadingAverage(START_ZONE_HEADING);}
+    void beginHeadingCalibration()override{H30UsbBeginHeadingAverage();}
     bool headingCalibrationDone()override {
         const int result=H30UsbPollHeadingAverage();
-        if(result==1)LedPwm_BlinkCalibrationComplete();
+        if(result!=0)LedPwm_PlayCue(3);
         return result!=0;
     }
     /**
@@ -117,7 +117,7 @@ public:
     /**
      * @brief 提交起始区扫码准备姿态作业；返回作业编号，不在主流程等待物理动作。
      */
-    uint32_t lidar()override{return SubmitLidarPoseAction();}
+    uint32_t lidar(uint8_t startZone)override{return SubmitLidarPoseAction(false,false,startZone);}
     /**
      * @brief 读取指定作业的执行快照；只有终态 DONE 才表示该作业按当前完成策略结束。
      */
@@ -197,7 +197,7 @@ void Task_MainStateMachine(void *) {
     vTaskDelay(pdMS_TO_TICKS(1000));
     RuntimeCompetition runtime;CompetitionMap map;
     map.scan=SCAN_AREA_NODE;map.disc=DISC_AREA_NODE;map.coarse=COARSE_AREA_NODE;map.temp=TEMP_AREA_NODE;
-    map.home1=HOME_ZONE1_NODE;map.home2=HOME_ZONE2_NODE;map.homeHeading=START_ZONE_HEADING;
+    map.home1=HOME_ZONE1_NODE;map.home2=HOME_ZONE2_NODE;map.homeHeading=HOME_ZONE_HEADING;
     CompetitionFlow flow(runtime,map);
     for(;;) {
         logMainMotionState(currentState,roundProgress);
@@ -234,7 +234,7 @@ void setup() {
     // 在串口任务启动前读取，避免多个任务同时访问舵机总线。
     // 给上电中的舵机留出启动时间；总线已初始化但舵机不一定立即应答。
     vTaskDelay(pdMS_TO_TICKS(100));
-    Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY, 0);
+    Servo_MoveCargoTray(0);
     if (!TurretMotorReadAngle(currentArm.turret_angle))
         Serial.println("[Turret] startup angle unavailable; continuing startup");
     else Serial.printf("[Turret] startup mechanical angle=%.3f deg (saved zero)\n",currentArm.turret_angle);

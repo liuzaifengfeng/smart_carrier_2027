@@ -1,4 +1,5 @@
 #include "led_pwm.h"
+#include "battery_monitor.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
@@ -11,16 +12,17 @@ SemaphoreHandle_t pwmMutex = nullptr;
 bool faultBlink = false;
 uint8_t faultEffectBrightness = 0;
 uint32_t faultEffectStartMs = 0;
-bool calibrationBlink = false;
-uint32_t calibrationBlinkStartMs = 0;
-uint8_t calibrationEffectBrightness = 100;
+uint8_t cuePulses = 0;
+constexpr uint32_t cuePhaseMs = 67;
+uint32_t cueStartMs = 0;
+uint8_t cueBrightness = 100;
 class PwmLock {
 public:
     PwmLock() { if (pwmMutex) xSemaphoreTake(pwmMutex, portMAX_DELAY); }
     ~PwmLock() { if (pwmMutex) xSemaphoreGive(pwmMutex); }
 };
 void applyBrightness() {
-    const uint32_t percent = faultBlink ? faultEffectBrightness : calibrationBlink ? calibrationEffectBrightness : brightness;
+    const uint32_t percent = faultBlink ? faultEffectBrightness : cuePulses ? cueBrightness : brightness;
     ledcWrite(LED_PWM_CHANNEL, (percent * maxDuty + 50) / 100);
 }
 
@@ -129,14 +131,16 @@ uint32_t LedPwm_GetFrequency() { PwmLock lock; return ready ? frequencyHz : 0; }
  */
 void LedPwm_UpdateFaultBlink(bool fault) {
     PwmLock lock;
-    if (!ready) return;
     const uint32_t now = millis();
-    if(calibrationBlink) {
-        const uint32_t elapsed=now-calibrationBlinkStartMs;
-        if(fault||elapsed>=800)calibrationBlink=false;
-        else calibrationEffectBrightness=(elapsed/200)%2==0?100:0;
-        if(!fault){faultBlink=false;applyBrightness();return;}
+    if(cuePulses) {
+        const uint32_t elapsed=now-cueStartMs;
+        if(fault||elapsed>=cuePulses*2U*cuePhaseMs)cuePulses=0;
+        const bool on=cuePulses&&(elapsed/cuePhaseMs)%2==0;
+        cueBrightness=on?100:0;
+        BatteryMonitorSetCue(cuePulses!=0,on);
+        if(!fault){faultBlink=false;if(ready)applyBrightness();return;}
     }
+    if(!ready)return;
     if (fault) {
         if (!faultBlink) {
             faultBlink = true;
@@ -153,8 +157,9 @@ void LedPwm_UpdateFaultBlink(bool fault) {
     }
 }
 
-void LedPwm_BlinkCalibrationComplete() {
+void LedPwm_PlayCue(uint8_t pulses) {
     PwmLock lock;
-    calibrationBlinkStartMs=millis();calibrationEffectBrightness=100;calibrationBlink=true;
-    applyBrightness();
+    cueStartMs=millis();cueBrightness=100;cuePulses=pulses;
+    BatteryMonitorSetCue(pulses!=0,pulses!=0);
+    if(ready)applyBrightness();
 }

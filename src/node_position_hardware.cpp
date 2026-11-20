@@ -208,7 +208,7 @@ public:
             reportedStage=stage;
             Serial.printf("{EVT,NAV,ROUTE_PHASE,0,%s}\n",stage);
         }
-        if(changed||now-lastPositionReport>=1000) {
+        if(changed||now-lastPositionReport>=250) {
             lastPositionReport=now;
             Serial.printf("{EVT,NAV,ROUTE_POSITION,%.2f,%.2f,%.2f,%.3f,%.3f}\n",r.s,r.estimated.x,r.estimated.y,reference,r.heading);
         }

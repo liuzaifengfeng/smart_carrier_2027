@@ -29,6 +29,11 @@ const char *MotionHardware::issue(const Step &s) {
         if(!(s.planned?MoveArmPlanned(s.high,s.length,s.turret,s.pawl,s.speed,s.turretAcceleration,s.slowLower):
              MoveArm(s.high,s.length,s.turret,s.pawl,s.speed,s.turretAcceleration,s.slowLower)))return "EXECUTION";
         if(s.turretArrival)turretTarget=currentArm.turret_angle;
+        if(CargoTrayNeedsClearance(s.trayClearanceCargo)||CargoTrayHasPlacementLimit(s.trayClearanceWorkPosition)) {
+            Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY,
+                CargoTrayPlacementAngle(s.trayClearanceCargo,s.trayClearanceWorkPosition),0,0);
+            trayMoving=true;
+        }
         return nullptr;
     case StepKind::POSITION: return BeginPositionMove(s.high,s.length,s.turret,s.speed)?nullptr:"EXECUTION";
     case StepKind::GOTO: GotoPose(s.high,s.length,s.turret,true);break;
@@ -37,6 +42,10 @@ const char *MotionHardware::issue(const Step &s) {
     case StepKind::RAW_SERVO: Servo_SetAngle(s.cargo,s.turret,0,0);break;
     case StepKind::TRAY_ROTATE:
         Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY,s.turret,s.waitMs,s.trayPowerMw);
+        trayMoving=true;
+        break;
+    case StepKind::TRAY_START:
+        Servo_MoveCargoTray(s.turret);
         trayMoving=true;
         break;
     case StepKind::ENABLE: Emm_V5_En_Control_all(s.cargo);break;
@@ -49,8 +58,8 @@ const char *MotionHardware::issue(const Step &s) {
  * @brief 判断当前步骤是否使用反馈完成；POSITION、TURRET_READY 或显式开启的机械臂反馈模式使用反馈。
  */
 bool MotionHardware::feedback(const Step &s) {
-    return s.kind==StepKind::POSITION||s.kind==StepKind::TURRET_READY||s.kind==StepKind::TRAY_ROTATE||
-        (s.kind==StepKind::ARM&&(s.liftArrival||s.stackLiftArrival||s.turretArrival||ARM_FEEDBACK_ENABLED)&&!s.timed);
+    return s.kind==StepKind::POSITION||s.kind==StepKind::TURRET_READY||s.kind==StepKind::TRAY_ROTATE||s.kind==StepKind::TRAY_READY||
+        (s.kind==StepKind::ARM&&(s.liftArrival||s.workPlaceLiftArrival||s.turretArrival||ARM_FEEDBACK_ENABLED)&&!s.timed);
 }
 /**
  * @brief 检查位置移动、转台或机械臂实测到位条件，并通过 done 返回本次结果。
@@ -59,7 +68,7 @@ bool MotionHardware::feedback(const Step &s) {
 const char *MotionHardware::ready(const Step &s,bool &done) {
     done=false;if(cancelled())return "STOPPED";
     if(s.kind==StepKind::POSITION){TickPositionMove();done=!PositionMoveActive();return nullptr;}
-    if(s.kind==StepKind::TRAY_ROTATE) {
+    if(s.kind==StepKind::TRAY_ROTATE||s.kind==StepKind::TRAY_READY) {
         float angle=0;
         if(!Servo_QueryAngleMTurn(SERVO_ID_CARGO_TRAY,angle))return "SERVO_READ";
         done=fabsf(angle-s.turret)<=CARGO_TRAY_ARRIVAL_TOLERANCE_DEG;
@@ -71,12 +80,12 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
         if(ReadArmTurretAngle(angle)&&fabsf(angle-s.turret)<=5){done=true;return nullptr;}
         return millis()-turretStarted>=s.waitMs?"EXECUTION":nullptr;
     }
-    if(s.liftArrival||s.stackLiftArrival) {
+    if(s.liftArrival||s.workPlaceLiftArrival) {
         node_position::Motor state;
         const char *error=ReadMotorFeedback(5,state);if(error)return error;
         // 升降正方向为CCW，位置反馈为负；保留符号，不把反向位置当作抬升到位。
         const double measured=-static_cast<double>(state.position)*3200.0/65536.0/HEIGHT_PULSE;
-        done=s.stackLiftArrival ? fabs(measured-s.high)<10.0
+        done=s.workPlaceLiftArrival ? fabs(measured-s.high)<10.0
             : (state.flags&2)&&fabs(measured-s.high)<=1.0;
         if(done)Serial.printf("{EVT,MOTION,LIFT_ARRIVED,%lu,%.3f,%.3f}\n",
             static_cast<unsigned long>(job),s.high,measured);
@@ -85,9 +94,15 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
     if(s.turretArrival) {
         float measured=0;if(!ReadArmTurretAngle(measured))return "EXECUTION";
         done=fabsf(measured-turretTarget)<=5.0f;
+        if(done&&s.lengthArrival) {
+            node_position::Motor state;
+            const char *error=ReadMotorFeedback(6,state);if(error)return error;
+            const double length=fabs(static_cast<double>(state.position))*3200/65536/LENGTH_PULSE;
+            done=(state.flags&2)&&fabs(length-s.length)<=1.0;
+        }
         if(done)Serial.printf("{EVT,MOTION,TURRET_ARRIVED,%lu,%.3f,%.3f}\n",
             static_cast<unsigned long>(job),turretTarget,measured);
-        return nullptr; // 此处只检查转台，不等待升降、伸缩或夹爪反馈。
+        return nullptr;
     }
     // 反馈模式需在实车核验驱动器到位标志及编码器单位后显式开启。
     // currentArm 仅保存目标，只有下列实读反馈才能结束动作。

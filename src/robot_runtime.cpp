@@ -81,7 +81,7 @@ void updateVisionLight() {
 const char *visionNames[]={"DISC","DISC_MATERIAL","WORK_AREA","WORK_AREA_LOADED","CORNER"};
 bool visionSpanActive[5]={},visionFirstFrame[5]={};
 portMUX_TYPE visionTraceMux=portMUX_INITIALIZER_UNLOCKED;
-void traceVision(VisionStartMode mode,bool start) {
+void traceVision(VisionStartMode mode,bool start,bool reportMissingFrame=true) {
     if(mode==VisionStartMode::NONE)mode=VisionStartMode::DISC;
     const uint8_t index=static_cast<uint8_t>(mode);
     portENTER_CRITICAL(&visionTraceMux);
@@ -89,7 +89,7 @@ void traceVision(VisionStartMode mode,bool start) {
     visionSpanActive[index]=start;visionFirstFrame[index]=start;
     portEXIT_CRITICAL(&visionTraceMux);
     // 未收到首帧便结束会话时不伪造首帧耗时，统计脚本保留该未完成区间。
-    if(wasFirst)Serial.printf("{EVT,MOTION,ERROR,0,%lu,VISION_NO_FRAME_%s}\n",static_cast<unsigned long>(millis()),visionNames[index]);
+    if(wasFirst&&reportMissingFrame)Serial.printf("{EVT,MOTION,ERROR,0,%lu,VISION_NO_FRAME_%s}\n",static_cast<unsigned long>(millis()),visionNames[index]);
     if(wasActive)Serial.printf("{EVT,MOTION,SPAN,0,%lu,VISION_WAIT_%s,END}\n",static_cast<unsigned long>(millis()),visionNames[index]);
     if(start) {
         Serial.printf("{EVT,MOTION,SPAN,0,%lu,VISION_WAIT_%s,BEGIN}\n",static_cast<unsigned long>(millis()),visionNames[index]);
@@ -193,7 +193,7 @@ void CompleteLidarPose(bool success,bool debug){if(!debug&&success)releasePoseCo
  * @param allowRepeat 是否允许重复执行已完成的正式准备动作。
  * @return 非零作业编号；0 表示未提交或无需重复。
  */
-uint32_t SubmitLidarPoseAction(bool fromCommand,bool allowRepeat) {
+uint32_t SubmitLidarPoseAction(bool fromCommand,bool allowRepeat,uint8_t startZone) {
     if(!xLidarPoseMutex||xSemaphoreTake(xLidarPoseMutex,portMAX_DELAY)!=pdTRUE)return 0;
     if(!allowRepeat&&releasePoseCompleted) {
         if(fromCommand){Serial.println("{RSP,VISION,LIDAR_POSE,OK}");Serial.println("{EVT,VISION,LIDAR_POSE_DONE}");}
@@ -205,15 +205,17 @@ uint32_t SubmitLidarPoseAction(bool fromCommand,bool allowRepeat) {
     }
     // 采样期间复用忙碌应答，保持底盘静止；退出前释放姿态互斥量。
     if(H30UsbHeadingAverageActive()||MotionExecutorActive()){if(fromCommand)Serial.println("{RSP,VISION,LIDAR_POSE,ERR,BUSY}");xSemaphoreGive(xLidarPoseMutex);return 0;}
+    const uint8_t zone=startZone?startZone:static_cast<uint8_t>(currentStartZone);
     if(!allowRepeat&&!releasePoseInitialized) {
-        switch(currentStartZone) {
-        case START_ZONE_1: currentPose={2250,150,START_ZONE_HEADING};break;
-        case START_ZONE_2: currentPose={150,150,START_ZONE_HEADING};break;
+        switch(zone) {
+        case START_ZONE_1: currentPose={2250,150,StartZoneHeading(1)};break;
+        case START_ZONE_2: currentPose={150,150,StartZoneHeading(2)};break;
         default: xSemaphoreGive(xLidarPoseMutex);return 0;
         }
-        releasePoseInitialized=true; // 保留初始化后的3秒平均航向参考。
+        H30UsbBindHeadingAverage(currentPose.theta);
+        releasePoseInitialized=true;
     }
-    MotionRequest request;request.kind=MotionKind::LIDAR_POSE;request.zone=static_cast<uint8_t>(currentStartZone);request.debug=allowRepeat;
+    MotionRequest request;request.kind=MotionKind::LIDAR_POSE;request.zone=zone;request.debug=allowRepeat;
     strcpy(request.category,"VISION");strcpy(request.command,"LIDAR_POSE");
     // ACK 先于通知工作任务：提交在串口应答之后，完成事件由执行器发出。
     if(fromCommand)Serial.println("{RSP,VISION,LIDAR_POSE,ACK}");
@@ -240,9 +242,10 @@ void TickVisualAlignment() {
     }
     if(autoAlignmentState==AutoAlignmentState::WAITING&&millis()-autoAlignmentStartedMs>=AUTO_ALIGN_TIMEOUT_MS) {
         OmniMove(0,0,0,0);ResetDiscAlignmentPid();ResetAlignmentWait();
-        traceVision(alignmentOwner,false);alignmentEnabled=false;autoAlignmentState=AutoAlignmentState::FAILED;
+        traceVision(alignmentOwner,false,false);alignmentEnabled=false;autoAlignmentState=AutoAlignmentState::DONE;
         updateVisionLight();
-        Serial.println("{EVT,VISION,ALIGN_FAILED,TIMEOUT}");
+        Serial.println("[Align] Timeout; alignment accepted");
+        Serial.println("{EVT,VISION,ALIGN_DONE}");
     }
     if(!alignmentEnabled){alignedReported=false;lastFeedbackMs=0;xSemaphoreGive(xAlignmentMotionMutex);return;}
     VisualAlignmentFrame_t alignment;

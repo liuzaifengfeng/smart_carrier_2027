@@ -18,6 +18,10 @@ class DiscImuAlignmentTests(unittest.TestCase):
         runtime = (ROOT / 'src/robot_runtime.cpp').read_text(encoding='utf-8')
         tick = runtime[runtime.index('void TickVisualAlignment()'):runtime.index('// 通过 Serial0')]
         (cache / 'disc_tick_actual.inc').write_text(tick, encoding='utf-8')
+        runtime_header = (ROOT / 'src/robot_runtime.h').read_text(encoding='utf-8')
+        timeout = next(line for line in runtime_header.splitlines()
+                       if line.startswith('constexpr uint32_t AUTO_ALIGN_TIMEOUT_MS'))
+        (cache / 'disc_alignment_timing_actual.inc').write_text(timeout + '\n', encoding='utf-8')
         run_native(build_native('disc_imu_alignment', ['tests/disc_imu_alignment_native.cpp']))
 
 

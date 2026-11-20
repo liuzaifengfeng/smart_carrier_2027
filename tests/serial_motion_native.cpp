@@ -62,7 +62,8 @@ enum class NodePathState {IDLE,WAITING,RECEIVING,RECEIVED,RUNNING,DONE,FAILED};
 NodePathState nodePathState=NodePathState::IDLE;
 uint8_t nodePathBuffer[25];size_t nodePathLen=0;
 constexpr uint8_t DISC_AREA_NODE=14,COARSE_AREA_NODE=10,TEMP_AREA_NODE=22;
-constexpr float START_ZONE_HEADING=180;
+constexpr float StartZoneHeading(uint8_t zone){return zone==1?180.0f:0.0f;}
+uint32_t SubmitLidarPoseAction(bool fromCommand=false,bool allowRepeat=false,uint8_t startZone=0);
 float NODE_PATH_SPEED_MM_S=2500;
 #include "servo.h"
 RobotPose currentPose{2250,150,180};ArmPose currentArm{};
@@ -106,9 +107,12 @@ bool Servo_WritePid(uint8_t id,const uint16_t values[7]){pidId=id;for(int i=0;i<
 void CalibrateH30MapHeading(float){++calibrations;}
 bool headingCollecting=false;
 bool H30UsbHeadingAverageActive(){return headingCollecting;}
+void H30UsbBindHeadingAverage(float){}
 const char *H30UsbGetAttitude(H30Attitude &,uint32_t &age){age=0;return nullptr;}
 const char *H30UsbGetHeading(float &heading,uint32_t &age){heading=180;age=0;return nullptr;}
 bool LedPwm_IsReady(){return true;}
+uint8_t cuePulses=0;
+void LedPwm_PlayCue(uint8_t pulses){cuePulses=pulses;}
 bool LedPwm_SetBrightness(uint32_t){return true;}
 uint8_t LedPwm_GetBrightness(){return 0;}
 bool LedPwm_SetFrequency(uint32_t){return true;}
@@ -165,20 +169,21 @@ void dispatch(const char *command) {
 void finish(bool success=true){active=false;result.state=success?MotionState::DONE:MotionState::FAILED;}
 void grab() {
     serialDebugMode=false;currentState=STATE_GRAB_ROUND1;discMaterialActive=firstDiscGrabReady=true;
-    currentTask=parseTaskCode("161+312+616+231");assert(currentTask.valid);
-    dispatch("{CMD,VISION,GRAB,1,1}");assert(submissions==1&&launches==1&&active);
-    assert(captured.kind==MotionKind::DISC_GRAB&&captured.automatic&&captured.color==1&&captured.cargo==1);
-    assert(roundProgress==0&&cargoPlatforms[0].material==MATERIAL_NONE&&!firstDiscGrabReady);
-    assert(Serial.text.find("{RSP,VISION,GRAB,ACK,1,1}")!=std::string::npos);
+    currentTask=parseTaskCode("162+312+612+231");assert(currentTask.valid);
+    dispatch("{CMD,VISION,GRAB,1,1}");assert(submissions==0&&!active);
+    dispatch("{CMD,VISION,GRAB,1,3}");assert(submissions==1&&launches==1&&active);
+    assert(captured.kind==MotionKind::DISC_GRAB&&captured.automatic&&captured.color==1&&captured.cargo==3);
+    assert(roundProgress==0&&cargoPlatforms[2].material==MATERIAL_NONE&&!firstDiscGrabReady);
+    assert(Serial.text.find("{RSP,VISION,GRAB,ACK,1,3}")!=std::string::npos);
     dispatch("{CMD,POSE,GET}");dispatch("{CMD,CFG,GET,8}");dispatch("{CMD,MOTION,STATUS,1}");dispatch("{CMD,SYS,HELLO}");
     assert(poseQueries==1&&configQueries==1&&active&&submissions==1&&roundProgress==0);
     dispatch("{CMD,NAV,STOP}");assert(cancels==1&&!active&&result.state==MotionState::CANCELLED&&roundProgress==0);
 }
 void positions() {
     serialDebugMode=false;currentState=STATE_GRAB_ROUND2;discMaterialActive=firstDiscGrabReady=true;
-    currentTask=parseTaskCode("161+312+616+231");
+    currentTask=parseTaskCode("162+312+612+231");assert(currentTask.valid);
     dispatch("{CMD,VISION,DISC_POSITIONS,1,1,2,6,3,6}");
-    assert(captured.position==2&&captured.color==6&&captured.cargo==1&&active);
+    assert(captured.position==2&&captured.color==6&&captured.cargo==3&&active);
     assert(!discMaterialActive&&!firstDiscGrabReady&&!roundProgress);
     const int submitted=submissions;dispatch("{CMD,VISION,DISC_POSITIONS,3,6}");assert(submitted==submissions);
     dispatch("{CMD,CHASSIS,MOVE,0,0,1}");assert(!active&&cancels==1&&!roundProgress);
@@ -196,6 +201,8 @@ void maintenance() {
     dispatch("{CMD,ARM,INIT_START}");assert(captured.kind==MotionKind::ARM_POSE&&active);
     dispatch("{CMD,ARM,SERVO_PID_SET,3,1,2,3,4,5,6,7}");assert(pidId==1&&pidValues[0]==200);
     dispatch("{CMD,IMU,GET}");dispatch("{CMD,POSE,GET}");dispatch("{CMD,CFG,GET,7}");assert(active&&poseQueries==1&&configQueries==1);
+    dispatch("{CMD,SYS,BEEP}");
+    assert(cuePulses==3&&active&&submissions==1&&Serial.text.find("{RSP,SYS,BEEP,OK}")!=std::string::npos);
     dispatch("{CMD,ARM,DEMO1}");assert(submissions==1&&Serial.text.find("ERR,BUSY")!=std::string::npos);
     dispatch("{CMD,NAV,STOP}");finish();
     dispatch("{CMD,ARM,TRANSFER,2,3}");assert(captured.kind==MotionKind::TRANSFER&&captured.debug&&captured.cargo==2&&captured.work==3);
@@ -237,7 +244,7 @@ void lidar() {
     finish();CompleteLidarPose(true,false);
     dispatch("{CMD,VISION,LIDAR_POSE}");assert(submissions==1&&calibrations==0);
     assert(Serial.text.find("LIDAR_POSE_DONE")!=std::string::npos);
-    // 自动START后已在扫码或等路径，重复握手仍须返回已完成，不能再次斜移。
+    // START 后已在扫码或等路径，重复握手仍须返回已完成，不能再次平移。
     active=true;
     const size_t before=Serial.text.size();
     dispatch("{CMD,VISION,LIDAR_POSE}");
@@ -293,7 +300,7 @@ void boot() {
     assert(serialDebugMode&&!taskCreations);
     inputLevel=1;clockMs+=100;PollDebugBootButton();active=false;serialBootSetIdle(true);clockMs+=100;PollDebugBootButton();
     inputLevel=LOW;clockMs+=100;PollDebugBootButton();clockMs+=100;PollDebugBootButton();serialBootReleaseAtIdle(true);
-    assert(!serialDebugMode&&taskCreations==1&&!enableRun&&!taskMotionAborted);
+    assert(!serialDebugMode&&taskCreations==1&&!enableRun&&!taskMotionAborted&&cuePulses==2);
 }
 void startup() {
     Emm_V5_Init();
@@ -302,9 +309,9 @@ void startup() {
 }
 void zones() {
     dispatch("{CMD,NAV,START_ZONE,1}");assert(currentPose.x==2250&&currentPose.y==150&&currentPose.theta==180);
-    dispatch("{CMD,NAV,START_ZONE,2}");assert(currentPose.x==150&&currentPose.y==150&&currentPose.theta==180);
+    dispatch("{CMD,NAV,START_ZONE,2}");assert(currentPose.x==150&&currentPose.y==150&&currentPose.theta==0);
     serialDebugMode=false;SubmitLidarPoseAction(false,false);
-    assert(currentPose.x==150&&currentPose.y==150&&currentPose.theta==180&&captured.zone==2);
+    assert(currentPose.x==150&&currentPose.y==150&&currentPose.theta==0&&captured.zone==2);
     const auto left=PlanNodeSegmentHeading(180,180,false,0),up=PlanNodeSegmentHeading(left.heading,90,false,0);
     assert(!left.reverse&&left.turn==0&&!up.reverse&&up.turn==-90);
 }

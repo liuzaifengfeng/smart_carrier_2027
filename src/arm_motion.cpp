@@ -3,6 +3,7 @@
 #include "motion_executor.h"
 #include "turret_path.h"
 #include "disc_position_grab.h"
+#include "disc_material_decision.h"
 #include "node_route_heading.h"
 
 using namespace motion;
@@ -32,6 +33,13 @@ void rotateTray(Program &p,float angle,uint32_t interval=0,uint16_t power=0) {
     Step s;s.kind=StepKind::TRAY_ROTATE;s.name="TRAY_ROTATE";
     s.turret=angle;s.waitMs=interval;s.trayPowerMw=power;p.append(s);
 }
+void prepareTray(Program &p,uint8_t cargo,bool checkArrival) {
+    Step s;
+    s.kind=checkArrival?StepKind::TRAY_READY:StepKind::TRAY_START;
+    s.name=checkArrival?"TRAY_READY":"TRAY_START";
+    s.turret=cargoTrayAngles[cargo-1];
+    p.append(s);
+}
 /**
  * @brief 追加底盘相对位置动作，x/y为mm、theta为转角deg、speed为最大RPM。
  */
@@ -39,17 +47,18 @@ void position(Program &p,float x,float y,float theta,float speed){Step s;s.kind=
 /**
  * @brief 构建到工位上方的平移、稳定和转向步骤；angle可指定规划后的多圈转台角。
  */
-void above(Program &p,const MaterialStationPose &pose,float claw,const MaterialApproachDelays &d,const float *angle,uint8_t cargo=0) {
+void above(Program &p,const MaterialStationPose &pose,float claw,const MaterialApproachDelays &d,const float *angle) {
     arm(p,"APPROACH_TRANSLATE",materialTransferLayout.approachHeight,pose.length,-1,claw,materialMotionSteps.approachTranslateSpeed,d.translateMs);
     wait(p,"APPROACH_SETTLE",d.settleMs);
-    if(cargo)rotateTray(p,cargoTrayAngles[cargo-1]);
     rotateArm(p,"APPROACH_ROTATE",materialTransferLayout.approachHeight,pose.length,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,angle);
 }
 /**
  * @brief 构建到位、下降、夹紧、抬升及可选缩回的取料序列；retract和together选择缩回衔接方式。
  */
 void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelays &d,bool retract,bool together,const float *angle,uint8_t cargo=0) {
-    above(p,pose,materialTransferLayout.clawOpenAngle,d.pickAbove,angle,cargo);
+    const float openAngle=cargo?materialTransferLayout.cargoClawOpenAngle:materialTransferLayout.clawOpenAngle;
+    above(p,pose,openAngle,d.pickAbove,angle);
+    if(cargo)prepareTray(p,cargo,true);
     arm(p,"PICK_DESCEND",pose.high,-1,-1,-1,materialMotionSteps.pickDescendSpeed,d.pickDescendMs);
     arm(p,"PICK_GRIP",-1,-1,-1,materialTransferLayout.clawClosedAngle,materialMotionSteps.pickGripSpeed,d.pickGripMs,false,ARM_GRIP_HOLD_MS);
     arm(p,"PICK_LIFT",materialTransferLayout.approachHeight,together?0:-1,-1,-1,materialMotionSteps.pickLiftSpeed,d.pickLiftMs);
@@ -58,11 +67,16 @@ void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelay
 /**
  * @brief 构建放料转向、下降、松爪及抬升序列；height为实际层高，retracted表示小臂已缩回。
  */
-void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle,bool slowLower=false,uint8_t workPosition=0) {
+void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle,bool slowLower=false,uint8_t workPosition=0,uint8_t sourceCargo=0,uint8_t destinationCargo=0) {
     if(retracted) {
         wait(p,"PLACE_TRANSLATE_WAIT",d.placeAbove.translateMs);wait(p,"PLACE_SETTLE",d.placeAbove.settleMs);
-        rotateArm(p,"PLACE_ROTATE",-1,-1,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,angle);
+        rotateArm(p,"PLACE_ROTATE",-1,destinationCargo?pose.length:-1,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,angle);
+        if(destinationCargo)p.steps[p.count-1].turretAcceleration=TURRET_ACCELERATION_CARGO_PLACE;
+        p.steps[p.count-1].lengthArrival=destinationCargo!=0;
+        p.steps[p.count-1].trayClearanceCargo=sourceCargo;
+        p.steps[p.count-1].trayClearanceWorkPosition=workPosition;
     } else above(p,pose,-1,d.placeAbove,angle); // 已夹紧物料，移位和下降不再重复操作夹爪。
+    if(destinationCargo)prepareTray(p,destinationCargo,true);
     if(slowLower) {
         arm(p,"PLACE_DESCEND_10",10,retracted?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
         p.steps[p.count-1].slowLower=true;
@@ -70,13 +84,15 @@ void place(Program &p,const MaterialStationPose &pose,float height,const Materia
         arm(p,"PLACE_DESCEND",0,-1,-1,-1,materialMotionSteps.placeDescendSpeed,100);
         p.steps[p.count-1].slowLower=true;
         p.steps[p.count-1].timed=true;
-    } else arm(p,"PLACE_DESCEND",height,retracted?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+    } else arm(p,"PLACE_DESCEND",height,retracted&&!destinationCargo?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
     p.steps[p.count-1].placementPosition=workPosition;
     if(slowLower) { // 仅工位第一层：先卸去夹紧力，300ms后再完全张开。
         arm(p,"PLACE_RELEASE_ZERO",-1,-1,-1,0,materialMotionSteps.placeReleaseSpeed,300);
         p.steps[p.count-1].timed=true;
     }
-    arm(p,"PLACE_RELEASE",-1,-1,-1,materialTransferLayout.clawOpenAngle,materialMotionSteps.placeReleaseSpeed,d.placeReleaseMs,false,ARM_RELEASE_HOLD_MS);
+    const float openAngle=&pose==&materialTransferLayout.cargo
+        ?materialTransferLayout.cargoClawOpenAngle:materialTransferLayout.clawOpenAngle;
+    arm(p,"PLACE_RELEASE",-1,-1,-1,openAngle,materialMotionSteps.placeReleaseSpeed,d.placeReleaseMs,false,ARM_RELEASE_HOLD_MS);
     arm(p,"PLACE_LIFT",materialTransferLayout.approachHeight,-1,-1,-1,materialMotionSteps.placeLiftSpeed,d.placeLiftMs);
 }
 /**
@@ -95,8 +111,9 @@ const char *transfer(const MotionRequest &r,Program &p) {
     const bool demo=r.kind==MotionKind::DEMO_PLACE||r.kind==MotionKind::DEMO_RETRIEVE;
     const uint8_t count=single?1:3;
     float angles[6];uint8_t cargos[3],works[3];
+    // 正式搬运按抓取次序遍历载物台 3、2、1，位置码只指定目的工位。
     for(uint8_t i=0;i<count;++i) {
-        cargos[i]=single?r.cargo:r.kind==MotionKind::DEMO_RETRIEVE?3-i:i+1;
+        cargos[i]=single?r.cargo:r.kind==MotionKind::DEMO_PLACE?i+1:CargoForGrabIndex(i);
         works[i]=single?r.work:demo?i+1:r.positions[i];
         const auto &cargo=materialTransferLayout.cargo,&work=materialTransferLayout.workArea[works[i]-1];
         if(retrieve&&cargoPlatforms[cargos[i]-1].material!=MATERIAL_NONE)return "OCCUPIED";
@@ -110,11 +127,12 @@ const char *transfer(const MotionRequest &r,Program &p) {
         const auto &d=retrieve?workAreaToCargoDelays[works[i]-1][cargos[i]-1]:cargoToWorkAreaDelays[cargos[i]-1][works[i]-1];
         const auto &source=retrieve?work:cargo,&destination=retrieve?cargo:work;
         const float height=destination.high+(retrieve?0:(r.layer-1)*materialTransferLayout.secondLayerOffset);
+        prepareTray(p,cargos[i],false);
         pick(p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i],retrieve?0:cargos[i]);
-        if(retrieve)rotateTray(p,cargoTrayAngles[cargos[i]-1]);
-        place(p,destination,height,d,true,&selected.anglesDeg[2*i+1],!retrieve&&r.layer==1,retrieve?0:works[i]);
-        if(!retrieve&&r.layer==2) {
-            p.steps[p.count-1].stackLiftArrival=true;
+        place(p,destination,height,d,true,&selected.anglesDeg[2*i+1],!retrieve&&r.layer==1,
+              retrieve?0:works[i],retrieve?0:cargos[i],retrieve?cargos[i]:0);
+        if(!retrieve) {
+            p.steps[p.count-1].workPlaceLiftArrival=true;
             p.steps[p.count-1].waitMs=0;
         }
         p.steps[p.count-1].materialEvent=retrieve?"WORK_PICK":"WORK_PLACE";
@@ -170,12 +188,13 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
     case MotionKind::LOAD_ROUND: {
         const uint8_t count=r.kind==MotionKind::LOAD_ROUND?3:1;
         for(uint8_t i=0;i<count;++i) {
-            const uint8_t cargo=r.kind==MotionKind::LOAD_ROUND?i+1:r.cargo;
+            const uint8_t cargo=r.kind==MotionKind::LOAD_ROUND?CargoForGrabIndex(i):r.cargo;
             if(cargoPlatforms[cargo-1].material!=MATERIAL_NONE&&!r.force)return "OCCUPIED";
         }
         for(uint8_t i=0;i<count;++i) {
-            const uint8_t cargo=r.kind==MotionKind::LOAD_ROUND?i+1:r.cargo,color=r.kind==MotionKind::LOAD_ROUND?r.colors[i]:r.color;
+            const uint8_t cargo=r.kind==MotionKind::LOAD_ROUND?CargoForGrabIndex(i):r.cargo,color=r.kind==MotionKind::LOAD_ROUND?r.colors[i]:r.color;
             const auto &destination=materialTransferLayout.cargo;
+            prepareTray(p,cargo,false);
             if(r.kind!=MotionKind::HELD_DISC) {
                 if(r.position>=1&&r.position<=3) {
                     const float length=r.position==2?0:150,angle=r.position==1?71:r.position==2?90:102;
@@ -192,9 +211,8 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
             } else {
                 arm(p,"DISC_LIFT",materialTransferLayout.approachHeight,0,-1,-1,materialMotionSteps.discLiftSpeed,commonMaterialDelays.pickLiftMs);
             }
-            // 圆盘抓后与工作区取回一样：抬升缩回，再转向，同时伸出下降；共用公共延时表。
-            rotateTray(p,cargoTrayAngles[cargo-1]);
-            place(p,destination,destination.high,commonMaterialDelays,true,nullptr);
+            // 抬升缩回并转向料盘，确认目标盘到位后再伸出下降。
+            place(p,destination,destination.high,commonMaterialDelays,true,nullptr,false,0,0,cargo);
             if(r.kind!=MotionKind::HELD_DISC) {
                 p.steps[p.count-1].materialEvent="DISC_PICK";p.steps[p.count-1].materialPosition=r.position;
             }
@@ -203,15 +221,8 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         break;
     }
     case MotionKind::LIDAR_POSE:
-        position(p,125,r.zone==1?100:-100,0,200);
-        if(!STARTUP_LIDAR_SCAN_ENABLED)break; // 临时跳过雷达机械臂姿态，保留底盘斜移及其位姿更新。
-        if(r.zone==1) {
-            arm(p,"LIDAR_LIFT",170,100,-1,-1,200);rotateArm(p,"LIDAR_TURN",-1,-1,45,-1,200);
-            arm(p,"LIDAR_LOWER",0,100,-1,-1,200,materialAuxiliaryDelays.lidarZone1LiftMs);
-        } else {
-            arm(p,"LIDAR_LIFT",170,100,135,-1,200,materialAuxiliaryDelays.lidarZone2LiftMs);
-            arm(p,"LIDAR_LOWER",0,100,135,-1,200,materialAuxiliaryDelays.lidarZone2LiftMs);
-        }
+        position(p,r.zone==1?100:-100,100,0,200);
+        position(p,0,0,r.zone==1?-45:45,200);
         break;
     case MotionKind::HOME_OBSERVE:
         position(p,0,0,NodeRouteTurn(currentPose.theta,180),80);
@@ -219,7 +230,7 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         break;
     case MotionKind::HOME_RETURN: {
         observation(p,ArmObservation::START,r.zone);
-        position(p,r.zone==1?-115:-70,r.zone==1?-175:200,0,200);break;
+        position(p,r.zone==1?-115:-90,r.zone==1?-175:170,0,200);break;
     }
     case MotionKind::POSITION: position(p,r.x,r.y,r.theta,r.speed);break;
     case MotionKind::GOTO: {Step s;s.kind=StepKind::GOTO;s.name="GOTO";s.high=r.x;s.length=r.y;s.turret=r.theta;p.append(s);break;}
@@ -247,6 +258,10 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         break;
     default: break;
     }
-    for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==StepKind::ARM)p.steps[i].turretAcceleration=turretAcceleration;
+    for(size_t i=0;i<p.count;++i) {
+        auto &step=p.steps[i];
+        if(step.kind==StepKind::ARM&&step.turretAcceleration!=TURRET_ACCELERATION_CARGO_PLACE)
+            step.turretAcceleration=turretAcceleration;
+    }
     return nullptr;
 }

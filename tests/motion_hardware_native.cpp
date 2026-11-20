@@ -28,6 +28,7 @@ uint32_t ARM_FEEDBACK_ENABLED=0,ARM_GRIP_HOLD_MS=0,ARM_RELEASE_HOLD_MS=0;
 float HEIGHT_PULSE=80,LENGTH_PULSE=30.2f;
 ArmPose currentArm{100,20,90,50};
 CargoPlatform cargoPlatforms[3]={{MATERIAL_NONE},{MATERIAL_NONE},{MATERIAL_NONE}};
+float cargoTrayAngles[3]={150,213,276};
 bool cancelled(){return stop;}
 bool MoveArm(float,float,float,float,float,uint8_t ramp,bool slowLower){++issued;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
 bool MoveArmPlanned(float,float,float,float,float,uint8_t ramp,bool slowLower){++issued;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
@@ -40,6 +41,8 @@ void Servo_SetAngle(uint8_t,float,uint16_t,uint16_t){++issued;}
 void Servo_SetAngleMTurn(uint8_t id,float angle,uint32_t interval,uint16_t power){
     assert(id==SERVO_ID_CARGO_TRAY);trayTarget=angle;trayInterval=interval;trayPower=power;
 }
+int smoothTrayCommands=0;
+void Servo_MoveCargoTray(float angle){trayTarget=angle;++smoothTrayCommands;}
 void Servo_HoldPosition(uint8_t id){assert(id==SERVO_ID_CARGO_TRAY);trayHeld=true;}
 void Emm_V5_En_Control_all(bool){++issued;}
 void MovePose(int,float,bool){++issued;}
@@ -71,6 +74,42 @@ void trayArrival() {
     assert(!hardware.issue(s));servoAvailable=false;
     assert(hardware.ready(s,done)&&!done);
     hardware.stopTray();assert(trayHeld);
+
+    s=motion::Step{};
+    s.kind=motion::StepKind::ARM;s.turretArrival=true;s.trayClearanceCargo=3;
+    cargoPlatforms[0].material=MATERIAL_RED;
+    assert(!hardware.issue(s)&&trayTarget==260); // 1 号有料，但 3 号只检查 2 号。
+    cargoPlatforms[1].material=MATERIAL_BLUE;
+    assert(!hardware.issue(s)&&trayTarget==306);
+    s.trayClearanceCargo=2;
+    servoAvailable=true;turretMeasured=currentArm.turret_angle;
+    assert(!hardware.issue(s)&&trayTarget==243&&trayInterval==0);
+    assert(!hardware.ready(s,done)&&done); // 沿用机械臂转向的到位条件。
+    s.trayClearanceCargo=1;
+    assert(!hardware.issue(s)&&trayTarget==243);
+
+    s.trayClearanceCargo=3;s.trayClearanceWorkPosition=3;
+    assert(!hardware.issue(s)&&trayTarget==239);
+    trayMeasured=276;
+    assert(hardware.feedback(s)&&!hardware.ready(s,done)&&done);
+    cargoPlatforms[1].material=MATERIAL_NONE;
+    s.kind=motion::StepKind::ARM;trayTarget=276;
+    assert(!hardware.issue(s)&&trayTarget==239); // 仅 1 号有料也要避让。
+    cargoPlatforms[0].material=MATERIAL_NONE;
+    trayTarget=276;
+    assert(!hardware.issue(s)&&trayTarget==276);
+
+    s=motion::Step{};
+    s.kind=motion::StepKind::TRAY_START;s.turret=150;
+    assert(!hardware.issue(s)&&!hardware.feedback(s)&&trayTarget==150&&smoothTrayCommands==1);
+    s.kind=motion::StepKind::TRAY_READY;
+    trayTarget=123;trayMeasured=100;
+    assert(!hardware.issue(s)&&hardware.feedback(s)&&trayTarget==123);
+    assert(!hardware.ready(s,done)&&!done);
+    trayMeasured=150;
+    assert(!hardware.ready(s,done)&&done);
+    s.kind=motion::StepKind::TRAY_START;s.turret=0;
+    assert(!hardware.issue(s)&&!hardware.feedback(s)&&trayTarget==0&&smoothTrayCommands==2);
 }
 void look3() {
     MotionHardware hardware;hardware.configure(1,cancelled);
@@ -97,6 +136,11 @@ void turretArrival() {
     turretMeasured=355;assert(!hardware.ready(s,done)&&done);
     turretMeasured=355.1f;assert(!hardware.ready(s,done)&&!done);
     turretMeasured=-10;assert(!hardware.ready(s,done)&&!done); // 不把错圈当作到位。
+    s.length=20;s.lengthArrival=true;
+    turretMeasured=350;motorAtTarget=false;
+    assert(!hardware.ready(s,done)&&!done);
+    motorAtTarget=true;
+    assert(!hardware.ready(s,done)&&done);
     servoAvailable=false;assert(hardware.ready(s,done));servoAvailable=true;
     stop=true;assert(hardware.ready(s,done));stop=false;
 }
@@ -140,6 +184,12 @@ void liftArrival() {
     bool done=false;motorError="MOTOR_FEEDBACK_TIMEOUT";
     assert(hardware.ready(lift,done)&&!done);
     motorError=nullptr;assert(!hardware.ready(lift,done)&&done); // 通信恢复后可以再次检查。
+    lift.liftArrival=false;lift.workPlaceLiftArrival=true;
+    flags=1;
+    customPosition=-245760; // 150 mm，误差正好 10 mm。
+    assert(hardware.feedback(lift)&&!hardware.ready(lift,done)&&!done);
+    customPosition=-247398; // 约 151 mm，进入误差范围。
+    assert(!hardware.ready(lift,done)&&done);
     stop=true;assert(hardware.ready(lift,done)&&!done);
 }
 void placement() {

@@ -19,10 +19,11 @@ static bool alignmentEnabled=true,alignmentStopPending=false;
 static uint32_t alignmentGeneration=0,autoAlignmentStartedMs=1000;
 static AutoAlignmentState autoAlignmentState=AutoAlignmentState::WAITING;
 static VisionStartMode alignmentOwner=VisionStartMode::DISC;
-constexpr uint32_t AUTO_ALIGN_TIMEOUT_MS=15000,ALIGN_FEEDBACK_TIMEOUT_MS=300,ALIGN_LOG_INTERVAL_MS=500;
+#include "disc_alignment_timing_actual.inc"
+constexpr uint32_t ALIGN_FEEDBACK_TIMEOUT_MS=300,ALIGN_LOG_INTERVAL_MS=500;
 constexpr uint16_t ALIGN_PID_MAX_SPEED_RPM=50;
 constexpr float DISC_AREA_HEADING=90;
-void traceVision(VisionStartMode,bool){}
+void traceVision(VisionStartMode,bool start,bool reportMissingFrame){assert(!start&&!reportMissingFrame);}
 void traceVisionFirstFrame(VisionStartMode){}
 void updateVisionLight(){}
 static float imuHeading=90;
@@ -74,9 +75,22 @@ int main(){
         start(mode);imuError="OFFLINE";feed(10);assert(outputRotation<0&&imuReads==0);
         for(int i=0;i<5;++i)feed();assert(autoAlignmentState==AutoAlignmentState::DONE);
     }
-    // 无视觉新帧不执行闭环或累计；停用和原有超时仍生效。
+    // 无视觉新帧不执行闭环或累计；自动对齐到 5 秒时停车并完成。
     start();for(int i=0;i<10;++i)TickVisualAlignment();assert(imuReads==0);
     alignmentEnabled=false;feed(100);assert(imuReads==0);
-    start();clockMs+=AUTO_ALIGN_TIMEOUT_MS;TickVisualAlignment();
-    assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::FAILED&&outputSpeed==0);
+    for(auto mode:{VisionStartMode::DISC,VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA_LOADED,VisionStartMode::CORNER}){
+        start(mode);feed(10,40,-30);
+        assert(outputSpeed==50);
+        Serial.text.clear();
+        clockMs=autoAlignmentStartedMs+4999;TickVisualAlignment();
+        assert(alignmentEnabled&&autoAlignmentState==AutoAlignmentState::WAITING&&outputSpeed==50);
+        ++clockMs;TickVisualAlignment();
+        assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::DONE&&outputSpeed==0);
+        assert(Serial.text.find("{EVT,VISION,ALIGN_DONE}")!=std::string::npos);
+        assert(Serial.text.find("ALIGN_FAILED")==std::string::npos);
+        Serial.text.clear();feed(10,40,-30);
+        assert(outputSpeed==0&&Serial.text.empty());
+    }
+    start();clockMs+=5000;TickVisualAlignment();
+    assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::DONE&&imuReads==0);
 }

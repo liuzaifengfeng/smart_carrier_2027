@@ -76,7 +76,7 @@ static void serialCfgError(const SerialFrame &frame, const char *reason) {
 static bool serialKnownAction(const SerialFrame &frame) {
     static const char *const names[][2] = {
         {"SYS", "HELLO"}, {"SYS", "RELEASE"}, {"SYS", "READY"},
-        {"SYS", "START"}, {"SYS", "HELP"}, {"SYS", "REBOOT"},
+        {"SYS", "START"}, {"SYS", "HELP"}, {"SYS", "REBOOT"}, {"SYS", "BEEP"},
         {"MOTION", "STATUS"},
         {"EMM", "AXIS_TRIAL"},
         {"TRAY", "ROTATE"}, {"TRAY", "ZERO"},
@@ -188,6 +188,7 @@ static void serialRelease(const SerialFrame &frame) {
         return;
     }
     serialDebugMode = false;
+    LedPwm_PlayCue(2);
     leds[0] = CRGB::Green;
     FastLED.show();
     Serial.println("Release mode");
@@ -248,7 +249,7 @@ static void serialDiscColorDecision(uint8_t color) {
     const int progress = roundProgress;
     const int *colors = state == STATE_GRAB_ROUND2 ? currentTask.round2_colors
         : state == STATE_GRAB_ROUND1 || serialDebugMode ? currentTask.round1_colors : nullptr;
-    const uint8_t cargo = progress >= 0 && progress < 3 ? progress + 1 : 0;
+    const uint8_t cargo = progress >= 0 && progress < 3 ? CargoForGrabIndex(progress) : 0;
     const auto decision = EvaluateDiscColor(colors, progress, color, currentTask.valid,
         alignmentEnabled, serialDebugMode || firstDiscGrabReady,
         cargo != 0 && cargoPlatforms[cargo - 1].material != MATERIAL_NONE);
@@ -300,7 +301,7 @@ static void serialDiscGrab(const SerialFrame &frame) {
         }
         const int *colors = grabState == STATE_GRAB_ROUND1
             ? currentTask.round1_colors : currentTask.round2_colors;
-        if (cargo != static_cast<uint32_t>(roundProgress + 1)) {
+        if (cargo != CargoForGrabIndex(roundProgress)) {
             serialError(frame, "ORDER"); return;
         }
         if (!ShouldGrabTaskColor(colors, roundProgress, static_cast<uint8_t>(color), currentTask.valid)) {
@@ -353,7 +354,7 @@ static void serialDiscPositions(const SerialFrame &frame) {
     if (!colors) { serialError(frame, "NOT_WAITING"); return; }
     if (progress < 0 || progress >= 3) { serialError(frame, "ROUND_COMPLETE"); return; }
     if (alignmentEnabled) { serialError(frame, "ALIGN_ACTIVE"); return; }
-    const uint8_t cargo = static_cast<uint8_t>(progress + 1);
+    const uint8_t cargo = CargoForGrabIndex(progress);
     if (cargoPlatforms[cargo - 1].material != MATERIAL_NONE) {
         serialError(frame, "OCCUPIED"); return;
     }
@@ -397,6 +398,11 @@ static void serialRetrieve(const SerialFrame &frame) {
  * @brief 串口业务总分发入口：按类别和动作处理系统、视觉、底盘、机械臂及参数请求。
  */
 static void serialDispatch(const SerialFrame &frame) {
+    if (frame.is("SYS", "BEEP", 0)) {
+        LedPwm_PlayCue(3);
+        serialReply(frame, "OK");
+        return;
+    }
     if (frame.is("SYS", "REBOOT", 0)) {
         serialReply(frame, "ACK");
         Serial.flush();
@@ -606,8 +612,7 @@ static void serialDispatch(const SerialFrame &frame) {
         }
         currentStartZone = static_cast<StartZone>(zone);
         if (serialDebugMode) {
-            currentPose = zone == 1 ? RobotPose{2250, 150, START_ZONE_HEADING}
-                                   : RobotPose{150, 150, START_ZONE_HEADING};
+            currentPose = {zone == 1 ? 2250.0f : 150.0f, 150, StartZoneHeading(zone)};
             // 只更新地图初始位姿，不覆盖初始化后的3秒平均航向参考。
         }
         Serial.printf("{RSP,NAV,START_ZONE,OK,%u}\n", static_cast<unsigned>(zone));
@@ -973,7 +978,7 @@ void Task_Serial_CMD(void *pvParameters) {
             firstDiscGrabReady = true;
             Serial.printf("[DISC] Material handling resumed: expected=%d, cargo=%d\n",
                           (currentState == STATE_GRAB_ROUND2 ? currentTask.round2_colors
-                                                               : currentTask.round1_colors)[progress], progress + 1);
+                                                               : currentTask.round1_colors)[progress], CargoForGrabIndex(progress));
         }
     };
     for (;;) {

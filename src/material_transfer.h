@@ -48,6 +48,7 @@ struct MaterialTransferLayout {
     float secondLayerOffset;     // 第二层相对第一层的高度增量 (mm)
     float moveSpeed;             // 传给 MoveArm 的运动速度
     float clawOpenAngle;         // 夹爪张开角度
+    float cargoClawOpenAngle;    // 旋转料盘取料前和装料后夹爪张开角度
     float clawClosedAngle;       // 夹爪夹紧角度
     uint32_t motionWaitMs;       // waitForArm() 不传参数时的默认等待毫秒数
 };
@@ -72,7 +73,9 @@ struct MaterialMotionSteps {
 
 extern MaterialMotionSteps materialMotionSteps;
 extern float cargoTrayAngles[MATERIAL_STATION_COUNT];
+constexpr float CARGO_TRAY_CLEARANCE_DEG = 30.0f;
 constexpr float CARGO_TRAY_ARRIVAL_TOLERANCE_DEG = 1.0f;
+constexpr float WORK_POSITION_3_TRAY_LIMIT_DEG = 240.0f;
 
 // 每一项均为毫秒，0 表示跳过该处等待；只控制衔接，不改变 MoveArm 速度。
 struct MaterialApproachDelays {
@@ -104,6 +107,19 @@ extern MaterialAuxiliaryDelays materialAuxiliaryDelays;
 // 契约：调用前已完成标定；任务码已在扫码/串口入口校验。
 extern MaterialTransferLayout materialTransferLayout;
 extern CargoPlatform cargoPlatforms[MATERIAL_STATION_COUNT];
+inline bool CargoTrayNeedsClearance(uint8_t sourceCargo) {
+    return sourceCargo > 1 && cargoPlatforms[sourceCargo - 2].material != MATERIAL_NONE;
+}
+inline bool CargoTrayHasPlacementLimit(uint8_t workPosition) {
+    return workPosition == 3 && cargoPlatforms[0].material != MATERIAL_NONE;
+}
+inline float CargoTrayPlacementAngle(uint8_t sourceCargo, uint8_t workPosition) {
+    const float normalAngle = cargoTrayAngles[sourceCargo - 1]
+        + (CargoTrayNeedsClearance(sourceCargo) ? CARGO_TRAY_CLEARANCE_DEG : 0.0f);
+    if (!CargoTrayHasPlacementLimit(workPosition)) return normalAngle;
+    const float targetLimit = WORK_POSITION_3_TRAY_LIMIT_DEG - CARGO_TRAY_ARRIVAL_TOLERANCE_DEG;
+    return normalAngle < targetLimit ? normalAngle : targetLimit;
+}
 
 // ================= 四个单次搬运动作 =================
 // 所有载物台编号和区域位置编号都从 1 开始，而不是从 0 开始。
@@ -159,7 +175,7 @@ bool DemoStackCargoToWorkArea3();
 // startZoneCode：1 表示启停区 1，2 表示启停区 2；其他值会直接返回 false。
 // 具体距离和机械臂动作在 material_transfer.cpp 的函数内填写。
 /**
- * @brief 按起始区号1或2同步执行扫码准备姿态，底盘偏移与机械臂步骤由LIDAR_POSE作业实现。
+ * @brief 按启停区同步执行雷达扫描前的底盘平移和转向。
  */
 bool PrepareLidarScanPose(uint8_t startZoneCode);
 
@@ -180,7 +196,7 @@ bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode);
 // 下方批量接口都循环执行三次，可以直接传入扫码得到的 TaskCode 数组。
 
 // 按任务码中的一组位置码放置三个载物台上的物料。
-// positionCodes[0..2]：1、2、3 号载物台对应的区域位置，必须恰好包含 1、2、3。
+// positionCodes[0..2]：按抓取顺序对应 3、2、1 号载物台的区域位置。
 // layer：1=基础高度，2=基础高度+1 倍层高，3=基础高度+2 倍层高。
 // 例如第一批 PlaceTaskCargoToWorkArea(currentTask.round1_pos, 1)，
 // 第二批 PlaceTaskCargoToWorkArea(currentTask.round2_pos, 2)。
@@ -194,10 +210,10 @@ bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode);
  */
 bool PlaceTaskCargoToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT], uint8_t layer);
 
-// 按颜色码依次从圆盘抓取三个物料，分别放到 1、2、3 号载物台。
+// 按颜色码依次从圆盘抓取三个物料，分别放到 3、2、1 号载物台。
 // 示例：LoadRoundFromDisc(currentTask.round1_colors);
 /**
- * @brief 按颜色数组顺序同步抓取圆盘三件物料，分别放到载物台1~3；不负责底盘导航。
+ * @brief 按颜色数组顺序同步抓取圆盘三件物料，分别放到载物台3、2、1；不负责底盘导航。
  */
 bool LoadRoundFromDisc(const int materialCodes[MATERIAL_STATION_COUNT]);
 
@@ -208,7 +224,7 @@ bool LoadRoundFromDisc(const int materialCodes[MATERIAL_STATION_COUNT]);
  */
 bool PlaceRoundToWorkArea(const int positionCodes[MATERIAL_STATION_COUNT]);
 
-// 按位置码从区域中取回三个物料，分别放回 1、2、3 号载物台。
+// 按位置码从区域中取回三个物料，分别放回 3、2、1 号载物台。
 // 示例：RetrieveRoundToCargo(currentTask.round1_colors,
 //                              currentTask.round1_pos);
 /**

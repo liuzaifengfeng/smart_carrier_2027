@@ -18,6 +18,7 @@ class DiscResumeTests(unittest.TestCase):
         actual_logic = source[start:end]
         harness = r'''
 #include <stddef.h>
+#include "disc_material_decision.h"
 struct FakeSerial {
     int pending;
     int logs = 0;
@@ -72,7 +73,7 @@ static_assert(check(7), "round two resumes under continuous input");
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory) / "disc_resume.cpp"
             fixture.write_text(harness, encoding="utf-8")
-            result = subprocess.run([str(compiler), "-std=c++17", "-fsyntax-only", str(fixture)],
+            result = subprocess.run([str(compiler), "-std=c++17", "-fsyntax-only", "-I", str(root / "src"), str(fixture)],
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

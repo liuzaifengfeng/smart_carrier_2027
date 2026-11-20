@@ -32,3 +32,6 @@ class ArmMotionTests(unittest.TestCase):
 
     def test_observation_and_return_poses_keep_original_order(self):
         run_native(self.binary, "poses")
+
+    def test_lidar_preparation_uses_only_chassis_translation_and_turn(self):
+        run_native(self.binary, "lidar")

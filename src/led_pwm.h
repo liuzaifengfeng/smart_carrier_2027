@@ -39,5 +39,5 @@ uint32_t LedPwm_GetFrequency();
  */
 void LedPwm_UpdateFaultBlink(bool fault);
 
-/** @brief 标定成功后用补光灯闪两次，亮灭各200ms，结束恢复设定亮度；不阻塞。 */
-void LedPwm_BlinkCalibrationComplete();
+/** @brief 非阻塞播放同步声光提示，每次亮响67ms、熄灭静音67ms。 */
+void LedPwm_PlayCue(uint8_t pulses);

@@ -34,35 +34,35 @@
           "integer": false
         },
         "搬运/待操作区/伸出(mm)": {
-          "value": 15,
+          "value": 34,
           "description": "三个小料盘共用的取放料伸出距离。",
           "minimum": 0,
           "maximum": 170,
           "integer": false
         },
         "搬运/待操作区/转台(deg)": {
-          "value": -3.5,
+          "value": -13.5,
           "description": "三个小料盘共用的机械臂转台角度。",
           "minimum": -150,
           "maximum": 360,
           "integer": false
         },
         "搬运/旋转料盘1/角度(deg)": {
-          "value": 150,
+          "value": 115,
           "description": "1号小料盘转至待操作区时的料盘舵机绝对角度。",
           "minimum": -368640,
           "maximum": 368640,
           "integer": false
         },
         "搬运/旋转料盘2/角度(deg)": {
-          "value": 213,
+          "value": 180,
           "description": "2号小料盘转至待操作区时的料盘舵机绝对角度。",
           "minimum": -368640,
           "maximum": 368640,
           "integer": false
         },
         "搬运/旋转料盘3/角度(deg)": {
-          "value": 276,
+          "value": 245,
           "description": "3号小料盘转至待操作区时的料盘舵机绝对角度。",
           "minimum": -368640,
           "maximum": 368640,
@@ -154,7 +154,14 @@
         },
         "搬运/夹爪张开(deg)": {
           "value": 50.0,
-          "description": "抓取前和放置松手时夹爪目标角度；不要填-1（表示不移动）。",
+          "description": "常规抓取前和放置松手时的夹爪目标角度；旋转料盘有独立参数。",
+          "minimum": -360.0,
+          "maximum": 360.0,
+          "integer": false
+        },
+        "搬运/载物台/夹爪张开(deg)": {
+          "value": 30.0,
+          "description": "旋转料盘取料前和装料后松爪的目标角度；不要填-1（表示不移动）。",
           "minimum": -360.0,
           "maximum": 360.0,
           "integer": false

@@ -16,12 +16,12 @@ static_assert(!ShouldGrabTaskColor(nullptr, 0, 1, true), "no round selected skip
 static_assert(!ShouldGrabTaskColor(round1, 0, 0, true), "invalid color skips");
 
 constexpr int manualRound[] = {2, 3, 5};
-static_assert(AdvanceDiscGrabProgress(0, 1, true) == 1, "first grab advances once");
+static_assert(AdvanceDiscGrabProgress(0, 3, true) == 1, "first grab advances once");
 static_assert(AdvanceDiscGrabProgress(1, 2, false) == 1, "failure retains next color");
-static_assert(AdvanceDiscGrabProgress(1, 1, true) == 1, "old cargo cannot advance twice");
-static_assert(AdvanceDiscGrabProgress(2, 3, true) == 3, "third successful grab completes round");
+static_assert(AdvanceDiscGrabProgress(1, 3, true) == 1, "old cargo cannot advance twice");
+static_assert(AdvanceDiscGrabProgress(2, 1, true) == 3, "third successful grab completes round");
 static_assert(AdvanceDiscGrabProgress(3, 3, true) == 3, "completed round cannot advance");
-static_assert(EvaluateDiscColor(manualRound, AdvanceDiscGrabProgress(0, 1, true), 3, true, false, true, false) == DiscColorDecision::GRAB, "color 3 follows completed color 2");
+static_assert(EvaluateDiscColor(manualRound, AdvanceDiscGrabProgress(0, 3, true), 3, true, false, true, false) == DiscColorDecision::GRAB, "color 3 follows completed color 2");
 static_assert(EvaluateDiscColor(manualRound, 0, 2, true, false, true, false) == DiscColorDecision::GRAB, "235 task grabs color 2 first");
 static_assert(EvaluateDiscColor(manualRound, 0, 2, true, false, true, true) == DiscColorDecision::OCCUPIED, "matching color blocked by occupied cargo");
 static_assert(EvaluateDiscColor(manualRound, 0, 2, true, true, true, false) == DiscColorDecision::ALIGN_ACTIVE, "matching color blocked by alignment");

@@ -44,11 +44,14 @@ enum class DiscColorDecision {
     ALIGN_ACTIVE, NOT_READY, OCCUPIED
 };
 
+// 每轮任务第 1、2、3 件分别对应 3、2、1 号载物台。
+constexpr uint8_t CargoForGrabIndex(int index) { return 3 - index; }
+
 /**
  * @brief 仅当预期载物台的抓放作业完成时将进度加1，否则保持原进度。
  */
 constexpr int AdvanceDiscGrabProgress(int progress, uint8_t cargo, bool completed) {
-    return completed && progress >= 0 && progress < 3 && cargo == progress + 1
+    return completed && progress >= 0 && progress < 3 && cargo == CargoForGrabIndex(progress)
         ? progress + 1 : progress;
 }
 

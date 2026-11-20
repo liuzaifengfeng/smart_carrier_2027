@@ -47,23 +47,26 @@ export function useController() {
       const line = raw.trim()
       if (!line) continue
       log('RX', line)
-      if (!line.startsWith('{') || !line.endsWith('}')) continue
-      const fields = line.slice(1, -1).split(',')
-      lastFrame.value = fields
-      for (const listener of listeners) listener(fields)
-      const [kind, category, action, status, ...values] = fields
-      if (kind === 'RSP' && category === 'SYS' && action === 'HELLO') {
-        ready.value = status === 'OK' && values[0] === '2'
-        handshake.value = ready.value ? '协议 v2 已确认' : '握手未通过，请检查固件版本'
+      for (const [, frame] of line.matchAll(/\{((?:EVT|RSP),[^{}]+)\}/g)) {
+        receiveFrame(frame!.split(','))
       }
-      if (kind === 'RSP' && ['OK', 'READBACK', 'READBACK_MISMATCH'].includes(status)) {
-        snapshots.value[category + '/' + action] = values
-        if (category === 'LED') snapshots.value['LED/GET'] = values
-      }
-      if (kind === 'RSP' && status === 'ERR' && category !== 'BAT') error.value = line
-      if (kind === 'EVT' && category === 'NAV' && action === 'TRIAL_RESULT' && fields.length === 9) {
-        snapshots.value['POSE/GET'] = [...fields.slice(6), ...(snapshots.value['POSE/GET']?.slice(3) ?? ['0','0','0','0'])]
-      }
+    }
+  }
+  function receiveFrame(fields: string[]) {
+    lastFrame.value = fields
+    for (const listener of listeners) listener(fields)
+    const [kind, category, action, status, ...values] = fields
+    if (kind === 'RSP' && category === 'SYS' && action === 'HELLO') {
+      ready.value = status === 'OK' && values[0] === '2'
+      handshake.value = ready.value ? '协议 v2 已确认' : '握手未通过，请检查固件版本'
+    }
+    if (kind === 'RSP' && ['OK', 'READBACK', 'READBACK_MISMATCH'].includes(status)) {
+      snapshots.value[category + '/' + action] = values
+      if (category === 'LED') snapshots.value['LED/GET'] = values
+    }
+    if (kind === 'RSP' && status === 'ERR' && category !== 'BAT') error.value = '{' + fields.join(',') + '}'
+    if (kind === 'EVT' && category === 'NAV' && action === 'TRIAL_RESULT' && fields.length === 9) {
+      snapshots.value['POSE/GET'] = [...fields.slice(6), ...(snapshots.value['POSE/GET']?.slice(3) ?? ['0','0','0','0'])]
     }
   }
   async function send(command: string) {

@@ -37,20 +37,23 @@ class ServoMultiturnIntervalTests(unittest.TestCase):
         source = (ROOT / "src/servo.cpp").read_text(encoding="utf-8")
         header = (ROOT / "src/servo.h").read_text(encoding="utf-8")
         names = ("FSUS_PACK_REQ_HEADER", "FSUS_CMD_SET_ANGLE_MTURN",
-                 "FSUS_CMD_SET_ANGLE_MTURN_INTERVAL", "FSUS_CMD_SET_ORIGIN", "FSUS_CMD_STOP")
+                 "FSUS_CMD_SET_ANGLE_MTURN_INTERVAL", "FSUS_CMD_SET_ANGLE_MTURN_VELOCITY",
+                 "FSUS_CMD_SET_ORIGIN", "FSUS_CMD_STOP")
         constants = "\n".join(re.search(r"(?m)^#define " + name + r"\s+0x[0-9A-Fa-f]+",
                                          header).group() for name in names)
         actual = "\n".join(function_source(source, signature) for signature in (
             "static void sendPacket(", "void Servo_SetAngleMTurn(",
-            "void Servo_SetAngleMTurnByInterval(", "bool Servo_SetOrigin("))
+            "void Servo_SetAngleMTurnByInterval(", "void Servo_MoveCargoTray(", "bool Servo_SetOrigin("))
         actual = actual.replace("static void sendPacket(", "constexpr void sendPacket(")
         actual = actual.replace("void Servo_SetAngle", "constexpr void Servo_SetAngle")
+        actual = actual.replace("void Servo_MoveCargoTray", "constexpr void Servo_MoveCargoTray")
         actual = actual.replace("bool Servo_SetOrigin", "constexpr bool Servo_SetOrigin")
         # C++14 constexpr 要求局部数组初始化；运行时原函数会逐字节写满数组。
         actual = re.sub(r"uint8_t content\[(\d+)\];", r"uint8_t content[\1] = {};", actual)
         harness = r'''
 #include <stdint.h>
 CONSTANTS
+constexpr uint8_t SERVO_ID_CARGO_TRAY=3;
 constexpr uint32_t pdMS_TO_TICKS(uint32_t value){return value;}
 constexpr void vTaskDelay(uint32_t){}
 struct ServoBusGuard { bool locked=true; };
@@ -104,6 +107,13 @@ constexpr bool legacyClawPacket() {
     const uint8_t expected[]={0x12,0x4C,0x0D,0x0B,1,0xF4,1,0,0,0xF4,1,0,0,0,0,0x61};
     return matches(r.port, expected);
 }
+constexpr bool automaticTrayPacket() {
+    Run r;
+    r.Servo_MoveCargoTray(245);
+    const uint8_t expected[]={0x12,0x4C,0x0F,0x0D,3,0x92,9,0,0,
+        0xB8,0x0B,30,0,30,0,0,0,0x17};
+    return matches(r.port, expected);
+}
 constexpr bool originPacket() {
     Run r;if(!r.Servo_SetOrigin(2))return false;
     const uint8_t expected[]={
@@ -114,6 +124,7 @@ constexpr bool originPacket() {
 }
 static_assert(originPacket(), "set origin ID2, reset=0 and checksum");
 static_assert(officialExample(), "official 0x0E example, length and checksum");
+static_assert(automaticTrayPacket(), "automatic tray 0x0F speed and ramps");
 static_assert(requestedExample(), "ID 2, 180 degrees, 1050/100/300 ms");
 static_assert(signedAngleAndWideTime(), "signed 32-bit angle and little-endian field widths");
 static_assert(legacyClawPacket(), "ID 1 retains simple multiturn packet");
@@ -164,7 +175,7 @@ constexpr bool winding(){
 }
 constexpr bool planned(){
     Run r;r.measured=350;
-    if(!r.MoveArmPlanned(-1,-1,-10,-1,200,500)||r.angle!=-10||r.ramp!=500)return false;
+    if(!r.MoveArmPlanned(-1,-1,-10,-1,200,170)||r.angle!=-10||r.ramp!=170)return false;
     return r.MoveArmPlanned(-1,-1,-1,-1,200)&&r.angle==-1&&r.commands==2;
 }
 constexpr bool feedback(){

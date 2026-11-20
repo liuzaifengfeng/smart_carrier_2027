@@ -181,6 +181,23 @@ void Servo_SetAngleMTurn(uint8_t servoId, float angle, uint32_t interval, uint16
     sendPacket(FSUS_CMD_SET_ANGLE_MTURN, content, 11);
 }
 
+// 0x0F 按厂商 SDK 的 13 字节负载，速度为 16 位，单位 0.1°/s。
+void Servo_MoveCargoTray(float angle) {
+    constexpr uint16_t speed = 3000; // 300°/s。
+    constexpr uint16_t rampMs = 30;
+    const uint32_t position = static_cast<uint32_t>(static_cast<int32_t>(angle * 10.0f));
+    const uint8_t content[] = {
+        SERVO_ID_CARGO_TRAY,
+        static_cast<uint8_t>(position), static_cast<uint8_t>(position >> 8),
+        static_cast<uint8_t>(position >> 16), static_cast<uint8_t>(position >> 24),
+        static_cast<uint8_t>(speed), static_cast<uint8_t>(speed >> 8),
+        static_cast<uint8_t>(rampMs), static_cast<uint8_t>(rampMs >> 8),
+        static_cast<uint8_t>(rampMs), static_cast<uint8_t>(rampMs >> 8),
+        0, 0, // 使用舵机功率保护阈值。
+    };
+    sendPacket(FSUS_CMD_SET_ANGLE_MTURN_VELOCITY, content, sizeof(content));
+}
+
 // 官方 UART/RS-485 协议第11节：高级多圈角度控制（基于时间）。
 // https://fashionstar.com.cn/wiki/protocols/servo/uart-rs485/
 void Servo_SetAngleMTurnByInterval(uint8_t servoId, float angle, uint32_t interval, uint16_t t_acc, uint16_t t_dec, uint16_t power) {

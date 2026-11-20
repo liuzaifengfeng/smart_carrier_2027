@@ -170,6 +170,7 @@ void initialize() {
     // 追加独立中间道路参数，保留已有上位机参数编号。
     RegisterRuntimeFloat("底盘/节点导航中间路段速度(mm/s)",NODE_PATH_MIDDLE_SPEED_MM_S,10,5000);
     RegisterRuntimeFloat("底盘/节点导航中间路段平移加速度(mm/s²)",NODE_PATH_MIDDLE_ACCEL_MM_S2,1,4000);
+    RegisterRuntimeFloat("搬运/载物台/夹爪张开(deg)", materialTransferLayout.cargoClawOpenAngle, -360, 360);
 }
 
 bool parseUnsigned(const char *text, uint32_t &value) {
