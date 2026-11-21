@@ -13,6 +13,7 @@ bool faultBlink = false;
 uint8_t faultEffectBrightness = 0;
 uint32_t faultEffectStartMs = 0;
 uint8_t cuePulses = 0;
+bool cueLongMiddle = false;
 constexpr uint32_t cuePhaseMs = 67;
 uint32_t cueStartMs = 0;
 uint8_t cueBrightness = 100;
@@ -24,6 +25,13 @@ public:
 void applyBrightness() {
     const uint32_t percent = faultBlink ? faultEffectBrightness : cuePulses ? cueBrightness : brightness;
     ledcWrite(LED_PWM_CHANNEL, (percent * maxDuty + 50) / 100);
+}
+
+void startCue(uint8_t pulses, bool longMiddle) {
+    PwmLock lock;
+    cueStartMs=millis();cueBrightness=100;cuePulses=pulses;cueLongMiddle=longMiddle;
+    BatteryMonitorSetCue(pulses!=0,pulses!=0);
+    if(ready)applyBrightness();
 }
 
 uint8_t faultPatternBrightness(uint32_t elapsedMs) {
@@ -133,9 +141,9 @@ void LedPwm_UpdateFaultBlink(bool fault) {
     PwmLock lock;
     const uint32_t now = millis();
     if(cuePulses) {
-        const uint32_t elapsed=now-cueStartMs;
-        if(fault||elapsed>=cuePulses*2U*cuePhaseMs)cuePulses=0;
-        const bool on=cuePulses&&(elapsed/cuePhaseMs)%2==0;
+        const uint32_t phase=(now-cueStartMs)/cuePhaseMs;
+        if(fault||phase>=cuePulses*2U+(cueLongMiddle?2U:0U))cuePulses=0;
+        const bool on=cuePulses&&(cueLongMiddle?(phase==0||(phase>=2&&phase<=4)||phase==6):phase%2==0);
         cueBrightness=on?100:0;
         BatteryMonitorSetCue(cuePulses!=0,on);
         if(!fault){faultBlink=false;if(ready)applyBrightness();return;}
@@ -158,8 +166,9 @@ void LedPwm_UpdateFaultBlink(bool fault) {
 }
 
 void LedPwm_PlayCue(uint8_t pulses) {
-    PwmLock lock;
-    cueStartMs=millis();cueBrightness=100;cuePulses=pulses;
-    BatteryMonitorSetCue(pulses!=0,pulses!=0);
-    if(ready)applyBrightness();
+    startCue(pulses,false);
+}
+
+void LedPwm_PlayCompletionCue() {
+    startCue(3,true);
 }

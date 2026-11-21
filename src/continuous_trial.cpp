@@ -265,13 +265,17 @@ bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float fi
     }
     Config cfg;cfg.count=count;cfg.policy=2;cfg.startHeading=heading; // 正式导航统一到节点停车转向，不使用漂移切弯。
     cfg.maxRpm=node_position::rpmFor(speedMmS,Y_PULSE);
-    cfg.accel=NODE_PATH_ACCEL_MM_S2; // 与轮速一同冻结，运行中不跟随参数写入变化。
+    const uint32_t outerAccelLevel=NODE_PATH_OUTER_ACCEL_LEVEL;
+    formalSettings.accelMmS2=node_position::motionAccelerationFor(outerAccelLevel,Y_PULSE);
+    // 共用规划器保留原速度表范围；正式直行使用上面的实际换算值。
+    cfg.accel=fminf(formalSettings.accelMmS2,4000.0f);
     cfg.rotationPpd=THETA_PULSE;
     // 与正常扫码MovePosition一致：车身X用X_PULSE，车身Y用Y_PULSE。
     cfg.forwardPpm=Y_PULSE;cfg.lateralPpm=X_PULSE;
-    formalSettings.speedMmS=speedMmS;formalSettings.accelMmS2=cfg.accel;
+    formalSettings.speedMmS=speedMmS;
     formalSettings.middleSpeedMmS=NODE_PATH_MIDDLE_SPEED_MM_S;
     formalSettings.middleAccelMmS2=NODE_PATH_MIDDLE_ACCEL_MM_S2;
+    formalSettings.outerStraightVelocity=true;
     formalSettings.turnDegS=NODE_PATH_TURN_DEG_S;
     formalSettings.turnAccelDegS2=NODE_PATH_TURN_ACCEL_DEG_S2;
     formalSettings.headingDeadbandDeg=NODE_PATH_HEADING_DEADBAND_DEG;
@@ -298,8 +302,8 @@ bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float fi
     }
     configured=false;referenceVersion=version;initialHeading=heading;
     Serial.printf("[Route] Transition window: disabled; separate heading correction deadband: %.2f deg\n",formalSettings.headingDeadbandDeg);
-    Serial.printf("[Route] Profile: %.1f mm/s, %.1f mm/s2, %.1f deg/s, %.1f deg/s2\n",
-        formalSettings.speedMmS,formalSettings.accelMmS2,formalSettings.turnDegS,formalSettings.turnAccelDegS2);
+    Serial.printf("[Route] Profile: %.1f mm/s, %.1f mm/s2 (EMM V5 %lu), %.1f deg/s, %.1f deg/s2\n",
+        formalSettings.speedMmS,formalSettings.accelMmS2,static_cast<unsigned long>(outerAccelLevel),formalSettings.turnDegS,formalSettings.turnAccelDegS2);
     Serial.printf("[Route] Middle profile (7/11/12/13/17): %.1f mm/s, %.1f mm/s2\n",
         formalSettings.middleSpeedMmS,formalSettings.middleAccelMmS2);
     formalSettings.startOffset={};

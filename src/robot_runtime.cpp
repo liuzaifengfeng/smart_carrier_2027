@@ -10,7 +10,7 @@
 
 uint32_t ALIGN_PID_MAX_SPEED_RPM = 50;       // 视觉PID对齐轮速上限，单位RPM；原20，提高到2.5倍。
 float NODE_PATH_SPEED_MM_S = 2500.0f;        // 正式节点路径的最大平移速度，单位mm/s。
-float NODE_PATH_ACCEL_MM_S2 = 2000.0f;       // 正式节点路径的平移加减速度，单位mm/s²，并换算为驱动器加速度档位。
+uint32_t NODE_PATH_OUTER_ACCEL_LEVEL = 200; // 正式节点路径外圈平移的 EMM V5 加减速档位。
 float NODE_PATH_MIDDLE_SPEED_MM_S = 3000.0f; // 经过7、11、12、13、17节点的平移速度上限。
 float NODE_PATH_MIDDLE_ACCEL_MM_S2 = 2000.0f; // 中间道路独立平移加减速度。
 float NODE_PATH_TURN_DEG_S = 300.0f;         // 节点路径原地转向的最大角速度，单位°/s。

@@ -7,6 +7,11 @@ struct ProfileSim : Sim {
     std::vector<uint16_t> speeds;
     std::vector<uint8_t> accelerations;
     int stableReports=0;
+    bool outerHold=false,middleHold=false;
+    void report(const char *stage,const Result &,float)override {
+        outerHold|=!strcmp(stage,"OUTER_HEADING_HOLD");
+        middleHold|=!strcmp(stage,"MIDDLE_HEADING_HOLD");
+    }
     void headingStable(float)override{++stableReports;}
     const char *target(uint8_t id,bool positive,uint16_t speed,uint8_t acceleration,uint32_t count)override {
         if(id==1){speeds.push_back(speed);accelerations.push_back(acceleration);}
@@ -84,8 +89,13 @@ void middleProfile() {
         assert(car.actions==2&&car.speeds.size()==1&&car.stableReports==3);
         assert(car.speeds[0]==rpmFor(400,cfg.forwardPpm));
         assert(car.accelerations[0]==driverAccelerationFor(2000,cfg.forwardPpm));
-        assert(car.velocityUpdates>10); // 中间道路独立规划线速度并实时纠偏，外围仍只下发一次位置目标。
+        assert(car.velocityUpdates>10&&car.middleHold&&!car.outerHold);
         assert(norm(result.estimated-points[3].p)<3);
+        settings.outerStraightVelocity=true;
+        ProfileSim closedLoop;closedLoop.heading=cfg.startHeading;closedLoop.location=points[0].p;
+        assert(!run(path,settings,closedLoop,result));
+        assert(closedLoop.speeds.empty()&&closedLoop.outerHold&&closedLoop.middleHold);
+        assert(closedLoop.stableReports==3&&norm(result.estimated-points[3].p)<3);
     }
 }
 struct HoldSim : ProfileSim {
@@ -116,6 +126,48 @@ struct HoldSim : ProfileSim {
     }
 };
 void middleHold() {
+    struct ReverseStartupSampleSim : HoldSim {
+        bool injected[4]={};
+        const char *readPosition(uint8_t id,int64_t &position)override {
+            const char *error=Sim::readPosition(id,position);
+            if(id>1&&velocityMode&&position&&!injected[id-1]) {
+                position=position>0?-64:64;
+                injected[id-1]=true;
+            }
+            return error;
+        }
+    };
+    {
+        Node points[]={{{2050,1200},90},{{2050,720},90},{{2050,240},90}};
+        Config cfg;cfg.policy=2;cfg.count=3;cfg.startHeading=cfg.endHeading=90;
+        Route path;assert(!path.build(points,cfg));
+        Settings settings;settings.speedMmS=3000;settings.accelMmS2=1400.6f;settings.outerStraightVelocity=true;
+        ReverseStartupSampleSim car;car.location=car.entry=points[0].p;car.heading=89.55f;
+        Result result;const char *failure=run(path,settings,car,result);
+        if(failure)fprintf(stderr,"outer reverse startup: %s progress=%.2f actual=(%.2f,%.2f) estimated=(%.2f,%.2f)\n",
+            failure,result.s,car.location.x,car.location.y,result.estimated.x,result.estimated.y);
+        assert(!failure&&norm(car.location-points[2].p)<5&&norm(result.estimated-car.location)<3);
+    }
+    // 第一次轮速到下一控制周期才生效，模拟起步时首批编码器位移落后于轮速命令。
+    struct DelayedStartSim : HoldSim {
+        WheelCommand firstCommand;
+        const char *velocity(const WheelCommand &command)override {
+            if(!velocityUpdates){firstCommand=command;return HoldSim::velocity(WheelCommand{});}
+            return HoldSim::velocity(velocityUpdates==1?firstCommand:command);
+        }
+    };
+    {
+        Node points[]={{{1200,2020},180},{{2050,2020},180}};
+        Config cfg;cfg.policy=2;cfg.count=2;cfg.startHeading=cfg.endHeading=180;
+        Route path;assert(!path.build(points,cfg));
+        Settings settings;settings.speedMmS=2000;settings.accelMmS2=2000;settings.outerStraightVelocity=true;
+        DelayedStartSim car;car.location=car.entry=points[0].p;car.heading=179.19f;
+        car.encoderPolarity[1]=car.encoderPolarity[3]=-1;
+        Result result;const char *failure=run(path,settings,car,result);
+        if(failure)fprintf(stderr,"delayed start: %s actual=(%.2f,%.2f) estimated=(%.2f,%.2f)\n",
+            failure,car.location.x,car.location.y,result.estimated.x,result.estimated.y);
+        assert(!failure&&norm(car.location-points[1].p)<5&&norm(result.estimated-car.location)<3);
+    }
     // 航向始终正确，单独注入编码器可见的横移，验证左右偏移都能在行驶中拉回。
     struct LateralSim : Sim {
         Vec entry;float shift=0;bool injected=false,corrected=false;
@@ -146,26 +198,28 @@ void middleHold() {
         assert(fabsf(worldToBody(car.location-finish,heading).x)<2);
         assert(norm(result.estimated-car.location)<2);
     }
-    for(bool reverse:{false,true})for(float disturbance:{-3.0f,3.0f})for(int polarity:{-1,1}) {
-        Node points[]={{{reverse?1900.0f:400.0f,1200},0,true},{{reverse?400.0f:1900.0f,1200},0,true}};
+    for(bool middle:{false,true})for(bool reverse:{false,true})for(float disturbance:{-3.0f,3.0f})for(int polarity:{-1,1}) {
+        Node points[]={{{reverse?1900.0f:400.0f,1200},0,middle},{{reverse?400.0f:1900.0f,1200},0,middle}};
         Config cfg;cfg.policy=2;cfg.count=2;cfg.startHeading=cfg.endHeading=0;
         Route path;assert(!path.build(points,cfg));
         Settings settings;settings.middleSpeedMmS=700;settings.middleAccelMmS2=600;
+        settings.speedMmS=700;settings.accelMmS2=600;settings.outerStraightVelocity=true;
         HoldSim car;car.location=car.entry=points[0].p;car.kick=disturbance;car.biasRate=disturbance/3;
         for(int i=0;i<4;++i)car.encoderPolarity[i]=polarity;
         Result result;const char *failure=run(path,settings,car,result);
-        if(failure)fprintf(stderr,"middle hold: %s reverse=%d disturbance=%f polarity=%d\n",failure,reverse,disturbance,polarity);
+        if(failure)fprintf(stderr,"straight hold: %s middle=%d reverse=%d disturbance=%f polarity=%d\n",failure,middle,reverse,disturbance,polarity);
         assert(!failure&&car.kicked&&car.holdReports>5&&car.speeds.empty());
         assert(fabsf(car.finalMovingError)<1&&norm(result.estimated-points[1].p)<2);
         assert(norm(car.location-points[1].p)<45); // 注入侧滑/偏航后仍在行驶中拉回航向，而非等停车校角。
         assert(disturbance>0?car.sawNegativeCorrection:car.sawPositiveCorrection);
         assert(car.peakSpeed<=701&&car.maxAcceleration<=610);
     }
-    for(float length:{100.0f,1730.0f}) {
-        Node points[]={{{320,1200},0,true},{{320+length,1200},0,true}};
+    for(bool middle:{false,true})for(float length:{100.0f,1730.0f}) {
+        Node points[]={{{320,1200},0,middle},{{320+length,1200},0,middle}};
         Config cfg;cfg.policy=2;cfg.count=2;Route path;assert(!path.build(points,cfg));
         HoldSim car;car.location=car.entry=points[0].p;car.latencyMs=3;
         Settings settings;settings.middleSpeedMmS=3000;settings.middleAccelMmS2=1000;
+        settings.speedMmS=3000;settings.accelMmS2=2000;settings.outerStraightVelocity=true;
         Result result;assert(!run(path,settings,car,result));
         if(norm(car.location-points[1].p)>=3||car.time>=7000)
             fprintf(stderr,"hold length=%f actual=%f,%f estimated=%f time=%u peak=%f\n",length,car.location.x,car.location.y,result.estimated.x,car.time,car.peakSpeed);

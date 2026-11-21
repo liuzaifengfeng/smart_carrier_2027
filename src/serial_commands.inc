@@ -7,6 +7,7 @@
 #include "motion_executor.h"
 #include "node_position_hardware.h"
 #include "motor_bus.h"
+#include "ring_correction.h"
 static bool serialDebugMode = true;
 /**
  * @brief 处理连续路径试跑配置、准备、启动、状态和停止指令；返回是否已匹配处理。
@@ -88,6 +89,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"VISION", "ALIGN_START"}, {"VISION", "ALIGN_STOP"},
         {"VISION", "START_REQUEST"},
         {"VISION", "STOP_REQUEST"},
+        {"VISION", "RING_OFFSET"}, {"VISION", "RING_AXIS_PID_GET"}, {"VISION", "RING_AXIS_PID_SET"},
         {"VISION", "ALIGN_DATA"}, {"VISION", "COLOR"},
         {"VISION", "GRAB"},
         {"VISION", "DISC_POSITIONS"},
@@ -102,6 +104,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
         {"ARM", "ENABLE"}, {"ARM", "DEMO1"}, {"ARM", "DEMO2"}, {"ARM", "DEMO3"},
         {"ARM", "DEMO4"}, {"ARM", "TRANSFER"}, {"ARM", "RETRIEVE"},
         {"ARM", "INIT_START"}, {"ARM", "INIT_LOOK"}, {"ARM", "INIT_LOOK2"},
+        {"ARM", "RING_PREPARE"}, {"ARM", "RING_DEMO"},
         {"CFG", "GET"}, {"CFG", "BEGIN"}, {"CFG", "SET"}, {"CFG", "COMMIT"},
     };
     for (const auto &name : names) {
@@ -437,6 +440,7 @@ static void serialDispatch(const SerialFrame &frame) {
         &&!frame.starts("NAV","ROUTE")&&!frame.is("NAV","START_ZONE",1)
         &&!frame.is("SYS","HELLO",0)&&!frame.is("SYS","HELP",0)&&!frame.is("SYS","START",0)&&!frame.is("SYS","READY",0)
         &&!frame.is("TASK","SET",1)&&!frame.is("VISION","ALIGN_DATA",3)&&!frame.is("VISION","LIDAR_POSE",0)
+        &&!frame.starts("VISION","RING_OFFSET")&&!frame.is("VISION","RING_AXIS_PID_GET",0)
         &&!frame.is("VISION","COLOR",1)&&!frame.starts("VISION","DISC_POSITIONS")&&!frame.starts("VISION","GRAB")
         &&!frame.is("VISION","STOP_REQUEST",1)&&!frame.is("VISION","ALIGN_STOP",0)) {
         serialError(frame,"BUSY");return;
@@ -618,6 +622,52 @@ static void serialDispatch(const SerialFrame &frame) {
         Serial.printf("{RSP,NAV,START_ZONE,OK,%u}\n", static_cast<unsigned>(zone));
     } else if (frame.starts("NAV", "ROUTE")) {
         serialRoute(frame);
+    } else if (frame.is("VISION", "RING_OFFSET", 3)) {
+        uint32_t token=0;
+        ring::Frame sample;
+        if(!serialUInt(frame.fields[3],token,UINT32_MAX)
+            ||!serialFloat(frame.fields[4],sample.x,-FLT_MAX,FLT_MAX)
+            ||!serialFloat(frame.fields[5],sample.y,-FLT_MAX,FLT_MAX)) {
+            serialError(frame,"RANGE");return;
+        }
+        sample.timeMs=millis();
+        const bool accepted=ring::input().submit(token,sample);
+        Serial.printf("{EVT,VISION,RING_OFFSET,%s,%s,%s,%s}\n",
+            frame.fields[3],frame.fields[4],frame.fields[5],accepted?"ACCEPTED":"IGNORED");
+        if(accepted)WakeMotionExecutor();
+    } else if (frame.is("VISION", "RING_AXIS_PID_GET", 0) || frame.is("VISION", "RING_AXIS_PID_SET", 6)) {
+        if(frame.count>3) {
+            if(!serialDebugMode){serialError(frame,"MODE");return;}
+            if(MotionExecutorActive()){serialError(frame,"BUSY");return;}
+            const float low[6]={};
+            const float high[6]={FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX};
+            float gain[6];
+            if(!serialFloats(frame,gain,low,high,6)) {
+                serialError(frame,"RANGE");return;
+            }
+            ring::Settings cfg;
+            cfg.turret={gain[0],gain[1],gain[2]};
+            cfg.extension={gain[3],gain[4],gain[5]};
+            ring::input().settings(cfg);
+        }
+        const auto cfg=ring::input().settings();
+        Serial.printf("{RSP,VISION,%s,OK,%.7g,%.7g,%.7g,%.7g,%.7g,%.7g}\n",
+            frame.fields[2],cfg.turret.kp,cfg.turret.ki,cfg.turret.kd,
+            cfg.extension.kp,cfg.extension.ki,cfg.extension.kd);
+    } else if ((frame.starts("VISION","START_REQUEST")||frame.starts("VISION","STOP_REQUEST"))
+               && frame.count>=4 && strcmp(frame.fields[3],"RING_CORRECTION")==0) {
+        if(!serialDebugMode){serialError(frame,"MODE");return;}
+        if(MotionExecutorActive()){serialError(frame,"BUSY");return;}
+        if(frame.is("VISION","START_REQUEST",2)) {
+            uint32_t work=0;
+            if(!serialUInt(frame.fields[4],work,3)||work==0){serialError(frame,"RANGE");return;}
+            Serial.printf("{RSP,VISION,START_REQUEST,ACK,RING_CORRECTION,%lu}\n",static_cast<unsigned long>(work));
+            Serial.printf("{EVT,VISION,RING_TARGET,%lu}\n",static_cast<unsigned long>(work));
+            Serial.println("{EVT,VISION,START_REQUEST,RING_CORRECTION}");
+        } else if(frame.is("VISION","STOP_REQUEST",1)) {
+            Serial.println("{RSP,VISION,STOP_REQUEST,ACK,RING_CORRECTION}");
+            Serial.println("{EVT,VISION,STOP_REQUEST,RING_CORRECTION}");
+        } else serialError(frame,"FORMAT");
     } else if (frame.is("VISION", "START_REQUEST", 1)
                || frame.is("VISION", "STOP_REQUEST", 1)) {
         VisionStartMode mode;
@@ -885,6 +935,20 @@ static void serialDispatch(const SerialFrame &frame) {
         serialTransfer(frame);
     } else if (frame.is("ARM", "RETRIEVE", 2)) {
         serialRetrieve(frame);
+    } else if (frame.is("ARM", "RING_PREPARE", 1) || frame.is("ARM", "RING_DEMO", 0)) {
+        if(!serialDebugMode){serialError(frame,"MODE");return;}
+        MotionRequest r;
+        if(frame.count==4) {
+            uint32_t work=0;
+            if(!serialUInt(frame.fields[3],work,3)||work==0){serialError(frame,"RANGE");return;}
+            r.kind=MotionKind::RING_PREPARE;
+            r.work=work;
+        } else {
+            r.kind=MotionKind::DEMO_PLACE;
+            r.ringCorrection=true;
+        }
+        r.debug=true;
+        serialMotion(frame,r);
     } else if (frame.is("ARM", "DEMO1", 0) || frame.is("ARM", "DEMO2", 0)
                || frame.is("ARM", "DEMO3", 0) || frame.is("ARM", "DEMO4", 0)) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }

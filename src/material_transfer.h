@@ -74,6 +74,7 @@ struct MaterialMotionSteps {
 extern MaterialMotionSteps materialMotionSteps;
 extern float cargoTrayAngles[MATERIAL_STATION_COUNT];
 constexpr float CARGO_TRAY_CLEARANCE_DEG = 30.0f;
+constexpr float CARGO_TRAY_RELEASE_OFFSET_MM = 3.0f;
 constexpr float CARGO_TRAY_ARRIVAL_TOLERANCE_DEG = 1.0f;
 constexpr float WORK_POSITION_3_TRAY_LIMIT_DEG = 240.0f;
 

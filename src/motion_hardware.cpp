@@ -5,6 +5,14 @@
 #include "arm_placement_log.h"
 
 using namespace motion;
+namespace {
+const char *readExtension(float &length) {
+    int64_t encoder=0;
+    if(const char *error=ReadMotorEncoderPosition(6,encoder))return error;
+    length=-static_cast<double>(encoder)*3200.0/65536.0/LENGTH_PULSE;
+    return nullptr;
+}
+}
 /**
  * @brief 读取系统毫秒计时。
  */
@@ -14,9 +22,24 @@ uint32_t MotionHardware::now(){return millis();}
  */
 bool MotionHardware::cancelled(){return taskMotionAborted||(cancel&&cancel());}
 void MotionHardware::stopTray() {
+    trayPreselected=false;
     if(!trayMoving)return;
     Servo_HoldPosition(SERVO_ID_CARGO_TRAY);
     trayMoving=false;
+}
+
+void MotionHardware::stopRingVision() {
+    if(!ringVisionActive)return;
+    ring::input().close();
+    ringVisionActive=false;
+    Serial.println("{EVT,VISION,STOP_REQUEST,RING_CORRECTION}");
+}
+
+void MotionHardware::preselectTray(float angle) {
+    Step step;step.kind=StepKind::TRAY_START;step.turret=angle;
+    if(issue(step))return;
+    preselectedTrayAngle=angle;
+    trayPreselected=true;
 }
 /**
  * @brief 按步骤类型调用 MoveArm、BeginPositionMove 等硬件入口；发令后立即返回。
@@ -26,25 +49,58 @@ const char *MotionHardware::issue(const Step &s) {
     if(cancelled())return "STOPPED";
     switch(s.kind) {
     case StepKind::ARM:
+        if(s.ringVisionPosition) {
+            ringVisionActive=true;
+            Serial.printf("{EVT,VISION,RING_TARGET,%u}\n",static_cast<unsigned>(s.ringVisionPosition));
+            Serial.println("{EVT,VISION,START_REQUEST,RING_CORRECTION}");
+        }
         if(!(s.planned?MoveArmPlanned(s.high,s.length,s.turret,s.pawl,s.speed,s.turretAcceleration,s.slowLower):
              MoveArm(s.high,s.length,s.turret,s.pawl,s.speed,s.turretAcceleration,s.slowLower)))return "EXECUTION";
         if(s.turretArrival)turretTarget=currentArm.turret_angle;
         if(CargoTrayNeedsClearance(s.trayClearanceCargo)||CargoTrayHasPlacementLimit(s.trayClearanceWorkPosition)) {
+            trayPreselected=false;
             Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY,
                 CargoTrayPlacementAngle(s.trayClearanceCargo,s.trayClearanceWorkPosition),0,0);
             trayMoving=true;
         }
         return nullptr;
+    case StepKind::RING_CORRECT: {
+        float length=0,turret=0;
+        if(const char *error=readExtension(length))return error;
+        if(!ReadArmTurretAngle(turret))return "MOTOR_READ";
+        // 转台四舍五入，伸缩脉冲向下取整。给脉冲换算留出向内的余量。
+        constexpr float halfTurretPulse=180.0f/(TURRET_MOTOR_GEAR_RATIO*TURRET_MOTOR_PULSES_PER_REV);
+        ringMinTurret=fmaxf(TURRET_CABLE_MIN_DEG,turret-ring::MAX_TURRET_CORRECTION_DEG)+halfTurretPulse;
+        ringMaxTurret=fminf(TURRET_CABLE_MAX_DEG,turret+ring::MAX_TURRET_CORRECTION_DEG)-halfTurretPulse;
+        const float minLength=length-ring::MAX_EXTENSION_CORRECTION_MM;
+        ringMinLength=minLength>0?minLength+1.0f/LENGTH_PULSE:0.0f;
+        ringMaxLength=fminf(170.0f,length+ring::MAX_EXTENSION_CORRECTION_MM);
+        ringX=ring::Pid{};
+        ringY=ring::Pid{};
+        ringHasLastFrame=false;
+        ringTurretPending=ringXQueued=ringStable=false;
+        ringSettings=ring::input().settings();
+        Serial.printf("{EVT,VISION,RING_READY,%lu}\n",
+            static_cast<unsigned long>(ring::input().ready(ring::requiredStableFrames())));
+        return nullptr;
+    }
     case StepKind::POSITION: return BeginPositionMove(s.high,s.length,s.turret,s.speed)?nullptr:"EXECUTION";
     case StepKind::GOTO: GotoPose(s.high,s.length,s.turret,true);break;
     case StepKind::TURRET_READY: turretStarted=millis();break;
     case StepKind::COMMIT: cargoPlatforms[s.cargo-1].material=static_cast<MaterialType>(s.color);break;
-    case StepKind::RAW_SERVO: Servo_SetAngle(s.cargo,s.turret,0,0);break;
+    case StepKind::RAW_SERVO:
+        if(s.cargo==SERVO_ID_CARGO_TRAY)trayPreselected=false;
+        Servo_SetAngle(s.cargo,s.turret,0,0);break;
     case StepKind::TRAY_ROTATE:
+        trayPreselected=false;
         Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY,s.turret,s.waitMs,s.trayPowerMw);
         trayMoving=true;
         break;
     case StepKind::TRAY_START:
+        if(trayPreselected) {
+            trayPreselected=false;
+            if(s.turret==preselectedTrayAngle)break; // 首件沿用已下发的选盘，后续仍检查实测角度。
+        }
         Servo_MoveCargoTray(s.turret);
         trayMoving=true;
         break;
@@ -58,8 +114,49 @@ const char *MotionHardware::issue(const Step &s) {
  * @brief 判断当前步骤是否使用反馈完成；POSITION、TURRET_READY 或显式开启的机械臂反馈模式使用反馈。
  */
 bool MotionHardware::feedback(const Step &s) {
-    return s.kind==StepKind::POSITION||s.kind==StepKind::TURRET_READY||s.kind==StepKind::TRAY_ROTATE||s.kind==StepKind::TRAY_READY||
+    return s.kind==StepKind::RING_CORRECT||s.kind==StepKind::POSITION||s.kind==StepKind::TURRET_READY||s.kind==StepKind::TRAY_ROTATE||s.kind==StepKind::TRAY_READY||
         (s.kind==StepKind::ARM&&(s.liftArrival||s.workPlaceLiftArrival||s.turretArrival||ARM_FEEDBACK_ENABLED)&&!s.timed);
+}
+
+const char *MotionHardware::correctRing(const Step &s,bool &done) {
+    ring::Frame frame;
+    float targetLength=-1;
+    if(ring::input().take(frame,ringStable)) {
+        ringXQueued=!ring::withinDeadzone(frame.x);
+        if(ringXQueued)ringXFrame=frame;
+        else ringX=ring::Pid{};
+        const float dt=ringHasLastFrame?(frame.timeMs-ringLastFrameMs)*0.001f:0.0f;
+        ringHasLastFrame=true;
+        ringLastFrameMs=frame.timeMs;
+        if(ring::withinDeadzone(frame.y))ringY=ring::Pid{};
+        else {
+            float length=0;
+            if(const char *error=readExtension(length))return error;
+            targetLength=fmaxf(ringMinLength,fminf(ringMaxLength,length+ringY.update(frame.y,dt,ringSettings.extension)));
+        }
+    }
+    TurretMotorState turret;
+    if(ringTurretPending||ringXQueued) {
+        if(!TurretMotorReadState(turret))return "MOTOR_READ";
+        if((turret.flags&2)&&turret.rpm==0)ringTurretPending=false;
+    }
+    if(ringStable&&!ringTurretPending) {
+        stopRingVision();
+        done=true;
+        return nullptr;
+    }
+    if(ringXQueued&&!ringTurretPending) {
+        const float dt=ringX.hasPrevious?(ringXFrame.timeMs-ringLastXFrameMs)*0.001f:0.0f;
+        ringLastXFrameMs=ringXFrame.timeMs;
+        const float angle=turret.angle-ringX.update(ringXFrame.x,dt,ringSettings.turret);
+        const float targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,angle));
+        if(!MoveArmPlanned(-1,targetLength,targetTurret,-1,s.speed,ring::TURRET_CORRECTION_ACCELERATION))return "EXECUTION";
+        ringTurretPending=true;
+        ringXQueued=false;
+        return nullptr;
+    }
+    if(targetLength!=-1&&!MoveArm(-1,targetLength,-1,-1,s.speed,TURRET_ACCELERATION_SLOW))return "EXECUTION";
+    return nullptr;
 }
 /**
  * @brief 检查位置移动、转台或机械臂实测到位条件，并通过 done 返回本次结果。
@@ -67,6 +164,7 @@ bool MotionHardware::feedback(const Step &s) {
  */
 const char *MotionHardware::ready(const Step &s,bool &done) {
     done=false;if(cancelled())return "STOPPED";
+    if(s.kind==StepKind::RING_CORRECT)return correctRing(s,done);
     if(s.kind==StepKind::POSITION){TickPositionMove();done=!PositionMoveActive();return nullptr;}
     if(s.kind==StepKind::TRAY_ROTATE||s.kind==StepKind::TRAY_READY) {
         float angle=0;
@@ -87,6 +185,11 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
         const double measured=-static_cast<double>(state.position)*3200.0/65536.0/HEIGHT_PULSE;
         done=s.workPlaceLiftArrival ? fabs(measured-s.high)<10.0
             : (state.flags&2)&&fabs(measured-s.high)<=1.0;
+        if(done&&s.lengthArrival) {
+            if(const char *lengthError=ReadMotorFeedback(6,state))return lengthError;
+            const double length=-static_cast<double>(state.position)*3200.0/65536.0/LENGTH_PULSE;
+            done=(state.flags&2)&&fabs(length-s.length)<=1.0;
+        }
         if(done)Serial.printf("{EVT,MOTION,LIFT_ARRIVED,%lu,%.3f,%.3f}\n",
             static_cast<unsigned long>(job),s.high,measured);
         return nullptr;

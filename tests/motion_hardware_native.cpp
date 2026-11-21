@@ -11,6 +11,8 @@
 NativeSerial Serial;
 uint32_t clockMs=0;bool stop=false,servoAvailable=true;
 float turretMeasured=0,clawMeasured=0;
+uint8_t turretFlags=2;
+int16_t turretRpm=0;
 float trayMeasured=0,trayTarget=0;
 uint32_t trayInterval=0;
 uint16_t trayPower=0;
@@ -21,6 +23,8 @@ bool customMotor=false;
 int64_t customPosition=0;
 const char *motorError=nullptr;
 int issued=0;
+float issuedLength=-1;
+float issuedTurret=0;
 uint16_t issuedRamp=0;bool issuedSlowLower=false;
 uint32_t millis(){return clockMs;}
 volatile bool taskMotionAborted=false;
@@ -30,8 +34,8 @@ ArmPose currentArm{100,20,90,50};
 CargoPlatform cargoPlatforms[3]={{MATERIAL_NONE},{MATERIAL_NONE},{MATERIAL_NONE}};
 float cargoTrayAngles[3]={150,213,276};
 bool cancelled(){return stop;}
-bool MoveArm(float,float,float,float,float,uint8_t ramp,bool slowLower){++issued;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
-bool MoveArmPlanned(float,float,float,float,float,uint8_t ramp,bool slowLower){++issued;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
+bool MoveArm(float,float length,float turret,float,float,uint8_t ramp,bool slowLower){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
+bool MoveArmPlanned(float,float length,float turret,float,float,uint8_t ramp,bool slowLower){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
 bool BeginPositionMove(float,float,float,float){++issued;return true;}
 void TickPositionMove(){}
 bool PositionMoveActive(){return false;}
@@ -47,6 +51,10 @@ void Servo_HoldPosition(uint8_t id){assert(id==SERVO_ID_CARGO_TRAY);trayHeld=tru
 void Emm_V5_En_Control_all(bool){++issued;}
 void MovePose(int,float,bool){++issued;}
 bool ReadArmTurretAngle(float &angle){angle=turretMeasured;return servoAvailable;}
+bool TurretMotorReadState(TurretMotorState &state){
+    state.angle=turretMeasured;state.flags=turretFlags;state.rpm=turretRpm;
+    return servoAvailable;
+}
 bool Servo_QueryAngleMTurn(uint8_t id,float &angle,uint32_t){
     angle=id==SERVO_ID_CARGO_TRAY?trayMeasured:id==2?turretMeasured:clawMeasured;return servoAvailable;
 }
@@ -110,6 +118,22 @@ void trayArrival() {
     assert(!hardware.ready(s,done)&&done);
     s.kind=motion::StepKind::TRAY_START;s.turret=0;
     assert(!hardware.issue(s)&&!hardware.feedback(s)&&trayTarget==0&&smoothTrayCommands==2);
+
+    // 到站时下发 0°→276°，跨作业后首件沿用同一条指令，但实测仍未到位。
+    hardware.preselectTray(276);
+    assert(trayTarget==276&&smoothTrayCommands==3);
+    hardware.configure(23,cancelled);
+    s.turret=276;
+    assert(!hardware.issue(s)&&smoothTrayCommands==3);
+    s.kind=motion::StepKind::TRAY_READY;
+    trayMeasured=240;
+    assert(!hardware.ready(s,done)&&!done);
+    trayMeasured=276;
+    assert(!hardware.ready(s,done)&&done);
+    hardware.preselectTray(213);
+    hardware.stopTray();
+    s.kind=motion::StepKind::TRAY_START;s.turret=213;
+    assert(!hardware.issue(s)&&smoothTrayCommands==5); // 停车后不能复用原先的预选。
 }
 void look3() {
     MotionHardware hardware;hardware.configure(1,cancelled);
@@ -209,6 +233,154 @@ void placement() {
     assert(!hardware.issue(s)&&cargoPlatforms[0].material==MATERIAL_RED);
     hardware.event(1,s,false);assert(placementReads==2);
 }
+void ringCorrection() {
+    MotionHardware hardware;
+    hardware.configure(22,cancelled);
+    motion::Step hover;
+    hover.kind=motion::StepKind::ARM;
+    hover.ringVisionPosition=2;
+    assert(!hardware.issue(hover));
+    assert(Serial.text=="{EVT,VISION,RING_TARGET,2}\n{EVT,VISION,START_REQUEST,RING_CORRECTION}\n");
+    ring::Frame frame;
+    assert(!ring::input().submit(0,frame));
+
+    motion::Step correct;
+    correct.kind=motion::StepKind::RING_CORRECT;
+    turretMeasured=86;
+    customPosition=llround(-71.5*LENGTH_PULSE*65536/3200);
+    assert(!hardware.issue(correct));
+    assert(Serial.text.find("{EVT,VISION,RING_READY,1}")!=std::string::npos);
+    assert(!ring::input().submit(0,frame));
+    bool done=false;
+    assert(!hardware.ready(correct,done)&&!done);
+    frame.x=1;
+    assert(ring::input().submit(1,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issued==2);
+    assert(issuedRamp==200);
+    frame.x=0;
+    frame.y=-4;
+    assert(ring::input().submit(1,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issued==3&&issuedTurret==-1);
+    assert(fabsf(issuedLength-71.3f)<0.002f);
+    frame.y=4;
+    assert(ring::input().submit(1,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issued==4&&issuedTurret==-1);
+    assert(fabsf(issuedLength-71.7f)<0.002f);
+    frame.x=4;
+    frame.y=0.5f;
+    assert(ring::input().submit(1,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issued==5&&issuedLength==-1);
+    assert(fabsf(issuedTurret-85.76f)<0.001f);
+    frame.x=-4;
+    frame.y=-0.5f;
+    assert(ring::input().submit(1,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issued==6&&issuedLength==-1);
+    assert(fabsf(issuedTurret-86.24f)<0.001f);
+    frame.y=4;
+    assert(ring::input().submit(1,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issued==7);
+    assert(fabsf(issuedTurret-86.24f)<0.001f&&fabsf(issuedLength-71.7f)<0.002f);
+    frame.x=0.5f;
+    frame.y=-0.5f;
+    assert(ring::withinDeadzone(frame));
+    frame.y=-1;
+    assert(!ring::withinDeadzone(frame));
+    frame.y=-0.5f;
+    assert(ring::input().submit(1,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issued==7);
+    frame.x=6;
+    assert(ring::input().submit(1,frame));
+    frame.x=0.5f;
+    assert(ring::input().submit(1,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issued==7);
+    assert(ring::input().submit(1,frame));
+    frame.x=6;
+    assert(ring::input().submit(1,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issued==8);
+    frame.x=0;
+    assert(ring::input().submit(1,frame));
+    assert(ring::input().submit(1,frame));
+    assert(!hardware.ready(correct,done)&&done&&issued==8);
+    assert(Serial.text.find("{EVT,VISION,STOP_REQUEST,RING_CORRECTION}")!=std::string::npos);
+    assert(!ring::input().submit(1,frame));
+
+    assert(!hardware.issue(hover));
+    assert(!hardware.issue(correct));
+    frame.x=-200;
+    frame.y=500;
+    assert(ring::input().submit(2,frame));
+    assert(!hardware.ready(correct,done)&&!done);
+    assert(issuedTurret>95.9f&&issuedTurret<=96);
+    assert(issuedLength>91.4f&&issuedLength<=91.501f);
+    const float upperTurret=issuedTurret,upperLength=issuedLength;
+
+    turretMeasured=90;
+    customPosition=llround(-80.0*LENGTH_PULSE*65536/3200);
+    assert(ring::input().submit(2,frame));
+    assert(!hardware.ready(correct,done)&&!done);
+    assert(issuedTurret==upperTurret&&issuedLength==upperLength);
+
+    frame.x=300;
+    frame.y=-700;
+    assert(ring::input().submit(2,frame));
+    assert(!hardware.ready(correct,done)&&!done);
+    assert(issuedTurret>=76&&issuedTurret<76.1f);
+    assert(issuedLength>=51.5f&&issuedLength<51.6f);
+    hardware.stopRingVision();
+
+    turretMeasured=357;
+    customPosition=llround(-4.0*LENGTH_PULSE*65536/3200);
+    ring::requiredStableFrames()=3;
+    assert(!hardware.issue(hover));
+    assert(!hardware.issue(correct));
+    frame.x=-200;
+    frame.y=-500;
+    assert(ring::input().submit(3,frame));
+    assert(!hardware.ready(correct,done)&&!done);
+    assert(issuedTurret>359.9f&&issuedTurret<=360&&issuedLength==0);
+    frame.x=frame.y=0;
+    assert(ring::input().submit(3,frame));
+    assert(ring::input().submit(3,frame));
+    assert(!hardware.ready(correct,done)&&!done);
+    assert(ring::input().submit(3,frame));
+    assert(!hardware.ready(correct,done)&&done);
+    ring::requiredStableFrames()=2;
+
+    turretMeasured=86;
+    customPosition=llround(-71.5*LENGTH_PULSE*65536/3200);
+    assert(!hardware.issue(hover));
+    assert(!hardware.issue(correct));
+    frame.x=4;
+    assert(ring::input().submit(4,frame));
+    assert(!hardware.ready(correct,done)&&!done&&fabsf(issuedTurret-85.76f)<0.001f);
+    int commands=issued;
+
+    turretFlags=0;
+    frame.x=10;
+    frame.y=4;
+    assert(ring::input().submit(4,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issued==++commands);
+    assert(issuedTurret==-1&&fabsf(issuedLength-71.7f)<0.002f);
+    frame.x=-8;
+    frame.y=0;
+    assert(ring::input().submit(4,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issued==commands);
+    turretFlags=2;
+    turretRpm=1;
+    assert(!hardware.ready(correct,done)&&!done&&issued==commands);
+    turretRpm=0;
+    assert(!hardware.ready(correct,done)&&!done&&issued==++commands);
+    assert(fabsf(issuedTurret-86.48f)<0.001f);
+
+    turretFlags=0;
+    frame.x=0;
+    assert(ring::input().submit(4,frame));
+    assert(ring::input().submit(4,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issued==commands);
+    turretFlags=2;
+    assert(!hardware.ready(correct,done)&&done&&issued==commands);
+}
 int main(int argc,char **argv) {
+    if(argc==2&&!strcmp(argv[1],"ring")){ringCorrection();return 0;}
     assert(argc==2);if(!strcmp(argv[1],"look3"))look3();else if(!strcmp(argv[1],"feedback"))feedback();else if(!strcmp(argv[1],"turret"))turretArrival();else if(!strcmp(argv[1],"lift"))liftArrival();else if(!strcmp(argv[1],"placement"))placement();else if(!strcmp(argv[1],"tray"))trayArrival();else assert(false);
 }

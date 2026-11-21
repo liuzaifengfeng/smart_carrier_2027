@@ -3,6 +3,7 @@
 #include "motion_job.h"
 #include "vision_alignment.h"
 #include "arm_motion.h"
+#include "disc_material_decision.h"
 #include <string.h>
 
 struct CompetitionMap {
@@ -186,9 +187,10 @@ class CompetitionFlow {
      * @param from 起始节点编号。
      * @param to 终点节点编号。
      * @param observation 导航期间准备的观察姿态，NONE 表示不附带机械臂动作。
+     * @param arrivalCargo 底盘到站时预选的载物台，0 表示不预选。
      */
-    MotionRequest path(uint8_t from,uint8_t to,ArmObservation observation=ArmObservation::NONE) {
-        MotionRequest r;r.kind=MotionKind::NAVIGATE;r.startNode=from;r.endNode=to;r.observation=observation;r.zone=homeZone;r.theta=NAN;return r;
+    MotionRequest path(uint8_t from,uint8_t to,ArmObservation observation=ArmObservation::NONE,uint8_t arrivalCargo=0) {
+        MotionRequest r;r.kind=MotionKind::NAVIGATE;r.startNode=from;r.endNode=to;r.observation=observation;r.zone=homeZone;r.theta=NAN;r.cargo=arrivalCargo;return r;
     }
     /**
      * @brief 检查一次视觉对齐结果；结束时关闭视觉，失败时转入 ALIGN_FAILED。
@@ -282,7 +284,7 @@ public:
                 io.materialStop();
                 io.clearProgress();
             }
-            if(motion(path(secondRound?map.temp:map.scan,map.disc,ArmObservation::LOOK2),STATE_ROUTE_FAILED)==1) { // 去圆盘并提前 LOOK2，等待底盘和观察姿态都完成。
+            if(motion(path(secondRound?map.temp:map.scan,map.disc,ArmObservation::LOOK2,CargoForGrabIndex(0)),STATE_ROUTE_FAILED)==1) { // 去圆盘并提前 LOOK2，等待底盘和观察姿态都完成。
                 io.visionStart(VisionStartMode::DISC); // 到位后开启圆盘整体对齐。
                 phase=Phase::DISC_ALIGN;
             }
@@ -323,7 +325,7 @@ public:
                 io.materialStop();
                 io.display(secondRound?"GO COARSE2":"GO COARSE1");
             }
-            if(motion(path(map.disc,map.coarse,ArmObservation::LOOK),STATE_ROUTE_FAILED)==1) { // 去粗加工区，途中提前展开 LOOK。
+            if(motion(path(map.disc,map.coarse,ArmObservation::LOOK,CargoForGrabIndex(0)),STATE_ROUTE_FAILED)==1) { // 去粗加工区，途中提前展开 LOOK。
                 io.visionStart(VisionStartMode::WORK_AREA); // 开启粗加工区工位对齐。
                 phase=Phase::COARSE_ALIGN;
             }
@@ -367,7 +369,7 @@ public:
         // ---------- 暂存区：导航并提前 LOOK → 对齐 → 第一轮放料 / 第二轮叠放 ----------
         case Phase::TEMP_NAVIGATE:
             io.display(secondRound?"GO TEMP2":"GO TEMP1");
-            if(motion(path(map.coarse,map.temp,ArmObservation::LOOK),STATE_ROUTE_FAILED)==1) { // 三件取回后去暂存区，途中提前展开 LOOK。
+            if(motion(path(map.coarse,map.temp,ArmObservation::LOOK,CargoForGrabIndex(0)),STATE_ROUTE_FAILED)==1) { // 三件取回后去暂存区，途中提前展开 LOOK。
                 io.visionStart(tempVision); // 第一轮使用空工位对齐，第二轮使用已有物料的工位对齐。
                 phase=Phase::TEMP_ALIGN;
             }

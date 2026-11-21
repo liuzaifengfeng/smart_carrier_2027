@@ -5,6 +5,9 @@ from pathlib import Path
 from action_group_config import DELAY_PREFIX
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("robot_parameters.json")
+OUTER_ACCEL_LEVEL = "底盘/节点导航外圈加速度档位(EMM V5)"
+LEGACY_OUTER_ACCEL = "底盘/节点导航平移加速度(mm/s²)"
+Y_PULSES_PER_MM = "标定/Y脉冲每毫米"
 
 
 def _unique_object(pairs):
@@ -40,6 +43,23 @@ def load_config(path):
     return data
 
 
+def parameter_entries(data, default_y_pulses=13.6, *, use_outer_level=True):
+    entries = {name: entry for group in data["groups"].values()
+               for name, entry in group["parameters"].items()}
+    if use_outer_level and LEGACY_OUTER_ACCEL in entries:
+        old = entries.pop(LEGACY_OUTER_ACCEL)["value"]
+        if OUTER_ACCEL_LEVEL not in entries:
+            level = None
+            if old is not None:
+                pulses = entries.get(Y_PULSES_PER_MM, {}).get("value")
+                pulses = default_y_pulses if pulses is None else pulses
+                if not 1 <= old <= 4000 or pulses <= 0:
+                    raise ValueError(f"无法换算参数：{LEGACY_OUTER_ACCEL}")
+                level = max(1, min(255, math.floor(256.5 - 20000 * 3200 / (old * pulses * 60))))
+            entries[OUTER_ACCEL_LEVEL] = {"value": level, "integer": True, "minimum": 1, "maximum": 255}
+    return entries
+
+
 def config_edits(data, parameters):
     """全量校验后返回编辑；范围以连接设备的固件回读值为准。"""
     by_name = {p.name: p for p in parameters.values()}
@@ -48,20 +68,20 @@ def config_edits(data, parameters):
         for field in ("高度(mm)", "伸出(mm)", "转台(deg)")
     } if "搬运/待操作区/高度(mm)" in by_name else set()
     edits = {}
-    for group in data["groups"].values():
-        for name, entry in group["parameters"].items():
-            # 旧 JSON 中的地图坐标不再导入，节点默认坐标由固件源码维护。
-            if name.startswith("地图/") or name in obsolete_poses:
-                continue
-            if name not in by_name:
-                raise ValueError(f"当前固件不支持参数：{name}")
-            value = entry["value"]
-            if value is None:
-                continue
-            p = by_name[name]
-            normalized = p.validate(str(value))
-            if float(normalized) != float(p.value):
-                edits[p.index] = normalized
+    y_pulses = float(by_name[Y_PULSES_PER_MM].value) if Y_PULSES_PER_MM in by_name else 13.6
+    for name, entry in parameter_entries(data, y_pulses, use_outer_level=OUTER_ACCEL_LEVEL in by_name).items():
+        # 旧 JSON 中的地图坐标不再导入，节点默认坐标由固件源码维护。
+        if name.startswith("地图/") or name in obsolete_poses:
+            continue
+        if name not in by_name:
+            raise ValueError(f"当前固件不支持参数：{name}")
+        value = entry["value"]
+        if value is None:
+            continue
+        p = by_name[name]
+        normalized = p.validate(str(value))
+        if float(normalized) != float(p.value):
+            edits[p.index] = normalized
     return edits
 
 

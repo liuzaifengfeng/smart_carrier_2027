@@ -1,4 +1,5 @@
 #include "serial_frame.h"
+#include "ring_correction.h"
 #include "motion_executor.h"
 #include "motion_job.h"
 #include "robot_state.h"
@@ -317,6 +318,48 @@ void zones() {
 }
 int main(int argc,char **argv) {
     assert(argc==2);
+    if(!strcmp(argv[1],"ring")) {
+        dispatch("{CMD,VISION,START_REQUEST,RING_CORRECTION}");
+        assert(Serial.text=="{RSP,VISION,START_REQUEST,ERR,FORMAT}\n"&&!active);
+        Serial.text.clear();
+        dispatch("{CMD,VISION,START_REQUEST,RING_CORRECTION,4}");
+        assert(Serial.text=="{RSP,VISION,START_REQUEST,ERR,RANGE}\n"&&!active);
+        Serial.text.clear();
+        dispatch("{CMD,VISION,START_REQUEST,RING_CORRECTION,2}");
+        assert(Serial.text=="{RSP,VISION,START_REQUEST,ACK,RING_CORRECTION,2}\n"
+            "{EVT,VISION,RING_TARGET,2}\n{EVT,VISION,START_REQUEST,RING_CORRECTION}\n"&&!active);
+        Serial.text.clear();
+        dispatch("{CMD,ARM,RING_PREPARE,2}");
+        assert(active&&captured.kind==MotionKind::RING_PREPARE&&captured.work==2);
+        assert(Serial.text=="{RSP,ARM,RING_PREPARE,ACK}\n");
+        finish();
+        dispatch("{CMD,VISION,RING_AXIS_PID_SET,0.2,0.1,0,0.03,0,0.02}");
+        const auto gains=ring::input().settings();
+        assert(gains.turret.kp==0.2f&&gains.turret.ki==0.1f&&gains.turret.kd==0);
+        assert(gains.extension.kp==0.03f&&gains.extension.ki==0&&gains.extension.kd==0.02f);
+        Serial.text.clear();
+        dispatch("{CMD,VISION,RING_AXIS_PID_GET}");
+        assert(Serial.text=="{RSP,VISION,RING_AXIS_PID_GET,OK,0.2,0.1,0,0.03,0,0.02}\n");
+        dispatch("{CMD,ARM,RING_DEMO}");
+        assert(active&&captured.kind==MotionKind::DEMO_PLACE&&captured.ringCorrection);
+        ring::Frame sample;
+        const uint32_t token=ring::input().ready(2);
+        bool stable=false;
+        assert(token==1);
+        Serial.text.clear();
+        dispatch("{CMD,VISION,RING_OFFSET,0,1,-1}");
+        assert(Serial.text=="{EVT,VISION,RING_OFFSET,0,1,-1,IGNORED}\n"&&!ring::input().take(sample,stable));
+        Serial.text.clear();
+        dispatch("{CMD,VISION,RING_OFFSET,1,1.25,-0.50}");
+        assert(Serial.text=="{EVT,VISION,RING_OFFSET,1,1.25,-0.50,ACCEPTED}\n");
+        assert(ring::input().take(sample,stable)&&!stable&&sample.x==1.25f&&sample.y==-0.5f);
+        finish();
+        Serial.text.clear();
+        serialDebugMode=false;
+        dispatch("{CMD,ARM,RING_DEMO}");
+        assert(!active&&Serial.text=="{RSP,ARM,RING_DEMO,ERR,MODE}\n");
+        return 0;
+    }
     if(!strcmp(argv[1],"grab"))grab();else if(!strcmp(argv[1],"positions"))positions();
     else if(!strcmp(argv[1],"maintenance"))maintenance();else if(!strcmp(argv[1],"lidar"))lidar();
     else if(!strcmp(argv[1],"trial"))trial();else if(!strcmp(argv[1],"boot"))boot();

@@ -13,6 +13,9 @@ def build_motion_hardware():
 
 
 class MotionHardwareTests(unittest.TestCase):
+    def test_ring_feedback_counts_stable_frames_and_waits_for_turret_arrival(self):
+        run_native(build_motion_hardware(), "ring")
+
     def test_tray_requires_measured_multiturn_arrival_and_can_be_stopped(self):
         run_native(build_motion_hardware(), "tray")
 

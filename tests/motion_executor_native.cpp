@@ -146,9 +146,12 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
         if(request.kind==MotionKind::NAVIGATE){
             ++paths;
             if(request.endNode==0||request.endNode==4) {
-                assert(request.endNode==(zone==1?4:0)&&request.observation==ArmObservation::LOOK4);
+                assert(request.endNode==(zone==1?4:0)&&request.observation==ArmObservation::LOOK4&&request.cargo==0);
                 assert(previous==MotionKind::ARM_POSE); // 路径前 START 仍独立执行。
-            } else assert(request.observation==(request.endNode==14?ArmObservation::LOOK2:ArmObservation::LOOK));
+            } else {
+                assert(request.observation==(request.endNode==14?ArmObservation::LOOK2:ArmObservation::LOOK));
+                assert(request.cargo==3); // 到站即选首件料盘，早于视觉对齐和首件作业。
+            }
         }
         if(request.kind==MotionKind::NAVIGATE&&request.startNode==10)assert(previous==MotionKind::RETRIEVE_ROUND);
         if(request.kind==MotionKind::PLACE_ROUND){

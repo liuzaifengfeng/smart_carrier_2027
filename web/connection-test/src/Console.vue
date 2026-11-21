@@ -15,6 +15,7 @@ import TrialPanel from './components/TrialPanel.vue'
 import KeyboardPanel from './components/KeyboardPanel.vue'
 import FieldMap from './components/FieldMap.vue'
 import BatteryPanel from './components/BatteryPanel.vue'
+import RingVisionPanel from './components/RingVisionPanel.vue'
 import './desktop.css'
 const controller = useController()
 const { status: archiveStatus, pending, upload } = useCloudCapture(controller)
@@ -38,6 +39,7 @@ const routeLabels = { idle: '尚无路径', waiting: '等待路径', running: '�
   failed: '路径失败', cancelled: '路径已取消' }
 const routePhases: Record<string, string> = {
   POSITION_STRAIGHT: '平移', POSITION_TURN: '转向', MIDDLE_HEADING_HOLD: '中段直行',
+  OUTER_HEADING_HOLD: '外圈直行',
   OUTER_CURVE: '外侧弧线', OUTER_DRIFT: '外侧平移', HEADING_ERROR: '航向偏差',
 }
 const poseText = computed(() => {
@@ -156,6 +158,18 @@ function pickTarget(x: number, y: number) {
             <button @click="targetVisible = true">在地图上预览目标</button>
             <button :disabled="!canControl || commandPose.length < 3" @click="gotoTarget">发送绝对目标姿态</button>
           </fieldset>
+          <fieldset v-if="page === '机械臂'"><legend>圆环纠偏放料</legend>
+            <div class="actions">
+              <button v-for="position in 3" :key="position" :disabled="!canControl"
+                @click="send(frame('ARM', 'RING_PREPARE', [position]))">圆环纠偏前置动作{{ position }}</button>
+            </div>
+            <div class="actions">
+              <button :disabled="!canControl" @click="send(frame('ARM', 'RING_DEMO'))">三件圆环纠偏放料</button>
+              <button :disabled="!canControl" @click="send(frame('NAV', 'STOP'))">停止试放</button>
+            </div>
+            <p>前置动作闭爪并停在对应工位上方 10 mm。完整试放前，将车停在工作区并装好三个载物台。</p>
+          </fieldset>
+          <RingVisionPanel v-show="page === '视觉'" :controller="controller" />
           <CommandPanel :page="page" :controller="controller" />
           <div v-show="page === 'EMM 电机'"><MotorPanel :controller="controller" /></div>
           <div v-show="page === '旋转料盘'"><TrayPanel :controller="controller" /></div>

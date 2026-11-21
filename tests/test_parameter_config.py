@@ -49,7 +49,9 @@ class ConfigTests(unittest.TestCase):
                     entry['minimum'], entry['maximum'], entry['integer'])
 
     def test_defaults_and_name_mapping(self):
-        self.assertEqual(len(self.parameters), 100)
+        self.assertEqual(len(self.parameters), 102)
+        ring = self.data['groups']['圆环纠偏']['parameters']['圆环纠偏/连续达标帧数']
+        self.assertEqual((ring['value'], ring['minimum'], ring['integer']), (2, 1, True))
         self.assertEqual(config_edits(self.data, self.parameters), {})
         p = next(p for p in self.parameters.values() if p.name == 'PID/视觉X/Kp')
         p.index = 999
@@ -67,7 +69,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(saved['groups']['PID']['parameters'][name]['value'], 0.025)
             self.assertEqual(saved['groups']['PID']['parameters']['PID/视觉X/Kp']['value'], shared)
             self.assertEqual(config_edits(saved, self.parameters), {p.index: '0.025'})
-            self.assertEqual(generate(source, header), 100)
+            self.assertEqual(generate(source, header), 102)
             self.assertIn(f'"{name}", 0.025', header.read_text(encoding='utf-8'))
 
     def test_map_coordinates_stay_out_of_json_defaults(self):
@@ -81,19 +83,36 @@ class ConfigTests(unittest.TestCase):
             source, header = folder/'settings.json', folder/'defaults.h'
             export_config(source, self.parameters, {999: '999'})
             self.assertNotIn('地图', load_config(source)['groups'])
-            self.assertEqual(generate(source, header), 100)
+            self.assertEqual(generate(source, header), 102)
             self.assertNotIn('地图/', header.read_text(encoding='utf-8'))
 
     def test_node_acceleration_exports_and_compiles_as_default(self):
-        name = '底盘/节点导航平移加速度(mm/s²)'
+        name = '底盘/节点导航外圈加速度档位(EMM V5)'
         p = next(p for p in self.parameters.values() if p.name == name)
         with temporary_folder() as folder:
             source, header = folder/'settings.json', folder/'defaults.h'
-            export_config(source, self.parameters, {p.index: '450.5'})
+            export_config(source, self.parameters, {p.index: '225'})
             saved = load_config(source)
-            self.assertEqual(saved['groups']['底盘']['parameters'][name]['value'], 450.5)
-            self.assertEqual(generate(source, header), 100)
-            self.assertIn(f'"{name}", 450.5', header.read_text(encoding='utf-8'))
+            self.assertEqual(saved['groups']['底盘']['parameters'][name]['value'], 225)
+            self.assertEqual(generate(source, header), 102)
+            self.assertIn(f'"{name}", 225', header.read_text(encoding='utf-8'))
+
+    def test_legacy_outer_acceleration_uses_saved_wheel_calibration(self):
+        from parameter_config import LEGACY_OUTER_ACCEL, OUTER_ACCEL_LEVEL, Y_PULSES_PER_MM
+        p = next(p for p in self.parameters.values() if p.name == OUTER_ACCEL_LEVEL)
+        with temporary_folder() as folder:
+            source, header = folder/'legacy.json', folder/'defaults.h'
+            legacy = load_config(DEFAULT_CONFIG_PATH)
+            outer = legacy['groups']['底盘']['parameters']
+            outer.pop(OUTER_ACCEL_LEVEL)
+            outer[LEGACY_OUTER_ACCEL] = {'value': 2000}
+            for group in legacy['groups'].values():
+                if Y_PULSES_PER_MM in group['parameters']:
+                    group['parameters'][Y_PULSES_PER_MM]['value'] = 16
+            source.write_text(json.dumps(legacy), encoding='utf-8')
+            self.assertEqual(config_edits(legacy, self.parameters)[p.index], '223')
+            generate(source, header)
+            self.assertIn(f'"{OUTER_ACCEL_LEVEL}", 223', header.read_text(encoding='utf-8'))
 
     def test_middle_profiles_export_independently_of_outer_profiles(self):
         names = ('底盘/节点导航中间路段速度(mm/s)', '底盘/节点导航中间路段平移加速度(mm/s²)')
@@ -106,8 +125,8 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(parameters[names[0]]['value'], 1200)
             self.assertEqual(parameters[names[1]]['value'], 800)
             self.assertEqual(parameters['底盘/节点导航速度(mm/s)']['value'], 3000)
-            self.assertEqual(parameters['底盘/节点导航平移加速度(mm/s²)']['value'], 2000)
-            self.assertEqual(generate(source, header), 100)
+            self.assertEqual(parameters['底盘/节点导航外圈加速度档位(EMM V5)']['value'], 200)
+            self.assertEqual(generate(source, header), 102)
             for name, value in zip(names, ('1200', '800')):
                 self.assertIn(f'"{name}", {value}', header.read_text(encoding='utf-8'))
 
@@ -146,7 +165,7 @@ class ConfigTests(unittest.TestCase):
             source, header = folder / 'robot.json', folder / 'generated.h'
             entry['value'] = 1500
             source.write_text(json.dumps(self.data, ensure_ascii=False), encoding='utf-8')
-            self.assertEqual(generate(source, header), 100)
+            self.assertEqual(generate(source, header), 102)
             self.assertIn('"搬运/等待时间(ms)", 1500', header.read_text(encoding='utf-8'))
             entry['value'] = 60001
             source.write_text(json.dumps(self.data, ensure_ascii=False), encoding='utf-8')

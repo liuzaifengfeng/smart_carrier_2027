@@ -57,3 +57,6 @@ class SerialMotionTests(unittest.TestCase):
 
     def test_battery_read_and_alarm_setting_during_motion(self):
         run_native(self.binary, "battery")
+
+    def test_ring_demo_protocol_and_ready_token(self):
+        run_native(self.binary, "ring")

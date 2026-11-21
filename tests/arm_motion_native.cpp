@@ -1,4 +1,5 @@
 #include "arm_motion.h"
+#include "ring_correction.h"
 #include "servo.h"
 #include "material_transfer.h"
 #include "motion_executor.h"
@@ -47,7 +48,8 @@ bool MoveArm(float high,float length,float turret,float pawl,float speed,uint8_t
 bool MoveArmPlanned(float high,float length,float turret,float pawl,float speed,uint8_t ramp,bool slowLower) {
     return MoveArm(high,length,turret,pawl,speed,ramp,slowLower);
 }
-float NODE_PATH_ACCEL_MM_S2=2000,NODE_PATH_TURN_DEG_S=300,NODE_PATH_TURN_ACCEL_DEG_S2=400,NODE_PATH_HEADING_DEADBAND_DEG=1;
+uint32_t NODE_PATH_OUTER_ACCEL_LEVEL=200;
+float NODE_PATH_TURN_DEG_S=300,NODE_PATH_TURN_ACCEL_DEG_S2=400,NODE_PATH_HEADING_DEADBAND_DEG=1;
 float NODE_PATH_MIDDLE_SPEED_MM_S=3000,NODE_PATH_MIDDLE_ACCEL_MM_S2=2000;
 struct Entry {std::string name;void *address;bool integer;float minimum,maximum;};
 std::vector<Entry> entries;
@@ -71,6 +73,7 @@ void forward() {
         assert(!strcmp(p.steps[3].name,"APPROACH_ROTATE"));
         assert(p.steps[4].kind==motion::StepKind::TRAY_READY&&p.steps[4].turret==p.steps[0].turret);
         assert(!strcmp(p.steps[5].name,"PICK_DESCEND"));
+        assert(near(p.steps[5].high,materialTransferLayout.cargo.high));
         bool release=false,retract=false;int commits=0,partialReleases=0,readbacks=0;
         for(size_t i=0;i<p.count;++i) {
             const auto &s=p.steps[i];
@@ -116,6 +119,7 @@ void reverse() {
         for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::TRAY_READY){
             assert(p.steps[i].turret==p.steps[0].turret&&!strcmp(p.steps[i-1].name,"PLACE_ROTATE"));
             assert(!strcmp(p.steps[i+1].name,"PLACE_DESCEND"));
+            assert(near(p.steps[i+1].high,materialTransferLayout.cargo.high+3.0f));
             tray=true;
         }
         assert(lift&&tray&&p.steps[p.count-1].color==6&&p.steps[p.count-1].cargo==c);
@@ -183,7 +187,7 @@ void discs() {
         assert(lift.high==165&&lift.length==0&&lift.turret==-1&&lift.pawl==-1&&lift.waitMs==d.pickLiftMs);
         assert(turn.high==-1&&near(turn.length,target.length)&&turn.lengthArrival&&turn.pawl==-1&&near(turn.turret,target.turretAngle)&&!turn.planned);
         assert(turn.turretAcceleration==170);
-        assert(near(down.high,target.high)&&down.length==-1&&down.turret==-1&&down.pawl==-1);
+        assert(near(down.high,target.high+3.0f)&&down.length==-1&&down.turret==-1&&down.pawl==-1);
         assert(p.steps[start+5].pawl==materialTransferLayout.cargoClawOpenAngle&&p.steps[start+5].holdMs==41);
         assert(p.steps[start+6].high==165&&p.steps[start+6].length==-1);
         const auto &last=p.steps[start+7];assert(last.kind==motion::StepKind::COMMIT&&last.cargo==cargo&&last.color==6);
@@ -230,7 +234,7 @@ void discs() {
         assert(issuedArm[start].high==165&&issuedArm[start].length==0&&issuedArm[start].turret==-1&&issuedArm[start].pawl==-1);
         assert(issuedArm[start+1].high==-1&&near(issuedArm[start+1].length,target.length)&&near(issuedArm[start+1].turret,target.turretAngle));
         assert(issuedArm[start+1].turretAcceleration==170);
-        assert(near(issuedArm[start+2].high,target.high)&&issuedArm[start+2].length==-1&&issuedArm[start+2].turret==-1&&issuedArm[start+2].pawl==-1);
+        assert(near(issuedArm[start+2].high,target.high+3.0f)&&issuedArm[start+2].length==-1&&issuedArm[start+2].turret==-1&&issuedArm[start+2].pawl==-1);
         assert(issuedArm[start+3].pawl==materialTransferLayout.cargoClawOpenAngle&&issuedArm[start+4].high==165);
         const uint32_t waits[]={d.pickLiftMs,d.placeAbove.translateMs,d.placeAbove.settleMs,d.placeDescendMs,d.placeReleaseMs,d.placeLiftMs};
         assert(armWaits.size()>=6);
@@ -296,13 +300,13 @@ void poses() {
         assert(s.turretAcceleration==(s.high==-1?TURRET_ACCELERATION_CARGO_PLACE:TURRET_ACCELERATION_FAST));
 }
 void registry() {
-    registrationTail();assert(entries.size()==246);
+    registrationTail();assert(entries.size()==248);
     std::set<std::string> names;
     for(const auto &e:entries)assert(names.insert(e.name).second);
     assert(entries[0].address==&commonMaterialDelays.pickAbove.translateMs);
     assert(entries[120].address==&materialAuxiliaryDelays.discApproachMs);
     assert(entries[126].address==&materialAuxiliaryDelays.lidarZone2TurnMs);
-    assert(entries[127].name=="底盘/节点导航平移加速度(mm/s²)");
+    assert(entries[127].name=="底盘/节点导航外圈加速度档位(EMM V5)");
     assert(entries[130].name=="底盘/节点导航独立纠偏死区(°)");
     const char *steps[]={"取料平移","取料稳定","取料转向","取料下降","取料夹紧","取料抬升","放料平移","放料稳定","放料转向","放料下降","放料松爪","放料抬升"};
     for(uint8_t w=0;w<3;++w)for(uint8_t c=0;c<3;++c) {
@@ -316,9 +320,41 @@ void registry() {
     }
     assert(entries[239].address==&MOTION_LOOK_LEAD_MM&&entries[241].address==&ARM_FEEDBACK_ENABLED);
     assert(entries[244].address==&NODE_PATH_MIDDLE_SPEED_MM_S&&entries[245].address==&NODE_PATH_MIDDLE_ACCEL_MM_S2);
+    const auto &ringFrames=entries.back();
+    assert(ringFrames.name=="圆环纠偏/连续达标帧数"&&ringFrames.address==&ring::requiredStableFrames());
+    assert(ringFrames.integer&&ringFrames.minimum==1&&ring::requiredStableFrames()==2);
 }
 int main(int argc,char **argv) {
     assert(argc==2);
+    if(!strcmp(argv[1],"ring")) {
+        MotionRequest r;
+        motion::Program p;
+        r.kind=MotionKind::RING_PREPARE;
+        r.work=2;
+        assert(!BuildArmProgram(r,p)&&p.count==3);
+        assert(p.steps[0].pawl==materialTransferLayout.clawClosedAngle);
+        assert(p.steps[1].length==5&&p.steps[1].lengthArrival);
+        assert(p.steps[2].high==10&&p.steps[2].liftArrival&&!p.steps[2].ringVisionPosition);
+        r.kind=MotionKind::DEMO_PLACE;
+        r.ringCorrection=true;
+        assert(!BuildArmProgram(r,p));
+        unsigned closedLoops=0;
+        for(size_t i=1;i+1<p.count;++i) {
+            if(p.steps[i].kind!=motion::StepKind::RING_CORRECT)continue;
+            assert(p.steps[i-1].high==10&&p.steps[i-1].liftArrival);
+            assert(p.steps[i-1].ringVisionPosition==closedLoops+1);
+            assert(p.steps[i+1].high==0&&p.steps[i+1].length==-1&&p.steps[i+1].turret==-1);
+            ++closedLoops;
+        }
+        assert(closedLoops==3);
+        r.kind=MotionKind::PLACE_ROUND;
+        r.debug=true;
+        r.positions[0]=1;r.positions[1]=2;r.positions[2]=3;
+        assert(!BuildArmProgram(r,p));
+        for(size_t i=0;i<p.count;++i)
+            assert(p.steps[i].kind!=motion::StepKind::RING_CORRECT&&!p.steps[i].ringVisionPosition);
+        return 0;
+    }
     if(!strcmp(argv[1],"forward"))forward();else if(!strcmp(argv[1],"reverse"))reverse();
     else if(!strcmp(argv[1],"rounds"))rounds();else if(!strcmp(argv[1],"discs"))discs();
     else if(!strcmp(argv[1],"poses"))poses();else if(!strcmp(argv[1],"lidar"))lidarPoses();

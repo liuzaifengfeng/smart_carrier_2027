@@ -173,6 +173,7 @@ public:
         if(xHomeTimer)xTimerStop(xHomeTimer,0);
         const uint32_t finish=millis();
         Serial.printf("{EVT,MOTION,RUN_RESULT,0,%lu,DONE,%lu}\n",static_cast<unsigned long>(finish),static_cast<unsigned long>(finish-startedAt));
+        LedPwm_PlayCompletionCue();
         MotionRequest request;request.kind=MotionKind::ENABLE;request.force=false;SubmitMotion(request);display("DONE");
     }
     /**

@@ -139,6 +139,7 @@ void completedEvent(const MotionStatus &result) {
  * @brief 结束当前作业，记录终态、计时和错误，发送业务事件并保存历史快照。
  */
 void finish(MotionState state,const char *reason=nullptr) {
+    hardware.stopRingVision();
     if(activeSpan){span(activeSpan,false);activeSpan=nullptr;}
     if(armSpanOpen){span("ARM_PROGRAM",false);armSpanOpen=false;}
     if(job.request.kind==MotionKind::NAVIGATE) {
@@ -275,7 +276,11 @@ void scanTick() {
         if(pollTaskCode()){finishScan();return;}
         if(scanAttempt==3){finish(MotionState::FAILED,"EXECUTION");return;}
         ++scanAttempt;scanDistance=scanAttempt%2?-400:400;scanStart=currentPose;
-        uint32_t speed = SCAN_SEARCH_SPEED_RPM > scanAttempt * 100 ? SCAN_SEARCH_SPEED_RPM - scanAttempt * 100 : 1;
+        uint32_t speed=100;
+        if(scanAttempt<3) {
+            const uint32_t reduction=scanAttempt*100;
+            speed=SCAN_SEARCH_SPEED_RPM>reduction?SCAN_SEARCH_SPEED_RPM-reduction:1;
+        }
         if(!ReadChassisEncoderPositions(scanBefore)||!BeginPositionMove(0,scanDistance,0,speed)){finish(MotionState::FAILED,"EXECUTION");return;}
         stage=4;phase("SCAN_SEARCH");return;
     }
@@ -317,6 +322,10 @@ void navigationTick() {
             }
             join.chassisDone=true;flag("CHASSIS_DONE");
             if(activeSpan){span(activeSpan,false);activeSpan=nullptr;}
+            if(r.kind==MotionKind::NAVIGATE&&r.cargo) {
+                hardware.preselectTray(cargoTrayAngles[r.cargo-1]);
+                flag("TRAY_PRESELECT");
+            }
         }
     }
     auto &base=PositionNodeRunner();

@@ -41,3 +41,6 @@ void LedPwm_UpdateFaultBlink(bool fault);
 
 /** @brief 非阻塞播放同步声光提示，每次亮响67ms、熄灭静音67ms。 */
 void LedPwm_PlayCue(uint8_t pulses);
+
+/** @brief 非阻塞播放短、长、短的同步声光提示。 */
+void LedPwm_PlayCompletionCue();

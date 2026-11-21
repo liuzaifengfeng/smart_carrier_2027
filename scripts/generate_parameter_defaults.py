@@ -6,7 +6,7 @@ import sys
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
-from parameter_config import load_config
+from parameter_config import OUTER_ACCEL_LEVEL, load_config, parameter_entries
 
 
 def supported_names():
@@ -35,7 +35,7 @@ def supported_names():
                  for field in ("X死区", "Y死区", "角度死区(deg)"))
     names.add("对齐/最大轮速(RPM)")
     names.add("底盘/停车稳定时间(ms)")
-    names.add("底盘/节点导航平移加速度(mm/s²)")
+    names.add(OUTER_ACCEL_LEVEL)
     names.add("底盘/节点导航中间路段速度(mm/s)")
     names.add("底盘/节点导航中间路段平移加速度(mm/s²)")
     names.add("底盘/节点导航转向速度(°/s)")
@@ -49,6 +49,7 @@ def supported_names():
     names.update("运动执行/" + field for field in
                  ("look末段提前量(mm)", "look2末段提前量(mm)", "机械臂反馈完成",
                   "反馈后夹持保持(ms)", "反馈后释放保持(ms)"))
+    names.add("圆环纠偏/连续达标帧数")
     return names
 
 
@@ -56,22 +57,21 @@ def generate(config_path, output_path):
     data = load_config(config_path)
     allowed = supported_names()
     entries = []
-    for group in data["groups"].values():
-        for name, entry in group["parameters"].items():
-            if name not in allowed:
-                raise ValueError(f"固件不支持参数：{name}")
-            value = entry["value"]
-            if value is None:
-                continue  # 未标定项保留固件源码值。
-            minimum, maximum = entry.get("minimum"), entry.get("maximum")
-            integer = entry.get("integer")
-            if (type(minimum) not in (int, float) or type(maximum) not in (int, float)
-                    or not math.isfinite(minimum) or not math.isfinite(maximum)
-                    or minimum > maximum or type(integer) is not bool
-                    or not minimum <= value <= maximum
-                    or (integer and (int(value) != value or value < 0 or value > 4294967295))):
-                raise ValueError(f"参数超出范围或类型不正确：{name}")
-            entries.append((name, value))
+    for name, entry in parameter_entries(data).items():
+        if name not in allowed:
+            raise ValueError(f"固件不支持参数：{name}")
+        value = entry["value"]
+        if value is None:
+            continue  # 未标定项保留固件源码值。
+        minimum, maximum = entry.get("minimum"), entry.get("maximum")
+        integer = entry.get("integer")
+        if (type(minimum) not in (int, float) or type(maximum) not in (int, float)
+                or not math.isfinite(minimum) or not math.isfinite(maximum)
+                or minimum > maximum or type(integer) is not bool
+                or not minimum <= value <= maximum
+                or (integer and (int(value) != value or value < 0 or value > 4294967295))):
+            raise ValueError(f"参数超出范围或类型不正确：{name}")
+        entries.append((name, value))
     if not entries:
         raise ValueError("JSON 没有可编译的参数")
     rows = ["// Generated from robot_parameters.json; do not edit.\n",

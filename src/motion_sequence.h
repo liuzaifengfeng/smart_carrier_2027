@@ -4,7 +4,7 @@
 #include <stddef.h>
 
 namespace motion {
-enum class StepKind : uint8_t { ARM, WAIT, TURRET_READY, POSITION, GOTO, COMMIT, RAW_SERVO, ENABLE, VELOCITY, TRAY_ROTATE, TRAY_START, TRAY_READY };
+enum class StepKind : uint8_t { ARM, WAIT, TURRET_READY, POSITION, GOTO, COMMIT, RAW_SERVO, ENABLE, VELOCITY, TRAY_ROTATE, TRAY_START, TRAY_READY, RING_CORRECT };
 struct Step {
     StepKind kind=StepKind::WAIT;
     const char *name="WAIT";
@@ -24,6 +24,7 @@ struct Step {
     bool liftArrival=false; // 初始化抬升实测到位后，才允许后续转盘动作。
     bool timed=false; // 此步按waitMs计时，即使开启机械臂反馈模式也不改为等待到位。
     bool slowLower=false; // 第一层工位放料下降：升降转速和实际加速度各减半。
+    uint8_t ringVisionPosition=0; // 非零时在预放下降前上报工位号并开启相机。
     uint8_t turretAcceleration=TURRET_ACCELERATION_FAST; // 张大头原生加速度档位，由动作阶段指定。
 };
 struct Program {

@@ -1,17 +1,31 @@
 #pragma once
 #include "motion_sequence.h"
+#include "ring_correction.h"
 
 class MotionHardware : public motion::SequenceIO {
     uint32_t job=0,turretStarted=0;
     float turretTarget=0; // 保存本次发令后实际选择的等效多圈目标。
     bool trayMoving=false;
+    bool trayPreselected=false;
+    float preselectedTrayAngle=0;
     bool (*cancel)()=nullptr;
+    bool ringVisionActive=false, ringHasLastFrame=false;
+    uint32_t ringLastFrameMs=0;
+    bool ringTurretPending=false,ringXQueued=false,ringStable=false;
+    ring::Frame ringXFrame;
+    uint32_t ringLastXFrameMs=0;
+    float ringMinTurret=0,ringMaxTurret=0,ringMinLength=0,ringMaxLength=0;
+    ring::Settings ringSettings;
+    ring::Pid ringX,ringY;
+    const char *correctRing(const motion::Step &step,bool &done);
 public:
     /**
      * @brief 绑定当前作业编号与取消回调，供步骤执行和日志记录使用。
      */
     void configure(uint32_t id,bool (*cancelled)()){job=id;cancel=cancelled;}
     void stopTray();
+    void stopRingVision();
+    void preselectTray(float angle);
     /**
      * @brief 读取系统毫秒计时。
      */

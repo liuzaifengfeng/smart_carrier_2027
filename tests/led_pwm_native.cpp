@@ -31,7 +31,14 @@ int main() {
         assert(cueActive&&cueOn==(i%2==0)&&duty==(cueOn?4095:0));
     }
     clockMs=670;LedPwm_UpdateFaultBlink(false);assert(duty==saved&&!cueActive);
-    LedPwm_PlayCue(2);clockMs=1100;LedPwm_UpdateFaultBlink(true);assert(duty==4095&&!cueActive);
-    clockMs=1180;LedPwm_UpdateFaultBlink(true);assert(duty==0);
+    LedPwm_PlayCompletionCue();
+    const bool completionPhases[]={true,false,true,true,true,false,true,false};
+    for(uint32_t i=0;i<8;++i) {
+        clockMs=670+i*67;LedPwm_UpdateFaultBlink(false);
+        assert(cueActive&&cueOn==completionPhases[i]&&duty==(cueOn?4095:0));
+    }
+    clockMs=1206;LedPwm_UpdateFaultBlink(false);assert(duty==saved&&!cueActive);
+    LedPwm_PlayCue(2);clockMs=1250;LedPwm_UpdateFaultBlink(true);assert(duty==4095&&!cueActive);
+    clockMs=1330;LedPwm_UpdateFaultBlink(true);assert(duty==0);
     LedPwm_UpdateFaultBlink(false);assert(duty==saved);
 }

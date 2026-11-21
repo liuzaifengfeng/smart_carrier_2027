@@ -35,3 +35,6 @@ class ArmMotionTests(unittest.TestCase):
 
     def test_lidar_preparation_uses_only_chassis_translation_and_turn(self):
         run_native(self.binary, "lidar")
+
+    def test_ring_correction_is_only_used_in_the_independent_demo(self):
+        run_native(self.binary, "ring")

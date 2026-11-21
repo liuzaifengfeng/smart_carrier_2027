@@ -5,6 +5,7 @@
 #include "disc_position_grab.h"
 #include "disc_material_decision.h"
 #include "node_route_heading.h"
+#include "ring_correction.h"
 
 using namespace motion;
 namespace {
@@ -67,7 +68,7 @@ void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelay
 /**
  * @brief 构建放料转向、下降、松爪及抬升序列；height为实际层高，retracted表示小臂已缩回。
  */
-void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle,bool slowLower=false,uint8_t workPosition=0,uint8_t sourceCargo=0,uint8_t destinationCargo=0) {
+void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle,bool slowLower=false,uint8_t workPosition=0,uint8_t sourceCargo=0,uint8_t destinationCargo=0,bool ringCorrection=false) {
     if(retracted) {
         wait(p,"PLACE_TRANSLATE_WAIT",d.placeAbove.translateMs);wait(p,"PLACE_SETTLE",d.placeAbove.settleMs);
         rotateArm(p,"PLACE_ROTATE",-1,destinationCargo?pose.length:-1,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,angle);
@@ -78,13 +79,27 @@ void place(Program &p,const MaterialStationPose &pose,float height,const Materia
     } else above(p,pose,-1,d.placeAbove,angle); // 已夹紧物料，移位和下降不再重复操作夹爪。
     if(destinationCargo)prepareTray(p,destinationCargo,true);
     if(slowLower) {
-        arm(p,"PLACE_DESCEND_10",10,retracted?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+        arm(p,"PLACE_DESCEND_10",ringCorrection?ring::HOVER_MM:10,retracted?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
         p.steps[p.count-1].slowLower=true;
-        p.steps[p.count-1].timed=true; // 原下降延时结束后下发最后10mm，不查到位反馈。
+        p.steps[p.count-1].timed=!ringCorrection;
+        if(ringCorrection) {
+            Step &hover=p.steps[p.count-1];
+            hover.ringVisionPosition=workPosition;
+            hover.liftArrival=true;
+            hover.lengthArrival=retracted;
+            Step correction;
+            correction.kind=StepKind::RING_CORRECT;
+            correction.name="RING_CORRECT";
+            correction.speed=materialMotionSteps.placeDescendSpeed;
+            p.append(correction);
+        }
         arm(p,"PLACE_DESCEND",0,-1,-1,-1,materialMotionSteps.placeDescendSpeed,100);
         p.steps[p.count-1].slowLower=true;
         p.steps[p.count-1].timed=true;
-    } else arm(p,"PLACE_DESCEND",height,retracted&&!destinationCargo?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+    } else {
+        const float releaseHeight=height+(destinationCargo?CARGO_TRAY_RELEASE_OFFSET_MM:0.0f);
+        arm(p,"PLACE_DESCEND",releaseHeight,retracted&&!destinationCargo?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+    }
     p.steps[p.count-1].placementPosition=workPosition;
     if(slowLower) { // 仅工位第一层：先卸去夹紧力，300ms后再完全张开。
         arm(p,"PLACE_RELEASE_ZERO",-1,-1,-1,0,materialMotionSteps.placeReleaseSpeed,300);
@@ -130,7 +145,8 @@ const char *transfer(const MotionRequest &r,Program &p) {
         prepareTray(p,cargos[i],false);
         pick(p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i],retrieve?0:cargos[i]);
         place(p,destination,height,d,true,&selected.anglesDeg[2*i+1],!retrieve&&r.layer==1,
-              retrieve?0:works[i],retrieve?0:cargos[i],retrieve?cargos[i]:0);
+              retrieve?0:works[i],retrieve?0:cargos[i],retrieve?cargos[i]:0,
+              r.kind==MotionKind::DEMO_PLACE&&r.ringCorrection);
         if(!retrieve) {
             p.steps[p.count-1].workPlaceLiftArrival=true;
             p.steps[p.count-1].waitMs=0;
@@ -179,6 +195,21 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         (r.kind==MotionKind::ARM_POSE&&r.observation==ArmObservation::LOOK4))&&r.zone!=1&&r.zone!=2)return "EXECUTION";
     switch(r.kind) {
     case MotionKind::ARM_POSE: observation(p,r.observation,r.zone);break;
+    case MotionKind::RING_PREPARE: {
+        const auto &pose=materialTransferLayout.workArea[r.work-1];
+        TurretPathPlan selected;
+        if(!plan(&pose.turretAngle,1,selected))return "EXECUTION";
+        arm(p,"RING_PREPARE_LIFT",materialTransferLayout.approachHeight,-1,-1,
+            materialTransferLayout.clawClosedAngle,materialMotionSteps.approachTranslateSpeed);
+        p.steps[p.count-1].liftArrival=true;
+        rotateArm(p,"RING_PREPARE_ROTATE",-1,pose.length,selected.anglesDeg[0],-1,
+            materialMotionSteps.approachRotateSpeed,true);
+        p.steps[p.count-1].lengthArrival=true;
+        arm(p,"RING_PREPARE_HOVER",ring::HOVER_MM,-1,-1,-1,materialMotionSteps.placeDescendSpeed);
+        p.steps[p.count-1].liftArrival=true;
+        p.steps[p.count-1].slowLower=true;
+        break;
+    }
     case MotionKind::TRANSFER: case MotionKind::RETRIEVE: case MotionKind::PLACE_ROUND:
     case MotionKind::RETRIEVE_ROUND: case MotionKind::DEMO_PLACE: case MotionKind::DEMO_RETRIEVE: {
         const char *error=transfer(r,p);if(error)return error;break;

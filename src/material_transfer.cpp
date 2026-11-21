@@ -16,10 +16,10 @@ MaterialTransferLayout materialTransferLayout = {
     {125, 15, -3.5f}, // 旋转料盘待操作区
     {
         {2.5, 61, 48}, // 粗加工区/暂存区的 1 号位置
-        {2.5, 0, 86}, // 粗加工区/暂存区的 2 号位置
+        {2.5, 5, 86}, // 粗加工区/暂存区的 2 号位置
         {2.5, 39, 125.3}, // 粗加工区/暂存区的 3 号位置
     },
-    170.0f, // approachHeight，按物料实际高度修改
+    155.0f, // approachHeight，按物料实际高度修改
     60.0f,  // secondLayerOffset，按物料实际高度修改
     250.0f, // moveSpeed
     50.0f,   // clawOpenAngle
@@ -238,7 +238,8 @@ bool placeAt(const MaterialStationPose &pose, float targetHeight,
         if(!MoveArm(0,-1,-1,-1,materialMotionSteps.placeDescendSpeed,turretAcceleration,true))return false;
         waitForArm(100);
     } else {
-        if(!MoveArm(targetHeight,fromRetracted&&!destinationCargo?pose.length:-1,-1,
+        const float releaseHeight=targetHeight+(destinationCargo?CARGO_TRAY_RELEASE_OFFSET_MM:0.0f);
+        if(!MoveArm(releaseHeight,fromRetracted&&!destinationCargo?pose.length:-1,-1,
                     -1,materialMotionSteps.placeDescendSpeed,turretAcceleration))return false;
         waitForArm(delays.placeDescendMs);
     }

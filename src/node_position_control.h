@@ -5,12 +5,13 @@ namespace node_position {
 constexpr bool MOTOR_STALL_CHECK_ENABLED=false; // 临时禁用所有底盘电机的固件堵转检查；恢复时改为true
 constexpr float PULSES_PER_REV=3200; // 要求底盘驱动配置为16细分，实车验收时核对
 constexpr double STRAIGHT_ARRIVAL_ENCODER_TOLERANCE=5000; // 每轮65536单位/圈坐标中的允许误差
-constexpr float MIDDLE_HEADING_KP=4; // 中间直行航向比例增益：偏差1度给4度/秒修正，再叠加原积分和阻尼。
-constexpr float MIDDLE_LATERAL_KP=3; // 横向位置比例增益(1/s)：偏离10mm时给30mm/s平移修正。
+constexpr float STRAIGHT_HEADING_KP=4; // 航向偏差1度给4度/秒修正，再叠加原积分和阻尼。
+constexpr float STRAIGHT_LATERAL_KP=3; // 横向位置比例增益(1/s)：偏离10mm时给30mm/s平移修正。
 struct Settings {
     float speedMmS=2000,accelMmS2=2000,turnDegS=200,turnAccelDegS2=400,headingDeadbandDeg=1;
     float middleSpeedMmS=2000,middleAccelMmS2=2000;
     continuous::Vec startOffset; // 扫码停车位置相对首节点的偏移，并入首段四轮位置目标。
+    bool outerStraightVelocity=false; // 正式节点导航启用，保留同步位置模式入口。
 };
 struct Motor {uint8_t flags=0;int64_t position=0;int16_t rpm=0;}; // 位置：65536单位/圈
 struct Result {continuous::Vec estimated;float heading=0,s=0;};
@@ -158,6 +159,10 @@ inline uint8_t driverAccelerationFor(float acceleration,float pulsesPerUnit) {
     float level=roundf(256-20000/rpmPerSecond);
     return static_cast<uint8_t>(continuous::clamp(level,1,255));
 }
+/** @brief 将 EMM V5 的非零加速度档位换算为速度曲线所用的单位/s²。 */
+inline float motionAccelerationFor(uint8_t level,float pulsesPerUnit) {
+    return 20000.0f*PULSES_PER_REV/((256-level)*60*pulsesPerUnit);
+}
 /**
  * @brief 同步推进节点位置路径直至结束；result 保存估算位置和航向。
  * @return nullptr 成功，否则返回错误原因。
@@ -166,7 +171,7 @@ const char *run(const continuous::Route &route,const Settings &settings,IO &io,R
 
 // 与 run 共用控制算法；每次 tick 只推进一次控制/通信周期，不等待物理行程结束。
 class Runner {
-    enum Stage { IDLE, START, QUIET, SETTLE, SELECT, ALIGN, ZERO, PREPARE, MOVE, MIDDLE, OUTER, OUTER_QUIET, FINISHED } stage=IDLE;
+    enum Stage { IDLE, START, QUIET, SETTLE, SELECT, ALIGN, ZERO, PREPARE, MOVE, STRAIGHT_VELOCITY, OUTER, OUTER_QUIET, FINISHED } stage=IDLE;
     Stage settleNext=SELECT;
     HeadingStable3 headingStable;
     enum Action { ROTATION, STRAIGHT, CURVE, FINAL } action=FINAL;
@@ -196,7 +201,7 @@ class Runner {
     HeadingGuard headingGuard;
     H30HeadingHold headingHold;
     float straightSpeed=0,straightTravel=0;
-    bool middleStopping=false;
+    bool straightStopping=false;
     bool quietSeen=false;
     uint32_t residualSince=0;
     uint8_t quietCount=0;
@@ -229,8 +234,8 @@ class Runner {
      * @brief 处理当前四轮位置动作的一次反馈、偏航及到位检查。
      */
     void moveTick();
-    /** @brief 中间直行：四轮/H30里程计、横向位置P补偿及航向PI+D纠偏。 */
-    void middleTick();
+    /** @brief 速度模式直行：四轮/H30里程计、横向位置P补偿及航向PI+D纠偏。 */
+    void straightVelocityTick();
     /** @brief 按估算或最终回读进度更新位置、编码器航向及既有偏航检查；不作为到位判据。 */
     const char *updateProgress(float progress,const H30Attitude &sample,bool idle);
     /**
@@ -261,7 +266,7 @@ public:
     /**
      * @brief 判断当前是否正在执行路径的最后一段连续平移。
      */
-    bool lastTranslation() const { return finalTranslation&&(stage==MOVE||stage==MIDDLE)&&!rotating; }
+    bool lastTranslation() const { return finalTranslation&&(stage==MOVE||stage==STRAIGHT_VELOCITY)&&!rotating; }
     /**
      * @brief 判断是否进入最终进站平移前的准备阶段，用于提前展开视觉观察姿态。
      */
