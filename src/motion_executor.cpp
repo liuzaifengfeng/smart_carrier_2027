@@ -32,6 +32,10 @@ bool armSpanOpen=false;
 uint8_t stage=0,scanAttempt=0;
 RobotPose scanStart;
 int64_t scanBefore[4]={};
+int64_t discBefore[4]={};
+float discBeforeHeading=0;
+int64_t discReturnTargets[4]={};
+bool discReturnCommanded[4]={};
 float scanDistance=0;
 const char *activeSpan=nullptr;
 
@@ -203,9 +207,10 @@ void startTray(float angle) {
 /**
  * @brief 准备正式节点路径并启动控制器，设置导航及机械臂合流条件；返回是否启动成功。
  */
-bool beginPath() {
+bool beginPath(float startYOffset=0) {
     const auto &r=job.request;
-    if(!H30PrepareNodePath(r.path,r.pathCount,r.kind==MotionKind::NAVIGATE?NODE_PATH_SPEED_MM_S:r.speed,endpointHeading(r),r.automatic)) {
+    if(!H30PrepareNodePath(r.path,r.pathCount,r.kind==MotionKind::NAVIGATE?NODE_PATH_SPEED_MM_S:r.speed,
+        endpointHeading(r),r.automatic,startYOffset)) {
         Serial.println("{EVT,NAV,ROUTE_FAILED,START}");finish(MotionState::FAILED,"START");return false;
     }
     char route[sizeof("{EVT,NAV,ROUTE_PATH,4294967295}")+MAX_NODE_PATH_LENGTH*3];
@@ -254,6 +259,7 @@ void scanTick() {
         turn.kind=MotionKind::POSITION;
         turn.theta=zone1?45:-45;
         turn.speed=200;
+        turn.positionAcceleration=SCAN_ACCELERATION;
         if(beginArm(turn))stage=1;
         return;
     }
@@ -281,7 +287,7 @@ void scanTick() {
             const uint32_t reduction=scanAttempt*100;
             speed=SCAN_SEARCH_SPEED_RPM>reduction?SCAN_SEARCH_SPEED_RPM-reduction:1;
         }
-        if(!ReadChassisEncoderPositions(scanBefore)||!BeginPositionMove(0,scanDistance,0,speed)){finish(MotionState::FAILED,"EXECUTION");return;}
+        if(!ReadChassisEncoderPositions(scanBefore)||!BeginPositionMove(0,scanDistance,0,speed,SCAN_ACCELERATION)){finish(MotionState::FAILED,"EXECUTION");return;}
         stage=4;phase("SCAN_SEARCH");return;
     }
     if(stage==4) {
@@ -292,6 +298,23 @@ void scanTick() {
         recordScanTravel(scanStart,(scanDistance>=0?1:-1)*units*3200/65536/Y_PULSE);
         if(received)finishScan();else stage=3;
     }
+}
+bool discReturnArrived() {
+    bool arrived=true;
+    for(uint8_t id=1;id<=4;++id) {
+        node_position::Motor motor;
+        const char *error=ReadDiscReturnMotorFeedback(id,motor,cancelled);
+        if(!error&&!(motor.flags&1))error="MOTOR_DISABLED";
+        if(!error&&node_position::MOTOR_STALL_CHECK_ENABLED&&(motor.flags&12))error="MOTOR_STALL";
+        if(error) {
+            Serial.printf("[DiscReturn] feedback motor=%u error=%s\n",id,error);
+            stopHardware();
+            finish(MotionState::FAILED,error);
+            return false;
+        }
+        arrived=arrived&&node_position::encoderReturnArrived(motor,discReturnTargets[id-1],discReturnCommanded[id-1]);
+    }
+    return arrived;
 }
 /**
  * @brief 推进导航作业：请求节点路径、执行底盘运动、按进站阶段提前启动观察姿态，等待两者合流完成。
@@ -311,7 +334,27 @@ void navigationTick() {
         if(state==NodePathState::FAILED){finish(MotionState::FAILED,"STOPPED");return;}
         if(state!=NodePathState::RECEIVED)return;
         if(r.path[0]!=r.startNode||r.path[r.pathCount-1]!=r.endNode){Serial.println("{EVT,NAV,ROUTE_FAILED,ENDPOINT}");finish(MotionState::FAILED,"ENDPOINT");return;}
-        if(!beginPath())return;
+        float startYOffset=0;
+        if(r.discDeparture) {
+            if(!MergeDiscYIntoFirstStraight(r.path[1])) {
+                phase("DISC_RETURN_POSITION");
+                if(const char *error=BeginDiscYReturn(discBefore,discBeforeHeading,ALIGN_PID_MAX_SPEED_RPM,
+                    discReturnTargets,discReturnCommanded,cancelled)) {
+                    stopHardware();
+                    finish(MotionState::FAILED,error);
+                } else stage=3;
+                return;
+            }
+            phase("DISC_Y_OFFSET");
+            if(const char *error=ReadDiscYOffset(discBefore,discBeforeHeading,startYOffset,cancelled)) {
+                finish(MotionState::FAILED,error);
+                return;
+            }
+            Serial.printf("[Route] Disc start Y offset=%.1f mm, next node=%u\n",startYOffset,r.path[1]);
+        }
+        if(!beginPath(startYOffset))return;
+    } else if(stage==3) {
+        if(!discReturnArrived()||!beginPath())return;
     } else if(stage==0) {if(!beginPath())return;}
     if(!join.chassisDone) {
         ContinuousMotionTick();
@@ -380,6 +423,12 @@ void task(void *) {
         const auto kind=job.request.kind;
         if(kind==MotionKind::NAVIGATE||kind==MotionKind::NODE_PATH)navigationTick();
         else if(kind==MotionKind::SCAN_TASK)scanTick();
+        else if(kind==MotionKind::DISC_RECORD_POSITION) {
+            phase("DISC_RECORD_POSITION");
+            const char *error=RecordDiscEncoderPositions(discBefore,cancelled);
+            discBeforeHeading=currentPose.theta;
+            finish(error?MotionState::FAILED:MotionState::DONE,error);
+        }
         else if(kind==MotionKind::TURRET_TRIAL) {
             if(stage==0) {
                 phase("TURRET_TRIAL");

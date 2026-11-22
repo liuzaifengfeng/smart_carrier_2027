@@ -7,6 +7,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PositionTests(unittest.TestCase):
+    def test_disc_return_waits_for_commanded_wheels_to_finish(self):
+        from native_support import build_native, run_native
+        sources = ["tests/node_position_tick_native.cpp", "src/node_position_control.cpp", "src/continuous_route.cpp", "src/hybrid_route.cpp", "src/scan_motion_control.cpp"]
+        run_native(build_native("node-tick", sources), "disc-return")
+
     def test_fixed_targets_and_feedback_gate(self):
         zig = ROOT/'.pio/host-test-tools/ziglang/zig.exe'
         compiler = os.environ.get('CONTINUOUS_TEST_CXX')

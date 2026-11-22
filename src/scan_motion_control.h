@@ -1,6 +1,8 @@
 #pragma once
 #include "node_position_control.h"
 
+constexpr uint8_t SCAN_ACCELERATION = 170;
+
 struct ScanMotionSettings {
     float approachMm,searchMm,forwardPpm;
     uint16_t approachRpm,searchRpm;

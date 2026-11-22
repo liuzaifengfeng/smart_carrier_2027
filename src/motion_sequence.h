@@ -1,6 +1,6 @@
 #pragma once
 #include <stdint.h>
-#include "turret_motor.h"
+#include "material_transfer.h"
 #include <stddef.h>
 
 namespace motion {
@@ -27,6 +27,9 @@ struct Step {
     bool slowLower=false; // 第一层工位放料下降：升降转速和实际加速度各减半。
     uint8_t ringVisionPosition=0; // 非零时在预放下降前上报工位号并开启相机。
     uint8_t turretAcceleration=TURRET_ACCELERATION_FAST; // 张大头原生加速度档位，由动作阶段指定。
+    uint8_t lengthAcceleration=ARM_EXTENSION_ACCELERATION;
+    uint8_t positionAcceleration=POSITION_MOVE_DEFAULT_ACCELERATION;
+    float trayArrivalToleranceDeg=CARGO_TRAY_ARRIVAL_TOLERANCE_DEG;
 };
 struct Program {
     // 静态存储，运行中不申请堆内存。

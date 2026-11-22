@@ -5,7 +5,6 @@
 #include "robot_runtime.h"
 #include "continuous_trial.h"
 #include "node_position_hardware.h"
-#include "position_move_timing.h"
 #include "motor_bus.h"
 #include "turret_motor.h"
 volatile bool taskMotionAborted = false;
@@ -237,7 +236,8 @@ bool ReadArmTurretAngle(float &angle) {
  * @note 规划模式下转台使用精确多圈角度；其他情况下 -1 表示不操作该轴
  */
 static bool MoveArmInternal(float high, float length, float turret_angle, float pawl_angle, float speed,
-    bool absoluteTurret, uint8_t turretAcceleration, bool slowLower, uint16_t turretRpm) {
+    bool absoluteTurret, uint8_t turretAcceleration, bool slowLower, uint16_t turretRpm,
+    uint8_t lengthAcceleration) {
     if (taskMotionAborted) return false;
     // 夹爪原标定为 speed=200 对应约90°/s；时间缩短至1/5后等效为450°/s。
     // 实际指令耗时按回读角度到最近等效目标的行程计算，不再使用与角度无关的线性映射。
@@ -269,7 +269,7 @@ static bool MoveArmInternal(float high, float length, float turret_angle, float 
     if (length != -1) {
         const uint32_t pulses = static_cast<uint32_t>(length * LENGTH_PULSE);
         const uint16_t rpm = speed >= UINT16_MAX / 6.0f ? UINT16_MAX : speed * 6.0f;
-        Emm_V5_Pos_Control(6, 1, rpm, 240, pulses, true, false);
+        Emm_V5_Pos_Control(6, 1, rpm, lengthAcceleration, pulses, true, false);
         vTaskDelay(pdMS_TO_TICKS(10));
         currentArm.length = length;
     }
@@ -303,9 +303,10 @@ static bool MoveArmInternal(float high, float length, float turret_angle, float 
     return true;
 }
 
-bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed, uint8_t turretAcceleration, bool slowLower) {
+bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed,
+    uint8_t turretAcceleration, bool slowLower, uint8_t lengthAcceleration) {
     return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, false,
-        turretAcceleration, slowLower, TURRET_MOTOR_POSITION_RPM);
+        turretAcceleration, slowLower, TURRET_MOTOR_POSITION_RPM, lengthAcceleration);
 }
 
 /**
@@ -315,7 +316,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
 bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed,
     uint8_t turretAcceleration, bool slowLower, uint16_t turretRpm) {
     return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, true,
-        turretAcceleration, slowLower, turretRpm);
+        turretAcceleration, slowLower, turretRpm, ARM_EXTENSION_ACCELERATION);
 }
 
 
@@ -533,7 +534,7 @@ struct PositionExecution {
  * @brief 初始化四轮同步相对位置动作，不等待估算行程结束；由TickPositionMove推进。
  * @return true 准备成功，false 请求无法执行。
  */
-bool BeginPositionMove(float x, float y, float theta, float speed) {
+bool BeginPositionMove(float x,float y,float theta,float speed,uint8_t acceleration) {
     positionExecution.active=false;positionExecution.success=true;
     if(taskMotionAborted)return false;
     MotorBusGuard transaction;
@@ -571,14 +572,13 @@ bool BeginPositionMove(float x, float y, float theta, float speed) {
     if (maximumPulses == 0) return true; // 小于脉冲分辨率，不虚增理想位姿。
 
     const uint16_t maximumRpm = static_cast<uint16_t>(lroundf(speed));
-    constexpr uint8_t positionAcceleration=180;
     double waitMs = 0.0;
     for (size_t i = 0; i < 4; ++i) {
         // 各轮按行程比例分配转速；整数 RPM 会带来少量完成时间差。
         wheelRpm[i] = pulses[i] == 0 ? 0 : static_cast<uint16_t>(fmax(
             1.0, floor(static_cast<double>(pulses[i]) * maximumRpm / maximumPulses + 0.5)));
         if (wheelRpm[i] != 0) {
-            waitMs = fmax(waitMs, PositionMoveDurationMs(pulses[i],wheelRpm[i],positionAcceleration));
+            waitMs = fmax(waitMs, PositionMoveDurationMs(pulses[i],wheelRpm[i],acceleration));
         }
     }
     waitMs = ceil(waitMs * MOTOR_MOTION_TIME_MARGIN) + ROUTE_SETTLE_TIME_MS;
@@ -592,7 +592,7 @@ bool BeginPositionMove(float x, float y, float theta, float speed) {
             // 合成后不需转动的轮子同步停车，避免发送零转速位置命令。
             Emm_V5_Stop_Now(motor, true);
         } else {
-            Emm_V5_Pos_Control(motor, wheelPulses[motor - 1] >= 0.0 ? 1 : 0, wheelRpm[motor - 1], positionAcceleration, pulses[motor - 1], false, true);
+            Emm_V5_Pos_Control(motor, wheelPulses[motor - 1] >= 0.0 ? 1 : 0, wheelRpm[motor - 1], acceleration, pulses[motor - 1], false, true);
         }
         vTaskDelay(pdMS_TO_TICKS(MOTOR_COMMAND_GAP_MS));
     }
@@ -627,9 +627,9 @@ void TickPositionMove() {
     currentPose=positionExecution.target;positionExecution.active=false;
     Serial.println("[MovePosition] Commands sent and estimated wait elapsed; arrival not verified");
 }
-bool MovePosition(float x,float y,float theta,float speed,bool (*shouldStop)()) {
+bool MovePosition(float x,float y,float theta,float speed,bool (*shouldStop)(),uint8_t acceleration) {
     if(shouldStop&&shouldStop())return false;
-    if(!BeginPositionMove(x,y,theta,speed))return false;
+    if(!BeginPositionMove(x,y,theta,speed,acceleration))return false;
     while(PositionMoveActive()) {
         if(shouldStop&&shouldStop()){CancelPositionMove();return false;}
         TickPositionMove();if(PositionMoveActive())vTaskDelay(pdMS_TO_TICKS(10));
@@ -644,7 +644,7 @@ bool MoveScanPosition(float distance,float speed,bool (*shouldStop)()) {
     int64_t before[4],after[4];
     if(!ReadChassisEncoderPositions(before))return false;
     const RobotPose start=currentPose;
-    const bool completed=MovePosition(0,distance,0,speed,shouldStop);
+    const bool completed=MovePosition(0,distance,0,speed,shouldStop,SCAN_ACCELERATION);
     if(!ReadChassisEncoderPositions(after))return false;
     // 四轮反馈为65536单位/圈；取行程绝对值兼容各驱动器的编码器方向。
     double travel=0;

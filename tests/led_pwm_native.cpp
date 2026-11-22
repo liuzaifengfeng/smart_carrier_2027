@@ -41,4 +41,9 @@ int main() {
     LedPwm_PlayCue(2);clockMs=1250;LedPwm_UpdateFaultBlink(true);assert(duty==4095&&!cueActive);
     clockMs=1330;LedPwm_UpdateFaultBlink(true);assert(duty==0);
     LedPwm_UpdateFaultBlink(false);assert(duty==saved);
+    LedPwm_SetRingVisionActive(true);assert(duty==614&&LedPwm_GetBrightness()==37);
+    assert(LedPwm_SetBrightness(10)&&duty==614);
+    LedPwm_UpdateFaultBlink(true);assert(duty==4095);
+    LedPwm_UpdateFaultBlink(false);assert(duty==614);
+    LedPwm_SetRingVisionActive(false);assert(duty==410&&LedPwm_GetBrightness()==10);
 }

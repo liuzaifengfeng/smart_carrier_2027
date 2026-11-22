@@ -68,7 +68,7 @@ for (const action of ['RING_AXIS_PID_GET', 'RING_AXIS_PID_SET']) {
           @click="model.write(undefined, deadzoneIndexes)">应用死区并回读</button>
       </div>
       <div class="actions">
-        <label v-if="timeout">超时（ms，0 为无超时）
+        <label v-if="timeout">超时（ms，0 为跳过视觉纠偏）
           <input v-model="model.edits.value[timeout.index]" type="number" step="1"
             :min="timeout.min" :max="timeout.max" :placeholder="timeout.value" :disabled="model.busy.value">
         </label>

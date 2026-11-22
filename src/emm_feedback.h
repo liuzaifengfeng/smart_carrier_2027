@@ -1,6 +1,21 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
+
+// 查询及尚未触发的同步绝对位置指令可以原样重发。
+template<class Exchange>
+const char *RetryEmmFeedback(uint8_t attempts,Exchange exchange,bool retryUnassignedError=false) {
+    const char *error;
+    do {
+        error=exchange();
+        if(!error)return nullptr;
+        const bool retry=strcmp(error,"MOTOR_FEEDBACK_TIMEOUT")==0||
+            (retryUnassignedError&&strcmp(error,"MOTOR_COMMAND_ERROR")==0);
+        if(!retry)return error;
+    } while(--attempts);
+    return error;
+}
 
 // EMM V5固定0x6B校验模式。仅解析本控制器使用的回复，按固定长度防止载荷6B截帧。
 struct EmmReply {uint8_t id=0,function=0,size=0,data[40]={};};

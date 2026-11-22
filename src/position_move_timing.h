@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <math.h>
 
+constexpr uint8_t POSITION_MOVE_DEFAULT_ACCELERATION = 180;
+
 // EMM V5位置模式，1~255加速度档位：每增加1 RPM需(256-acc)*50us。
 // 从静止加速、减速到静止；短行程达不到设定轮速时按三角形速度曲线计算。
 /**

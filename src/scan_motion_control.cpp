@@ -36,7 +36,7 @@ void ScanMotionRunner::tick() {
     const float approach=fabsf(config.approachMm),total=approach+fabsf(config.searchMm);
     const float distance=units*3200/65536/config.forwardPpm;
     if(received()||distance>=total){finish();return;}
-    const float rpmPerSecond=20000.0f/(256-180),rpmSecondsPerMm=config.forwardPpm*60/3200;
+    const float rpmPerSecond=20000.0f/(256-SCAN_ACCELERATION),rpmSecondsPerMm=config.forwardPpm*60/3200;
     const float entryCap=distance<approach?sqrtf(config.searchRpm*float(config.searchRpm)+2*rpmPerSecond*rpmSecondsPerMm*(approach-distance)):config.searchRpm;
     const float endCap=sqrtf(2*rpmPerSecond*rpmSecondsPerMm*(total-distance));
     const float cap=fminf(config.approachRpm,fminf(entryCap,endCap));

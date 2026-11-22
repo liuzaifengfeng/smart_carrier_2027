@@ -1,13 +1,18 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include "position_move_timing.h"
 
 enum class MotionState : uint8_t { QUEUED, RUNNING, DONE, FAILED, CANCELLED };
 enum class MotionKind : uint8_t {
     NAVIGATE, NODE_PATH, ARM_POSE, DISC_GRAB, LOAD_ROUND, HELD_DISC, PLACE_ROUND, RETRIEVE_ROUND,
     TRANSFER, RETRIEVE, DEMO_PLACE, DEMO_RETRIEVE, SCAN_TASK, LIDAR_POSE,
-    HOME_OBSERVE, HOME_RETURN, POSITION, GOTO, VELOCITY, ARM_RAW, SERVO_RAW, ENABLE, TRIAL, TURRET_TRIAL, AXIS_TRIAL, TRAY_ROTATE, RING_PREPARE
+    HOME_OBSERVE, HOME_RETURN, POSITION, GOTO, VELOCITY, ARM_RAW, SERVO_RAW, ENABLE, TRIAL, TURRET_TRIAL, AXIS_TRIAL, TRAY_ROTATE, RING_PREPARE,
+    DISC_RECORD_POSITION
 };
+inline bool MergeDiscYIntoFirstStraight(uint8_t nextNode) {
+    return nextNode==5||nextNode==15;
+}
 enum class ArmObservation : uint8_t { NONE, START, LOOK, LOOK2, LOOK3, LOOK4 };
 
 struct MotionRequest {
@@ -19,9 +24,11 @@ struct MotionRequest {
     float x=0,y=0,theta=0,speed=0,high=-1,length=-1,turret=-1,pawl=-1;
     bool force=false,automatic=false,debug=false,planned=false;
     bool startVision=false;
-    bool ringCorrection=false;
+    bool discDeparture=false; // 正式圆盘抓取结束后，按路径首段决定如何补偿地图 Y。
+    bool ringCorrection=false; // 确认圆环预放位，超时参数非零时启用视觉纠偏。
     bool armPrepared=false; // 返航导航已完成 LOOK4，HOME_OBSERVE 只执行原有航向修正。
     uint8_t vision=0;
+    uint8_t positionAcceleration=POSITION_MOVE_DEFAULT_ACCELERATION;
     uint16_t turretTrialRampMs=100;
     uint32_t turretTrialPeriodMs=20,turretTrialDurationMs=3000;
     uint8_t axisTrialMotor=0;

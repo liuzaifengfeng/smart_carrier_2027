@@ -113,7 +113,7 @@ class CompetitionFlow {
     enum class Phase {
         START_PREPARE_ARM, START_CALIBRATE_HEADING, START_WAIT_ZONE, START_PREPARE_LIDAR, START_WAIT_PERMISSION,
         SCAN_TASK,
-        DISC_NAVIGATE, DISC_ALIGN, DISC_PREPARE_GRAB, DISC_GRAB_MATERIALS,
+        DISC_NAVIGATE, DISC_RECORD_POSITION, DISC_ALIGN, DISC_PREPARE_GRAB, DISC_GRAB_MATERIALS,
         COARSE_NAVIGATE, COARSE_ALIGN, COARSE_PLACE,
         COARSE_WAIT_RETRIEVE, COARSE_RETRIEVE,
         TEMP_NAVIGATE, TEMP_ALIGN, TEMP_PLACE,
@@ -277,18 +277,25 @@ public:
             break;
         }
 
-        // ---------- 圆盘：导航并提前 LOOK2 → 对齐 → LOOK3 → 依次取三件 ----------
+        // ---------- 圆盘：导航并提前 LOOK2 → 记录位置 → 对齐 → 取三件 ----------
         case Phase::DISC_NAVIGATE:
             io.display(secondRound?"GRAB R2":"GRAB R1");
             if(!ticket.id) {
                 io.materialStop();
                 io.clearProgress();
             }
-            if(motion(path(secondRound?map.temp:map.scan,map.disc,ArmObservation::LOOK2,CargoForGrabIndex(0)),STATE_ROUTE_FAILED)==1) { // 去圆盘并提前 LOOK2，等待底盘和观察姿态都完成。
-                io.visionStart(VisionStartMode::DISC); // 到位后开启圆盘整体对齐。
+            if(motion(path(secondRound?map.temp:map.scan,map.disc,ArmObservation::LOOK2,CargoForGrabIndex(0)),STATE_ROUTE_FAILED)==1)
+                phase=Phase::DISC_RECORD_POSITION;
+            break;
+        case Phase::DISC_RECORD_POSITION: {
+            MotionRequest request;
+            request.kind=MotionKind::DISC_RECORD_POSITION;
+            if(motion(request,STATE_ROUTE_FAILED)==1) {
+                io.visionStart(VisionStartMode::DISC);
                 phase=Phase::DISC_ALIGN;
             }
             break;
+        }
         case Phase::DISC_ALIGN:
             if(aligned(VisionStartMode::DISC)) { // 检查圆盘对齐结果；完成时关闭本次视觉对齐。
                 due=io.now()+10; // 保留原对齐后间隔。
@@ -308,28 +315,30 @@ public:
             if(progress>=3) {
                 io.materialStop();
                 io.clearProgress();
-                next(secondRound?STATE_PLACE_COARSE2:STATE_PLACE_COARSE1); // 三件取齐，进入本轮粗加工区放料。
+                next(secondRound?STATE_PLACE_COARSE2:STATE_PLACE_COARSE1);
                 return;
             }
-            // 前两件抓完后重新进入 LOOK3，再开启下一件识别；第三件完成直接离开。
+            // 前两件抓完后重新进入 LOOK3，再开启下一件识别。
             if(progress>preparedProgress&&motion(pose(ArmObservation::LOOK3))==1) { // 新抓完一件后恢复 LOOK3，准备识别下一件。
                 preparedProgress=progress;
                 io.materialStart(); // 开启单件物料识别，后续抓取由运动任务执行。
             }
             break;
         }
-
         // ---------- 粗加工区：导航并提前 LOOK → 对齐 → 放下三件 ----------
-        case Phase::COARSE_NAVIGATE:
+        case Phase::COARSE_NAVIGATE: {
             if(!ticket.id) {
                 io.materialStop();
                 io.display(secondRound?"GO COARSE2":"GO COARSE1");
             }
-            if(motion(path(map.disc,map.coarse,ArmObservation::LOOK,CargoForGrabIndex(0)),STATE_ROUTE_FAILED)==1) { // 去粗加工区，途中提前展开 LOOK。
+            auto request=path(map.disc,map.coarse,ArmObservation::LOOK,CargoForGrabIndex(0));
+            request.discDeparture=true;
+            if(motion(request,STATE_ROUTE_FAILED)==1) {
                 io.visionStart(VisionStartMode::WORK_AREA); // 开启粗加工区工位对齐。
                 phase=Phase::COARSE_ALIGN;
             }
             break;
+        }
         case Phase::COARSE_ALIGN:
             if(aligned(VisionStartMode::WORK_AREA))phase=Phase::COARSE_PLACE; // 对齐完成后进入放料阶段。
             break;
@@ -338,6 +347,7 @@ public:
             request.kind=MotionKind::PLACE_ROUND;
             io.task(request,secondRound); // 将本轮三件物料的颜色和位置填入动作请求。
             request.layer=1;
+            request.ringCorrection=true;
             io.display(secondRound?"PLACE C2":"PLACE C1");
             if(motion(request)==1) { // 提交并等待三件物料放入粗加工区。
                 io.clearProgress();
@@ -390,6 +400,7 @@ public:
                         if(request.colors[i]==firstRound.colors[j])request.positions[i]=firstRound.positions[j];
             }
             request.layer=secondRound?2:1;
+            request.ringCorrection=!secondRound;
             io.display(secondRound?"STACK T2":"PLACE T1");
             if(motion(request)==1) { // 提交并等待本轮暂存放料或第二层叠放。
                 io.clearProgress();

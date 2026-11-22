@@ -34,17 +34,21 @@ void rotateTray(Program &p,float angle,uint32_t interval=0,uint16_t power=0) {
     Step s;s.kind=StepKind::TRAY_ROTATE;s.name="TRAY_ROTATE";
     s.turret=angle;s.waitMs=interval;s.trayPowerMw=power;p.append(s);
 }
-void prepareTray(Program &p,uint8_t cargo,bool checkArrival) {
+void prepareTray(Program &p,uint8_t cargo,bool checkArrival,float tolerance=CARGO_TRAY_ARRIVAL_TOLERANCE_DEG) {
     Step s;
     s.kind=checkArrival?StepKind::TRAY_READY:StepKind::TRAY_START;
     s.name=checkArrival?"TRAY_READY":"TRAY_START";
     s.turret=cargoTrayAngles[cargo-1];
+    s.trayArrivalToleranceDeg=tolerance;
     p.append(s);
 }
 /**
  * @brief 追加底盘相对位置动作，x/y为mm、theta为转角deg、speed为最大RPM。
  */
-void position(Program &p,float x,float y,float theta,float speed){Step s;s.kind=StepKind::POSITION;s.name="POSITION";s.high=x;s.length=y;s.turret=theta;s.speed=speed;p.append(s);}
+void position(Program &p,float x,float y,float theta,float speed,uint8_t acceleration=POSITION_MOVE_DEFAULT_ACCELERATION) {
+    Step s;s.kind=StepKind::POSITION;s.name="POSITION";s.high=x;s.length=y;s.turret=theta;s.speed=speed;
+    s.positionAcceleration=acceleration;p.append(s);
+}
 /**
  * @brief 构建到工位上方的平移、稳定和转向步骤；angle可指定规划后的多圈转台角。
  */
@@ -68,7 +72,7 @@ void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelay
 /**
  * @brief 构建放料转向、下降、松爪及抬升序列；height为实际层高，retracted表示小臂已缩回。
  */
-void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle,bool slowLower=false,uint8_t workPosition=0,uint8_t sourceCargo=0,uint8_t destinationCargo=0,bool ringCorrection=false) {
+void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle,bool slowLower=false,uint8_t workPosition=0,uint8_t sourceCargo=0,uint8_t destinationCargo=0,bool ringCorrection=false,float trayTolerance=CARGO_TRAY_ARRIVAL_TOLERANCE_DEG) {
     if(retracted) {
         wait(p,"PLACE_TRANSLATE_WAIT",d.placeAbove.translateMs);wait(p,"PLACE_SETTLE",d.placeAbove.settleMs);
         rotateArm(p,"PLACE_ROTATE",-1,destinationCargo?pose.length:-1,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,angle);
@@ -77,16 +81,19 @@ void place(Program &p,const MaterialStationPose &pose,float height,const Materia
         p.steps[p.count-1].trayClearanceCargo=sourceCargo;
         p.steps[p.count-1].trayClearanceWorkPosition=workPosition;
     } else above(p,pose,-1,d.placeAbove,angle); // 已夹紧物料，移位和下降不再重复操作夹爪。
-    if(destinationCargo)prepareTray(p,destinationCargo,true);
+    if(destinationCargo)prepareTray(p,destinationCargo,true,trayTolerance);
     if(slowLower) {
-        arm(p,"PLACE_DESCEND_10",ringCorrection?ring::HOVER_MM:10,retracted?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
-        p.steps[p.count-1].slowLower=true;
-        p.steps[p.count-1].timed=!ringCorrection;
+        const bool enableVision=ringCorrection&&ring::configuredTimeoutMs()!=0;
+        arm(p,"PLACE_DESCEND_10",ring::HOVER_MM,retracted?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+        Step &hover=p.steps[p.count-1];
+        hover.slowLower=true;
+        hover.timed=!ringCorrection;
         if(ringCorrection) {
-            Step &hover=p.steps[p.count-1];
-            hover.ringVisionPosition=workPosition;
             hover.liftArrival=true;
             hover.lengthArrival=retracted;
+        }
+        if(enableVision) {
+            hover.ringVisionPosition=workPosition;
             Step correction;
             correction.kind=StepKind::RING_CORRECT;
             correction.name="RING_CORRECT";
@@ -146,7 +153,7 @@ const char *transfer(const MotionRequest &r,Program &p) {
         pick(p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i],retrieve?0:cargos[i]);
         place(p,destination,height,d,true,&selected.anglesDeg[2*i+1],!retrieve&&r.layer==1,
               retrieve?0:works[i],retrieve?0:cargos[i],retrieve?cargos[i]:0,
-              r.kind==MotionKind::DEMO_PLACE&&r.ringCorrection);
+              !retrieve&&r.ringCorrection);
         if(!retrieve) {
             p.steps[p.count-1].workPlaceLiftArrival=true;
             p.steps[p.count-1].waitMs=0;
@@ -225,13 +232,16 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         for(uint8_t i=0;i<count;++i) {
             const uint8_t cargo=r.kind==MotionKind::LOAD_ROUND?CargoForGrabIndex(i):r.cargo,color=r.kind==MotionKind::LOAD_ROUND?r.colors[i]:r.color;
             const auto &destination=materialTransferLayout.cargo;
+            const bool positionGrab=r.kind!=MotionKind::HELD_DISC&&r.position>=1&&r.position<=3;
             prepareTray(p,cargo,false);
             if(r.kind!=MotionKind::HELD_DISC) {
-                if(r.position>=1&&r.position<=3) {
+                if(positionGrab) {
+                    const size_t approach=p.count;
                     const float length=r.position==2?0:150,angle=r.position==1?71:r.position==2?90:102;
-                    arm(p,"DISC_APPROACH",80,length,angle,80,armSpeed,r.position==3?400:500);
-                    arm(p,"DISC_GRIP",80,length,angle,-8,armSpeed,commonMaterialDelays.pickGripMs,false,ARM_GRIP_HOLD_MS);
+                    arm(p,"DISC_APPROACH",80,length,angle,80,armSpeed,350);
+                    arm(p,"DISC_GRIP",80,length,angle,-8,armSpeed,400,false,ARM_GRIP_HOLD_MS);
                     arm(p,"DISC_LIFT",materialTransferLayout.approachHeight,0,-1,-1,armSpeed,commonMaterialDelays.pickLiftMs);
+                    for(size_t step=approach;step<p.count;++step)p.steps[step].lengthAcceleration=245;
                 } else if(r.position==4||r.kind==MotionKind::LOAD_ROUND)pick(p,materialTransferLayout.disc,commonMaterialDelays,false,true,nullptr);
                 else {
                     const auto &d=materialMotionSteps.discApproach;
@@ -243,7 +253,10 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
                 arm(p,"DISC_LIFT",materialTransferLayout.approachHeight,0,-1,-1,materialMotionSteps.discLiftSpeed,commonMaterialDelays.pickLiftMs);
             }
             // 抬升缩回并转向料盘，确认目标盘到位后再伸出下降。
-            place(p,destination,destination.high,commonMaterialDelays,true,nullptr,false,0,0,cargo);
+            auto delays=commonMaterialDelays;
+            if(positionGrab)delays.placeDescendMs=200;
+            place(p,destination,destination.high,delays,true,nullptr,false,0,0,cargo,false,
+                positionGrab?3.0f:CARGO_TRAY_ARRIVAL_TOLERANCE_DEG);
             if(r.kind!=MotionKind::HELD_DISC) {
                 p.steps[p.count-1].materialEvent="DISC_PICK";p.steps[p.count-1].materialPosition=r.position;
             }
@@ -263,7 +276,7 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         observation(p,ArmObservation::START,r.zone);
         position(p,r.zone==1?-115:-90,r.zone==1?-175:170,0,200);break;
     }
-    case MotionKind::POSITION: position(p,r.x,r.y,r.theta,r.speed);break;
+    case MotionKind::POSITION: position(p,r.x,r.y,r.theta,r.speed,r.positionAcceleration);break;
     case MotionKind::GOTO: {Step s;s.kind=StepKind::GOTO;s.name="GOTO";s.high=r.x;s.length=r.y;s.turret=r.theta;p.append(s);break;}
     case MotionKind::ARM_RAW: arm(p,"ARM_RAW",r.high,r.length,r.turret,r.pawl,r.speed,0,r.planned);break;
     case MotionKind::SERVO_RAW: {Step s;s.kind=StepKind::RAW_SERVO;s.name="SERVO";s.cargo=r.cargo;s.turret=r.turret;p.append(s);break;}

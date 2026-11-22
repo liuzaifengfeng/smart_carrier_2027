@@ -616,7 +616,7 @@
           "integer": true
         },
         "底盘/节点导航外圈加速度档位(EMM V5)": {
-          "value": 200,
+          "value": 190,
           "description": "张大头 EMM V5 外圈直行加减速档位。固件按 Y 轴脉冲标定换算速度曲线，下一条完整路径启动生效。",
           "minimum": 1,
           "maximum": 255,
@@ -650,12 +650,12 @@
           "maximum": 5000.0,
           "integer": false
         },
-        "底盘/节点导航中间路段平移加速度(mm/s²)": {
-          "value": 1000.0,
-          "description": "中间路段独立平移加速和减速，单位mm/s²，不影响外层路径及原地转向。下一条完整路径启动生效。",
-          "minimum": 1.0,
-          "maximum": 4000.0,
-          "integer": false
+        "底盘/节点导航中间路段加速度档位(EMM V5)": {
+          "value": 170,
+          "description": "中间路段平移加减速档位，按 Y 轴脉冲标定换算。下一条完整路径启动生效。",
+          "minimum": 1,
+          "maximum": 255,
+          "integer": true
         }
       }
     },
@@ -724,8 +724,8 @@
           "integer": false
         },
         "圆环纠偏/超时(ms)": {
-          "value": 0,
-          "description": "从 RING_READY 开始计时。超时即下放，设为 0 关闭超时。",
+          "value": 3000,
+          "description": "设为 0 时跳过圆环视觉，预放到位后直接下放。设为正数时从 RING_READY 开始计时，超时即下放。",
           "minimum": 0,
           "maximum": 16777216,
           "integer": true

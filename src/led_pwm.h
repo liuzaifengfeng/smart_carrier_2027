@@ -22,6 +22,8 @@ bool LedPwm_IsReady();
  * @brief 设置灯光亮度百分比，不保存到Flash；返回是否应用成功。
  */
 bool LedPwm_SetBrightness(uint32_t percent);
+/** @brief 圆环视觉期间以 15% 补光，结束后恢复设定亮度。 */
+void LedPwm_SetRingVisionActive(bool active);
 /**
  * @brief 读取设定亮度百分比，不等于故障闪烁期间的瞬时实际输出。
  */

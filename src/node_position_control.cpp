@@ -32,7 +32,8 @@ void Runner::fail(const char *reason) {error=reason;stage=FINISHED;io->halt();}
  */
 void Runner::begin(const Route &path,const Settings &config,IO &hardware,Result &result) {
     *this=Runner{};route=&path;settings=&config;io=&hardware;output=&result;
-    offset=config.startOffset;result.estimated=path.segments[0].start+offset;
+    offset=config.startOffset;startYOffset=config.startYOffset;
+    result.estimated=path.segments[0].start+offset+Vec{0,startYOffset};
     // 最后一组连续平移前的转向阶段即开始准备观察姿态；单段路径从起步准备。
     size_t finalBlock=path.segmentCount;
     while(finalBlock&&path.segments[finalBlock-1].kind==ROTATE)--finalBlock;
@@ -375,7 +376,8 @@ void Runner::tick() {
         }
         scanExit=norm(offset)>0;const Vec direction=(end-phase.start)*(1/length);
         const float sign=dot(direction,Vec(cosf(phase.h0*PI_F/180),sinf(phase.h0*PI_F/180)))>=0?1:-1;
-        distance=sign*(scanExit?norm(end-output->estimated):length);
+        distance=sign*(scanExit?norm(end-output->estimated):length-startYOffset*direction.y);
+        startYOffset=0;
         finalTranslation=true;
         for(size_t i=after;i<route->segmentCount;++i)if(route->segments[i].kind!=ROTATE)finalTranslation=false;
         terminalTurn=after<route->segmentCount||fabsf(turn(targetHeading,route->config.endHeading))>settings->headingDeadbandDeg;
@@ -398,7 +400,7 @@ void Runner::tick() {
     case PREPARE:
         for(int i=0;i<4;++i) {
             origin[i]=stopped[i].position;
-            const int sign=encoderSign[i]?encoderSign[i]:1;
+            const int sign=encoderToCommandSign(i);
             goals[i]=llround(static_cast<double>(origin[i])*sign*PULSES_PER_REV/65536)+(directions[i]?int64_t(travelPulses[i]):-int64_t(travelPulses[i]));
             if(llabs(goals[i])>UINT32_MAX){failure="MOTOR_TARGET_RANGE";break;}
         }

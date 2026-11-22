@@ -32,6 +32,7 @@ void MotionHardware::stopRingVision() {
     if(!ringVisionActive)return;
     ring::input().close();
     ringVisionActive=false;
+    LedPwm_SetRingVisionActive(false);
     Serial.println("{EVT,VISION,STOP_REQUEST,RING_CORRECTION}");
 }
 
@@ -51,11 +52,12 @@ const char *MotionHardware::issue(const Step &s) {
     case StepKind::ARM:
         if(s.ringVisionPosition) {
             ringVisionActive=true;
+            LedPwm_SetRingVisionActive(true);
             Serial.printf("{EVT,VISION,RING_TARGET,%u}\n",static_cast<unsigned>(s.ringVisionPosition));
             Serial.println("{EVT,VISION,START_REQUEST,RING_CORRECTION}");
         }
         if(!(s.planned?MoveArmPlanned(s.high,s.length,s.turret,s.pawl,s.speed,s.turretAcceleration,s.slowLower):
-             MoveArm(s.high,s.length,s.turret,s.pawl,s.speed,s.turretAcceleration,s.slowLower)))return "EXECUTION";
+             MoveArm(s.high,s.length,s.turret,s.pawl,s.speed,s.turretAcceleration,s.slowLower,s.lengthAcceleration)))return "EXECUTION";
         if(s.turretArrival)turretTarget=currentArm.turret_angle;
         if(CargoTrayNeedsClearance(s.trayClearanceCargo)||CargoTrayHasPlacementLimit(s.trayClearanceWorkPosition)) {
             trayPreselected=false;
@@ -86,7 +88,7 @@ const char *MotionHardware::issue(const Step &s) {
             static_cast<unsigned long>(ring::input().ready(ring::requiredStableFrames(),ringDeadzone)));
         return nullptr;
     }
-    case StepKind::POSITION: return BeginPositionMove(s.high,s.length,s.turret,s.speed)?nullptr:"EXECUTION";
+    case StepKind::POSITION: return BeginPositionMove(s.high,s.length,s.turret,s.speed,s.positionAcceleration)?nullptr:"EXECUTION";
     case StepKind::GOTO: GotoPose(s.high,s.length,s.turret,true);break;
     case StepKind::TURRET_READY: turretStarted=millis();break;
     case StepKind::COMMIT: cargoPlatforms[s.cargo-1].material=static_cast<MaterialType>(s.color);break;
@@ -169,7 +171,7 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
     if(s.kind==StepKind::TRAY_ROTATE||s.kind==StepKind::TRAY_READY) {
         float angle=0;
         if(!Servo_QueryAngleMTurn(SERVO_ID_CARGO_TRAY,angle))return "SERVO_READ";
-        done=fabsf(angle-s.turret)<=CARGO_TRAY_ARRIVAL_TOLERANCE_DEG;
+        done=fabsf(angle-s.turret)<=s.trayArrivalToleranceDeg;
         if(done)trayMoving=false;
         return nullptr;
     }

@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include "turret_motor.h"
+#include "position_move_timing.h"
 #include <initializer_list>
 #include "vision_alignment.h"
 
@@ -74,12 +75,13 @@ void GotoPose(float x, float y, float theta, bool isRelative);
  * 契约：位移、转角、速度和标定系数有效，由输入入口负责校验。
  * @return true 命令已下发并等待结束（开环估计），false 被取消或请求无法用单段圆弧表示。
  */
-bool MovePosition(float x, float y, float theta, float speed, bool (*shouldStop)() = nullptr);
+bool MovePosition(float x,float y,float theta,float speed,bool (*shouldStop)()=nullptr,
+    uint8_t acceleration=POSITION_MOVE_DEFAULT_ACCELERATION);
 /**
  * @brief 初始化四轮同步相对位置动作，不等待估算行程结束；由TickPositionMove推进。
  * @return true 准备成功，false 请求无法执行。
  */
-bool BeginPositionMove(float x,float y,float theta,float speed);
+bool BeginPositionMove(float x,float y,float theta,float speed,uint8_t acceleration=POSITION_MOVE_DEFAULT_ACCELERATION);
 /**
  * @brief 检查相对位置动作的估算时间并推进结束处理，不代表实测到位。
  */
@@ -134,7 +136,10 @@ void ResetAlignmentWait();
 // 串口和参数入口负责校验；-1 跳过对应轴。
 // slowLower仅将升降轴转速及实际加速度减半，伸缩、转台和夹爪保持原参数。
 // turretAcceleration 使用张大头原生加速度档位（0~255，0表示不使用加减速）。
-bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed, uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, bool slowLower=false);
+constexpr uint8_t ARM_EXTENSION_ACCELERATION = 240;
+bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed,
+    uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, bool slowLower=false,
+    uint8_t lengthAcceleration=ARM_EXTENSION_ACCELERATION);
 
 // 读取7号张大头转盘实际多圈角度并检查线缆范围；失败时不改写 angle，也不更新目标缓存。
 /**

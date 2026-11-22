@@ -1,5 +1,6 @@
 #include "../src/continuous_route.h"
 #include "../src/position_move_timing.h"
+#include "../src/scan_motion_control.h"
 #include <stdio.h>
 #include <stdlib.h>
 struct RobotPose {float x,y,theta;};
@@ -20,7 +21,8 @@ bool ReadChassisEncoderPositions(int64_t (&values)[4]) {
         (reads%2?llround(traveled*Y_PULSE*65536/3200)*(i%2?1:-1):0);
     ++reads;return true;
 }
-bool MovePosition(float,float,float,float,bool (*)()) {
+bool MovePosition(float,float,float,float,bool (*)(),uint8_t acceleration) {
+    if(acceleration!=170)abort();
     currentPose={9999,9999,0}; // 提前停车时不能使用命令终点，也不能沿用旧位姿。
     return complete;
 }

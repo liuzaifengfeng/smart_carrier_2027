@@ -24,6 +24,7 @@ int issued=0;
 float issuedLength=-1;
 float issuedTurret=0;
 uint16_t issuedRamp=0;bool issuedSlowLower=false;
+uint8_t issuedLengthAcceleration=0;
 uint16_t issuedTurretRpm=0;
 uint32_t millis(){return clockMs;}
 volatile bool taskMotionAborted=false;
@@ -33,9 +34,10 @@ ArmPose currentArm{100,20,90,50};
 CargoPlatform cargoPlatforms[3]={{MATERIAL_NONE},{MATERIAL_NONE},{MATERIAL_NONE}};
 float cargoTrayAngles[3]={150,213,276};
 bool cancelled(){return stop;}
-bool MoveArm(float,float length,float turret,float,float,uint8_t ramp,bool slowLower){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
+bool MoveArm(float,float length,float turret,float,float,uint8_t ramp,bool slowLower,uint8_t lengthAcceleration){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;issuedLengthAcceleration=lengthAcceleration;return true;}
+void LedPwm_SetRingVisionActive(bool){}
 bool MoveArmPlanned(float,float length,float turret,float,float,uint8_t ramp,bool slowLower,uint16_t rpm){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;issuedTurretRpm=rpm;return true;}
-bool BeginPositionMove(float,float,float,float){++issued;return true;}
+bool BeginPositionMove(float,float,float,float,uint8_t){++issued;return true;}
 void TickPositionMove(){}
 bool PositionMoveActive(){return false;}
 void GotoPose(float,float,float,bool){++issued;}
@@ -111,6 +113,12 @@ void trayArrival() {
     assert(!hardware.ready(s,done)&&!done);
     trayMeasured=150;
     assert(!hardware.ready(s,done)&&done);
+    trayMeasured=147;
+    assert(!hardware.ready(s,done)&&!done);
+    s.trayArrivalToleranceDeg=3;
+    assert(!hardware.ready(s,done)&&done);
+    trayMeasured=146.9f;
+    assert(!hardware.ready(s,done)&&!done);
     s.kind=motion::StepKind::TRAY_START;s.turret=0;
     assert(!hardware.issue(s)&&!hardware.feedback(s)&&trayTarget==0&&smoothTrayCommands==2);
 
@@ -175,6 +183,8 @@ void feedback() {
     turretMeasured=90;clawMeasured=30;assert(!hardware.ready(s,done)&&!done);
     clawMeasured=50;assert(!hardware.ready(s,done)&&done);
     s.turretAcceleration=TURRET_ACCELERATION_FAST;assert(!hardware.issue(s)&&issuedRamp==TURRET_ACCELERATION_FAST&&!issuedSlowLower);
+    assert(issuedLengthAcceleration==240);
+    s.lengthAcceleration=245;assert(!hardware.issue(s)&&issuedLengthAcceleration==245);
     s.planned=true;s.turretAcceleration=TURRET_ACCELERATION_SLOW;s.slowLower=true;assert(!hardware.issue(s)&&issuedRamp==TURRET_ACCELERATION_SLOW&&issuedSlowLower);
     assert(issuedTurretRpm==83);
     issued=0;

@@ -115,20 +115,27 @@ class ConfigTests(unittest.TestCase):
             self.assertIn(f'"{OUTER_ACCEL_LEVEL}", 223', header.read_text(encoding='utf-8'))
 
     def test_middle_profiles_export_independently_of_outer_profiles(self):
-        names = ('底盘/节点导航中间路段速度(mm/s)', '底盘/节点导航中间路段平移加速度(mm/s²)')
+        from parameter_config import LEGACY_MIDDLE_ACCEL, MIDDLE_ACCEL_LEVEL
+        names = ('底盘/节点导航中间路段速度(mm/s)', MIDDLE_ACCEL_LEVEL)
         edits = {next(p.index for p in self.parameters.values() if p.name == name): value
-                 for name, value in zip(names, ('1200', '800'))}
+                 for name, value in zip(names, ('1200', '180'))}
         with temporary_folder() as folder:
             source, header = folder/'settings.json', folder/'defaults.h'
             export_config(source, self.parameters, edits)
             parameters = load_config(source)['groups']['底盘']['parameters']
             self.assertEqual(parameters[names[0]]['value'], 1200)
-            self.assertEqual(parameters[names[1]]['value'], 800)
+            self.assertEqual(parameters[names[1]]['value'], 180)
             self.assertEqual(parameters['底盘/节点导航速度(mm/s)']['value'], 3000)
-            self.assertEqual(parameters['底盘/节点导航外圈加速度档位(EMM V5)']['value'], 200)
+            self.assertEqual(parameters['底盘/节点导航外圈加速度档位(EMM V5)']['value'], 190)
             self.assertEqual(generate(source, header), 105)
-            for name, value in zip(names, ('1200', '800')):
+            for name, value in zip(names, ('1200', '180')):
                 self.assertIn(f'"{name}", {value}', header.read_text(encoding='utf-8'))
+            legacy = load_config(DEFAULT_CONFIG_PATH)
+            middle = legacy['groups']['底盘']['parameters']
+            middle.pop(MIDDLE_ACCEL_LEVEL)
+            middle[LEGACY_MIDDLE_ACCEL] = {'value': 1000}
+            index = next(p.index for p in self.parameters.values() if p.name == MIDDLE_ACCEL_LEVEL)
+            self.assertEqual(config_edits(legacy, self.parameters)[index], '178')
 
     def test_device_range_wins_and_unknown_name_rejected(self):
         p = self.parameters[0]

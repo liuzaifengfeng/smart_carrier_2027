@@ -17,7 +17,7 @@ inline uint32_t &requiredStableFrames() {
 }
 
 inline uint32_t &configuredTimeoutMs() {
-    static uint32_t value = 0;
+    static uint32_t value = 3000;
     return value;
 }
 

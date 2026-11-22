@@ -187,7 +187,7 @@ ESP32  {EVT,VISION,STOP_REQUEST,CORNER}
 
 ### 圆环纠偏调试
 
-Web 上位机「机械臂」页提供工位 1、2、3 的前置按钮，以及独立的「三件圆环纠偏放料」。前置动作闭爪并到达对应工位的升降轴 10 mm 预放位。三件试放由载物台 1、2、3 顺序取料，分别放到工位 1、2、3。粗加工区与暂存区共用工位标定，2 号工位的默认伸出量为 7 mm。调试员需将小车停在目标区域并装好载物台。正式任务不启动圆环视觉闭环。
+Web 上位机「机械臂」页提供工位 1、2、3 的前置按钮，以及独立的「三件圆环纠偏放料」。前置动作闭爪并到达对应工位的升降轴 10 mm 预放位。三件试放由载物台 1、2、3 顺序取料，分别放到工位 1、2、3。粗加工区与暂存区共用工位标定，2 号工位的默认伸出量为 7 mm。调试员需将小车停在目标区域并装好载物台。正式任务在粗加工区两轮放料和暂存区第一层放料时逐件使用此流程。暂存区第二层沿用原叠放流程。
 
 | 方向 | 报文 | 含义 |
 | --- | --- | --- |
@@ -201,7 +201,7 @@ Web 上位机「机械臂」页提供工位 1、2、3 的前置按钮，以及�
 | ESP32 → 机载电脑 | `{EVT,VISION,STOP_REQUEST,RING_CORRECTION}` | 连续达标或到达设定超时后发送，随后按原低速下放、松爪、抬升。已开启视觉的试放被取消或执行失败时也发送 |
 | ESP32 → 上位机日志 | `{EVT,VISION,RING_TIMEOUT,timeout_ms}` | 因超时放行时，在 STOP_REQUEST 前记录本次设定的超时毫秒数 |
 
-三个工位逐件重复 TARGET → START → READY → OFFSET → STOP。达标或超时之前，主控保持 10 mm 高度，使用 `{CMD,NAV,STOP}` 可以取消。在 Debug 空闲时，上位机「视觉」页选择圆环号后发送 `{CMD,VISION,START_REQUEST,RING_CORRECTION,position}`。主控回复 `{RSP,VISION,START_REQUEST,ACK,RING_CORRECTION,position}`，然后依次发 TARGET 和 START。停止命令为 `{CMD,VISION,STOP_REQUEST,RING_CORRECTION}`，回复 `{RSP,VISION,STOP_REQUEST,ACK,RING_CORRECTION}` 后发 STOP。手动启停仅检查相机链路，没有 READY，反馈不会驱动机械臂。缺少圆环号回复 `ERR,FORMAT`，编号超出 1～3 回复 `ERR,RANGE`。试放中手动视觉启停回 `ERR,BUSY`。
+启用圆环视觉时，各工位逐件重复 TARGET → START → READY → OFFSET → STOP。达标或超时之前，主控保持 10 mm 高度，使用 `{CMD,NAV,STOP}` 可以取消。在 Debug 空闲时，上位机「视觉」页选择圆环号后发送 `{CMD,VISION,START_REQUEST,RING_CORRECTION,position}`。主控回复 `{RSP,VISION,START_REQUEST,ACK,RING_CORRECTION,position}`，然后依次发 TARGET 和 START。停止命令为 `{CMD,VISION,STOP_REQUEST,RING_CORRECTION}`，回复 `{RSP,VISION,STOP_REQUEST,ACK,RING_CORRECTION}` 后发 STOP。手动启停仅检查相机链路，没有 READY，反馈不会驱动机械臂。缺少圆环号回复 `ERR,FORMAT`，编号超出 1～3 回复 `ERR,RANGE`。试放中手动视觉启停回 `ERR,BUSY`。
 
 「视觉」页可读取 `{CMD,VISION,RING_AXIS_PID_GET}`，或写入 `{CMD,VISION,RING_AXIS_PID_SET,x_kp,x_ki,x_kd,y_kp,y_ki,y_kd}`。成功时回复 `{RSP,VISION,RING_AXIS_PID_GET,OK,x_kp,x_ki,x_kd,y_kp,y_ki,y_kd}` 或同字段的 `RING_AXIS_PID_SET`。写入只在 Debug 空闲时接受，参数在 RAM 生效。格式、数值、模式和运动占用错误沿用 `FORMAT`、`RANGE`、`MODE`、`BUSY`。调参需要使用新版网页和固件。
 
@@ -209,7 +209,7 @@ Web 上位机「机械臂」页提供工位 1、2、3 的前置按钮，以及�
 - Y 像素偏差直接输入伸缩 PID，输出为位移修正（mm），叠加到实测伸出量上。默认增益为 `0.033,0.007,0`，Y 为正时伸出，为负时缩回。两轴均使用张大头绝对位置模式执行。
 - 两轴分别计算积分与微分。某轴偏差绝对值严格小于该轴死区时，本帧跳过该轴发令并清除其 PID 历史。两轴死区默认均为 1 px，可在 Web 上位机「机械臂 → 圆环纠偏调参」或「参数」页分别调整 `圆环纠偏/X死区(px)` 和 `圆环纠偏/Y死区(px)`。写入正数，下次开始纠偏时取值。
 - 默认连续两帧双轴都进死区后放料。每帧的两轴偏差绝对值均须严格小于各自的死区，达标前任一轴越出死区则重新计数。可在 Web 上位机「参数 → 圆环纠偏/连续达标帧数」调整正整数，下次开始纠偏时取值。计数按当前令牌的接收顺序更新。
-- `圆环纠偏/超时(ms)` 可在「机械臂 → 圆环纠偏调参」或「参数」页修改，默认 0 表示无超时。每件从主控发出 RING_READY 时开始计时。设为正数时，到达设定毫秒数即停止视觉并下放，包含未收到首帧的情况。机械臂页用 `{CMD,CFG,GET,id,RING_TIMEOUT}` 单独读取。
+- `圆环纠偏/超时(ms)` 默认为 3000，可在「机械臂 → 圆环纠偏调参」或「参数」页修改。设为 0 时跳过圆环视觉，确认到达 10 mm 后直接下放。设为正数时，每件开启视觉并从主控发出 RING_READY 时开始计时。连续达标或到达设定毫秒数后停止视觉并下放，超时包含未收到首帧的情况。机械臂页用 `{CMD,CFG,GET,id,RING_TIMEOUT}` 单独读取。
 - 每件纠偏过程中，转台目标限制在本件预放位实测角度的 ±10°，伸缩目标限制在本件预放位实测伸出量的 ±20 mm，同时受现有伸缩行程和转台线缆范围限制。驱动器的脉冲取整余量朝限位内侧预留。连续帧使用同一基准。达到限位后仍按视觉死区判定是否放料。
 
 一件工位放料的串口示例

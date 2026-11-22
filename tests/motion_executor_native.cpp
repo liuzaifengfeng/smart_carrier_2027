@@ -75,6 +75,7 @@ struct Runtime : CompetitionIO {
         for(int i=0;i<3;++i){r.colors[i]=colors[i];r.positions[i]=positions[i];}
     }
     uint32_t submit(const MotionRequest &r)override {
+        if(r.discDeparture)assert(!material&&r.kind==MotionKind::NAVIGATE&&r.startNode==14);
         assert(!pending);requests.push_back(r);pending=++nextId;
         MotionStatus s;s.id=pending;s.state=MotionState::QUEUED;jobs[pending]=s;return pending;
     }
@@ -82,7 +83,9 @@ struct Runtime : CompetitionIO {
     MotionStatus status(uint32_t id)override{return jobs.at(id);}
     void visionStart(VisionStartMode mode)override{
         assert(!pending&&jobs.at(nextId).state==MotionState::DONE);
-        if(mode==VisionStartMode::DISC||mode==VisionStartMode::WORK_AREA||mode==VisionStartMode::WORK_AREA_LOADED)
+        if(mode==VisionStartMode::DISC)
+            assert(requests.back().kind==MotionKind::DISC_RECORD_POSITION);
+        if(mode==VisionStartMode::WORK_AREA||mode==VisionStartMode::WORK_AREA_LOADED)
             assert(requests.back().kind==MotionKind::NAVIGATE&&jobs.at(nextId).chassisDone&&jobs.at(nextId).armReady);
         if(mode==VisionStartMode::CORNER)
             assert(requests.back().kind==MotionKind::HOME_OBSERVE&&requests.back().armPrepared);
@@ -140,7 +143,7 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
     assert(r.finished&&r.current==STATE_DONE&&discGrabs==6&&r.starts==1&&r.materialStarts==6);
     assert(r.vision==std::vector<VisionStartMode>({VisionStartMode::DISC,VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA,
         VisionStartMode::DISC,VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA_LOADED,VisionStartMode::CORNER}));
-    int paths=0,places=0,retrieves=0;
+    int paths=0,places=0,retrieves=0,discRecords=0,discDepartures=0;
     MotionKind previous=MotionKind::ARM_POSE;
     for(const auto &request:r.requests) {
         if(request.kind==MotionKind::NAVIGATE){
@@ -154,13 +157,24 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
             }
         }
         if(request.kind==MotionKind::NAVIGATE&&request.startNode==10)assert(previous==MotionKind::RETRIEVE_ROUND);
+        if(request.kind==MotionKind::NAVIGATE) {
+            assert(request.discDeparture==(request.startNode==14));
+            if(request.discDeparture)++discDepartures;
+        }
+        if(request.kind==MotionKind::DISC_RECORD_POSITION) {
+            assert(previous==MotionKind::NAVIGATE);
+            ++discRecords;
+        }
         if(request.kind==MotionKind::PLACE_ROUND){
             ++places;
             const int expected[4][3]={{1,2,3},{1,2,3},{2,3,1},{2,1,3}};
             for(int i=0;i<3;++i)assert(request.positions[i]==expected[places-1][i]);
             assert(request.colors[0]==(places<=2?1:5)&&request.colors[1]==(places<=2?5:1)&&request.colors[2]==6);
         }
-        if(request.kind==MotionKind::PLACE_ROUND)assert(request.layer==(places==4?2:1));
+        if(request.kind==MotionKind::PLACE_ROUND) {
+            assert(request.layer==(places==4?2:1));
+            assert(request.ringCorrection==(places!=4));
+        }
         if(request.kind==MotionKind::RETRIEVE_ROUND){
             ++retrieves;
             const int expected[2][3]={{1,2,3},{2,3,1}};
@@ -170,7 +184,8 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
         if(request.kind==MotionKind::HOME_OBSERVE)assert(request.armPrepared&&previous==MotionKind::NAVIGATE);
         previous=request.kind;
     }
-    assert(paths==7&&places==4&&retrieves==2);
+    assert(paths==7&&places==4&&retrieves==2&&discRecords==2&&discDepartures==2);
+    assert(MergeDiscYIntoFirstStraight(5)&&MergeDiscYIntoFirstStraight(15)&&!MergeDiscYIntoFirstStraight(13));
 }
 void calibrationWait() {
     Runtime r;r.calibrationReady=false;
@@ -202,8 +217,9 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"startup")){calibrationWait();failedStartupDoesNotStart();}
     else if(!strcmp(argv[1],"rounds")){fullFlow(1);fullFlow(2);}
     else if(!strcmp(argv[1],"failures")) {
-        for(auto kind:{MotionKind::ARM_POSE,MotionKind::SCAN_TASK,MotionKind::NAVIGATE,MotionKind::PLACE_ROUND,
-            MotionKind::RETRIEVE_ROUND,MotionKind::HOME_OBSERVE,MotionKind::HOME_RETURN})fullFlow(1,kind);
+        for(auto kind:{MotionKind::ARM_POSE,MotionKind::SCAN_TASK,MotionKind::NAVIGATE,MotionKind::DISC_RECORD_POSITION,
+            MotionKind::PLACE_ROUND,MotionKind::RETRIEVE_ROUND,
+            MotionKind::HOME_OBSERVE,MotionKind::HOME_RETURN})fullFlow(1,kind);
     } else if(!strcmp(argv[1],"vision"))fullFlow(1,MotionKind::VELOCITY,true);
     else if(!strcmp(argv[1],"cancel"))fullFlow(1,MotionKind::VELOCITY,false,true);
     else assert(false);

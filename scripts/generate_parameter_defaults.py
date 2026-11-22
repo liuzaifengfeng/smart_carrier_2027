@@ -6,7 +6,7 @@ import sys
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
-from parameter_config import OUTER_ACCEL_LEVEL, load_config, parameter_entries
+from parameter_config import MIDDLE_ACCEL_LEVEL, OUTER_ACCEL_LEVEL, load_config, parameter_entries
 
 
 def supported_names():
@@ -37,7 +37,7 @@ def supported_names():
     names.add("底盘/停车稳定时间(ms)")
     names.add(OUTER_ACCEL_LEVEL)
     names.add("底盘/节点导航中间路段速度(mm/s)")
-    names.add("底盘/节点导航中间路段平移加速度(mm/s²)")
+    names.add(MIDDLE_ACCEL_LEVEL)
     names.add("底盘/节点导航转向速度(°/s)")
     names.add("底盘/节点导航转向加速度(°/s²)")
     names.add("底盘/节点导航独立纠偏死区(°)")

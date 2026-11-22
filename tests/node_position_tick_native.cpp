@@ -1,6 +1,7 @@
 #include "node_position_sim.h"
 #include "motion_sequence.h"
 #include "motion_job.h"
+#include "emm_feedback.h"
 #include <assert.h>
 #include <vector>
 struct ProfileSim : Sim {
@@ -289,4 +290,71 @@ void representativePolling() {
     for(int i=0;i<30&&verify.active();++i){verify.tick();initialZero.wait(1);}
     assert(verify.active()&&initialZero.passedComparisons==0);
 }
-int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"stable"))stableFrames();else if(!strcmp(argv[1],"hold"))middleHold();else if(!strcmp(argv[1],"middle"))middleProfile();else if(!strcmp(argv[1],"representative"))representativePolling();else nodeTick();}
+void discReturnArrival() {
+    int64_t correction[4];
+    const float lateralAndTurn[4]={-70,-70,130,130};
+    discReturnWheelPulses(discYOffset(lateralAndTurn,10,20,90,90),10,20,90,correction);
+    for(auto pulse:correction)assert(pulse==0);
+
+    const float mixedTravel[4]={130,-270,330,-70};
+    discReturnWheelPulses(discYOffset(mixedTravel,10,20,90,90),10,20,90,correction);
+    assert(correction[0]==-200&&correction[1]==200&&correction[2]==-200&&correction[3]==200);
+    discReturnWheelPulses(discYOffset(mixedTravel,10,20,65,65),10,20,65,correction);
+    const Vec bodyCorrection{
+        (-correction[0]-correction[1]+correction[2]+correction[3])/40.0f,
+        (correction[0]-correction[1]+correction[2]-correction[3])/80.0f};
+    const Vec worldCorrection=bodyToWorld(bodyCorrection,65);
+    assert(fabsf(worldCorrection.x)<.05f);
+    assert(fabsf(worldCorrection.y+bodyToWorld({10,10},65).y)<.05f);
+    assert(correction[0]+correction[1]+correction[2]+correction[3]==0);
+
+    for(float endY:{720.0f,1680.0f}) {
+        for(float offsetY:{-200.0f,200.0f}) {
+            Node points[]={{{2050,1200},0},{{2050,endY},0}};
+            Config cfg;cfg.policy=2;cfg.count=2;cfg.startHeading=cfg.endHeading=90;
+            Route path;assert(!path.build(points,cfg));
+            Settings settings;settings.outerStraightVelocity=true;settings.startYOffset=offsetY;
+            ProfileSim car;car.heading=90;car.location={2050,1200+offsetY};
+            Result result;assert(!run(path,settings,car,result));
+            assert(car.actions==1&&car.speeds.empty()&&car.outerHold);
+            assert(norm(result.estimated-points[1].p)<3&&norm(car.location-points[1].p)<3);
+        }
+    }
+
+    const int64_t target=100000;
+    // 斜移时较慢的轮已经进入编码器容差内，驱动器仍在执行位置指令。
+    assert(!encoderReturnArrived(Motor{1,95700,2},target,true));
+    assert(encoderReturnArrived(Motor{3,target,0},target,true));
+    assert(encoderReturnArrived(Motor{1,target,0},target,false));
+    assert(!encoderReturnArrived(Motor{3,94000,0},target,true));
+    int requests=0;
+    const char *error=RetryEmmFeedback(3,[&]() -> const char * {
+        return ++requests==1?"MOTOR_FEEDBACK_TIMEOUT":nullptr;
+    });
+    assert(!error&&requests==2);
+
+    requests=0;
+    error=RetryEmmFeedback(3,[&] {
+        ++requests;
+        return "MOTOR_FEEDBACK_TIMEOUT";
+    });
+    assert(!strcmp(error,"MOTOR_FEEDBACK_TIMEOUT")&&requests==3);
+
+    requests=0;
+    error=RetryEmmFeedback(3,[&] {
+        ++requests;
+        return "MOTOR_COMMAND_REJECTED";
+    });
+    assert(!strcmp(error,"MOTOR_COMMAND_REJECTED")&&requests==1);
+
+    requests=0;
+    auto readsState=[&]() -> const char * {
+        return ++requests==1?"MOTOR_COMMAND_ERROR":nullptr;
+    };
+    assert(!RetryEmmFeedback(3,readsState,true)&&requests==2);
+
+    requests=0;
+    error=RetryEmmFeedback(3,readsState);
+    assert(!strcmp(error,"MOTOR_COMMAND_ERROR")&&requests==1);
+}
+int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"stable"))stableFrames();else if(!strcmp(argv[1],"hold"))middleHold();else if(!strcmp(argv[1],"middle"))middleProfile();else if(!strcmp(argv[1],"representative"))representativePolling();else if(!strcmp(argv[1],"disc-return"))discReturnArrival();else nodeTick();}

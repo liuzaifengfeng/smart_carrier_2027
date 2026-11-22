@@ -11,9 +11,32 @@ struct Settings {
     float speedMmS=2000,accelMmS2=2000,turnDegS=200,turnAccelDegS2=400,headingDeadbandDeg=1;
     float middleSpeedMmS=2000,middleAccelMmS2=2000;
     continuous::Vec startOffset; // 扫码停车位置相对首节点的偏移，并入首段四轮位置目标。
+    float startYOffset=0; // 圆盘离站时合入首条直线的地图 Y 偏移。
     bool outerStraightVelocity=false; // 正式节点导航启用，保留同步位置模式入口。
 };
 struct Motor {uint8_t flags=0;int64_t position=0;int16_t rpm=0;}; // 位置：65536单位/圈
+// 四轮有符号编码器行程只用于恢复地图 Y，不恢复 X 或航向。
+inline float discYOffset(const float (&travel)[4],float lateralPpm,float forwardPpm,
+    float beforeHeading,float heading) {
+    const continuous::Vec bodyTravel{
+        (-travel[0]-travel[1]+travel[2]+travel[3])/(4*lateralPpm),
+        (travel[0]-travel[1]+travel[2]-travel[3])/(4*forwardPpm)};
+    const float middleHeading=beforeHeading+continuous::turn(beforeHeading,heading)*.5f;
+    return continuous::bodyToWorld(bodyTravel,middleHeading).y;
+}
+inline void discReturnWheelPulses(float worldY,float lateralPpm,float forwardPpm,float heading,int64_t (&pulses)[4]) {
+    const auto correction=continuous::worldToBody({0,-worldY},heading);
+    const float lateral=lateralPpm*correction.x,forward=forwardPpm*correction.y;
+    pulses[0]=lroundf(-lateral+forward);
+    pulses[1]=lroundf(-lateral-forward);
+    pulses[2]=-pulses[1];
+    pulses[3]=-pulses[0];
+}
+// 低转速和位置残差都可能在减速中提前达标，已下发目标的轮子还需确认驱动器到位。
+inline bool encoderReturnArrived(const Motor &motor,int64_t target,bool commanded) {
+    return (!commanded||(motor.flags&2))&&motor.rpm>=-3&&motor.rpm<=3&&
+        fabs(double(motor.position-target))<=STRAIGHT_ARRIVAL_ENCODER_TOLERANCE;
+}
 struct Result {continuous::Vec estimated;float heading=0,s=0;};
 /** @brief 停轮后连续三帧新IMU航向的极差不超过0.2度；重复帧和停轮前数据不计数。 */
 class HeadingStable3 {
@@ -182,6 +205,7 @@ class Runner {
     const char *error=nullptr;
     size_t index=0,after=0,curveBegin=0,observationIndex=0;
     continuous::Vec offset,end,start;
+    float startYOffset=0;
     float distance=0,targetHeading=0,baseS=0,delta=0,ppm=0,maximum=0,acceleration=0,startHeading=0;
     double unitsPerDistance=0,tolerance=0,hardLimit=0;
     uint32_t due=0,quietStarted=0,started=0,previous=0,deadline=0,lastReport=0,lastArrivalReport=0;
@@ -291,5 +315,7 @@ public:
      * @brief 读取路径输出累计行程(mm)，无绑定输出时返回0。
      */
     float progress() const {return output?output->s:0;}
+    // 与节点绝对位置指令使用相同的编码器至命令方向映射。
+    int encoderToCommandSign(uint8_t wheel) const {return encoderSign[wheel]?encoderSign[wheel]:1;}
 };
 }

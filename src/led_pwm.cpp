@@ -6,6 +6,8 @@
 namespace {
 bool ready = false;
 uint8_t brightness = 0;
+bool ringVisionActive = false;
+constexpr uint8_t ringVisionBrightness = 15;
 uint32_t frequencyHz = LED_PWM_FREQUENCY_HZ;
 constexpr uint32_t maxDuty = (1UL << LED_PWM_RESOLUTION_BITS) - 1;
 SemaphoreHandle_t pwmMutex = nullptr;
@@ -23,7 +25,8 @@ public:
     ~PwmLock() { if (pwmMutex) xSemaphoreGive(pwmMutex); }
 };
 void applyBrightness() {
-    const uint32_t percent = faultBlink ? faultEffectBrightness : cuePulses ? cueBrightness : brightness;
+    const uint8_t steadyBrightness = ringVisionActive ? ringVisionBrightness : brightness;
+    const uint32_t percent = faultBlink ? faultEffectBrightness : cuePulses ? cueBrightness : steadyBrightness;
     ledcWrite(LED_PWM_CHANNEL, (percent * maxDuty + 50) / 100);
 }
 
@@ -94,6 +97,12 @@ bool LedPwm_SetBrightness(uint32_t percent) {
     brightness = static_cast<uint8_t>(percent);
     applyBrightness();
     return true;
+}
+
+void LedPwm_SetRingVisionActive(bool active) {
+    PwmLock lock;
+    ringVisionActive = active;
+    if (ready) applyBrightness();
 }
 
 /**

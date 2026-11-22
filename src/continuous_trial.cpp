@@ -245,7 +245,7 @@ const char *ContinuousTrialStatus(uint32_t id) {
 /**
  * @brief 在运动任务内构建正式路径并冻结本次速度/加速度配置；不等待行程完成。
  */
-bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async) {
+bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async,float startYOffset) {
     ConfigurationGuard guard;if(!guard.held)return false;
     if(!initialized||otaBusy()||taskMotionAborted)return false;
     // 预留共享规划/任务资源；上传和其他运动不能在构建过程中插入。
@@ -266,6 +266,7 @@ bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float fi
     Config cfg;cfg.count=count;cfg.policy=2;cfg.startHeading=heading; // 正式导航统一到节点停车转向，不使用漂移切弯。
     cfg.maxRpm=node_position::rpmFor(speedMmS,Y_PULSE);
     const uint32_t outerAccelLevel=NODE_PATH_OUTER_ACCEL_LEVEL;
+    const uint32_t middleAccelLevel=NODE_PATH_MIDDLE_ACCEL_LEVEL;
     formalSettings.accelMmS2=node_position::motionAccelerationFor(outerAccelLevel,Y_PULSE);
     // 共用规划器保留原速度表范围；正式直行使用上面的实际换算值。
     cfg.accel=fminf(formalSettings.accelMmS2,4000.0f);
@@ -274,7 +275,7 @@ bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float fi
     cfg.forwardPpm=Y_PULSE;cfg.lateralPpm=X_PULSE;
     formalSettings.speedMmS=speedMmS;
     formalSettings.middleSpeedMmS=NODE_PATH_MIDDLE_SPEED_MM_S;
-    formalSettings.middleAccelMmS2=NODE_PATH_MIDDLE_ACCEL_MM_S2;
+    formalSettings.middleAccelMmS2=node_position::motionAccelerationFor(middleAccelLevel,Y_PULSE);
     formalSettings.outerStraightVelocity=true;
     formalSettings.turnDegS=NODE_PATH_TURN_DEG_S;
     formalSettings.turnAccelDegS2=NODE_PATH_TURN_ACCEL_DEG_S2;
@@ -304,16 +305,17 @@ bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float fi
     Serial.printf("[Route] Transition window: disabled; separate heading correction deadband: %.2f deg\n",formalSettings.headingDeadbandDeg);
     Serial.printf("[Route] Profile: %.1f mm/s, %.1f mm/s2 (EMM V5 %lu), %.1f deg/s, %.1f deg/s2\n",
         formalSettings.speedMmS,formalSettings.accelMmS2,static_cast<unsigned long>(outerAccelLevel),formalSettings.turnDegS,formalSettings.turnAccelDegS2);
-    Serial.printf("[Route] Middle profile (7/11/12/13/17): %.1f mm/s, %.1f mm/s2\n",
-        formalSettings.middleSpeedMmS,formalSettings.middleAccelMmS2);
+    Serial.printf("[Route] Middle profile (7/11/12/13/17): %.1f mm/s, %.1f mm/s2 (EMM V5 %lu)\n",
+        formalSettings.middleSpeedMmS,formalSettings.middleAccelMmS2,static_cast<unsigned long>(middleAccelLevel));
     formalSettings.startOffset={};
+    formalSettings.startYOffset=startYOffset;
     if(scanPosePending&&path[0]==SCAN_AREA_NODE) {
         formalSettings.startOffset=Vec(currentPose.x,currentPose.y)-nodes[0].p;
         scanPosePending=false;
         Serial.printf("[Route] Scan start offset=(%.1f, %.1f) mm\n",
                       formalSettings.startOffset.x,formalSettings.startOffset.y);
     } else {
-        currentPose.x=nodes[0].p.x;currentPose.y=nodes[0].p.y;
+        currentPose.x=nodes[0].p.x;currentPose.y=nodes[0].p.y+startYOffset;
     }
     setAlignmentEnabled(false);
     portENTER_CRITICAL(&trialMux);

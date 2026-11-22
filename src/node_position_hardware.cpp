@@ -7,8 +7,13 @@
 #include "motion_executor.h"
 
 namespace {
+constexpr uint8_t DISC_FEEDBACK_ATTEMPTS=3;
+constexpr uint32_t DISC_FEEDBACK_TIMEOUT_MS=50;
+constexpr uint8_t DISC_RETURN_ACCEL_LEVEL=200;
 class Hardware : public node_position::IO {
     uint32_t version;bool (*cancel)();
+    uint8_t feedbackAttempts;
+    uint32_t feedbackTimeoutMs;
     bool warned=false,referenceLost=false;
     const char *motionSpan=nullptr;
     const char *reportedStage=nullptr;
@@ -17,7 +22,7 @@ class Hardware : public node_position::IO {
         EmmFeedbackParser parser;uint32_t start=millis();
         bool commandError=false;
         uint8_t received[64];size_t receivedSize=0;
-        while(millis()-start<25) {
+        while(millis()-start<feedbackTimeoutMs) {
             if(cancelled())return "STOPPED";
             while(Serial1.available()) {
                 const uint8_t byte=Serial1.read();
@@ -29,7 +34,7 @@ class Hardware : public node_position::IO {
                         for(uint8_t i=0;i<out.size;++i)Serial.printf("%s%02X",i?" ":"",out.data[i]);
                         Serial.println("");
                         // 通用错误帧不含原请求功能码，可能来自该地址之前的命令。
-                        // 保留错误记录，在原响应窗口内继续等匹配帧；不重发请求。
+                        // 在本次应答窗口内继续等匹配帧，再由调用方决定是否重试。
                         commandError=true;
                         continue;
                     }
@@ -42,7 +47,8 @@ class Hardware : public node_position::IO {
             vTaskDelay(pdMS_TO_TICKS(1));
         }
         if(fn==0x4A||fn==0x21||fn==0x42||fn==0x48) {
-            Serial.printf("[MotorBus] id=%u request=0x%02X timeout=25ms RX=",id,fn);
+            Serial.printf("[MotorBus] id=%u request=0x%02X timeout=%lums RX=",id,fn,
+                static_cast<unsigned long>(feedbackTimeoutMs));
             for(size_t i=0;i<receivedSize;++i)Serial.printf("%s%02X",i?" ":"",received[i]);
             if(!receivedSize)Serial.printf("<none>");
             Serial.println("");
@@ -50,8 +56,25 @@ class Hardware : public node_position::IO {
         return commandError?"MOTOR_COMMAND_ERROR":"MOTOR_FEEDBACK_TIMEOUT";
     }
     void drain(){for(int i=0;i<512&&Serial1.available();++i)Serial1.read();}
+    template<class Send>
+    const char *exchange(uint8_t id,uint8_t fn,EmmReply &out,Send send,bool retryUnassignedError=false) {
+        return RetryEmmFeedback(feedbackAttempts,[&]() -> const char * {
+            if(cancelled())return "STOPPED";
+            drain();
+            send();
+            Serial1.flush();
+            return reply(id,fn,out);
+        },retryUnassignedError);
+    }
+    const char *query(uint8_t id,uint8_t fn,EmmReply &out) {
+        return exchange(id,fn,out,[&] {
+            uint8_t cmd[]={id,fn,0x6B};
+            Serial1.write(cmd,sizeof(cmd));
+        },true);
+    }
 public:
-    Hardware(uint32_t v,bool (*c)()):version(v),cancel(c){}
+    Hardware(uint32_t v,bool (*c)(),uint8_t attempts=1,uint32_t timeoutMs=25)
+        :version(v),cancel(c),feedbackAttempts(attempts),feedbackTimeoutMs(timeoutMs){}
     void configure(uint32_t v,bool (*c)()){
         version=v;cancel=c;warned=referenceLost=false;motionSpan=nullptr;reportedStage=nullptr;
     }
@@ -74,9 +97,11 @@ public:
         MotorBusGuard transaction;
         const uint8_t commands[]={0x3A,0x36,0x35};
         for(uint8_t fn:commands) {
-            if(cancelled())return "STOPPED";
-            drain();uint8_t cmd[]={id,fn,0x6B};Serial1.write(cmd,3);Serial1.flush();
-            EmmReply out;const char *error=reply(id,fn,out);if(error)return error;
+            EmmReply out;
+            if(const char *error=query(id,fn,out)) {
+                if(feedbackAttempts>1)Serial.printf("[DiscReturn] feedback motor=%u function=0x%02X error=%s\n",id,fn,error);
+                return error;
+            }
             if(fn==0x3A)state.flags=out.data[2];
             else if(fn==0x36)state.position=EmmFeedbackParser::position(out);
             else state.rpm=EmmFeedbackParser::rpm(out);
@@ -93,9 +118,7 @@ public:
     }
     const char *readPosition(uint8_t id,int64_t &position)override {
         MotorBusGuard transaction;
-        if(cancelled())return "STOPPED";
-        drain();uint8_t cmd[]={id,0x36,0x6B};Serial1.write(cmd,3);Serial1.flush();
-        EmmReply out;const char *error=reply(id,0x36,out);
+        EmmReply out;const char *error=query(id,0x36,out);
         if(!error)position=EmmFeedbackParser::position(out);
         else Serial.printf("[MotorBus] position query TX=%02X 36 6B error=%s\n",id,error);
         return error;
@@ -177,11 +200,11 @@ public:
     }
     const char *target(uint8_t id,bool positive,uint16_t rpm,uint8_t acceleration,uint32_t pulses)override {
         MotorBusGuard transaction;
-        if(cancelled())return "STOPPED";
-        drain();
-        Emm_V5_Pos_Control(id,positive?1:0,rpm,acceleration,pulses,true,true);Serial1.flush();
-        // ACK已确认装载完成，不再每轮额外固定等待5ms。
-        EmmReply out;return reply(id,0xFD,out);
+        // 同步触发之前，重发同一个绝对目标只会重新装载指令。
+        EmmReply out;
+        return exchange(id,0xFD,out,[&] {
+            Emm_V5_Pos_Control(id,positive?1:0,rpm,acceleration,pulses,true,true);
+        });
     }
     const char *sync()override {
         if(cancelled())return "STOPPED";
@@ -348,15 +371,77 @@ const char *RunPositionNodeRoute(const continuous::Route &route,const node_posit
 }
 /**
  * @brief 回读四个底盘电机的编码器位置，数组顺序为电机1到4。
- * @return true 四轮读取成功；位置单位为65536/圈。
+ * @return nullptr 表示四轮读取成功；位置单位为65536/圈。
  */
-bool ReadChassisEncoderPositions(int64_t (&positions)[4]) {
-    Hardware io(0,nullptr);
+static const char *readChassisEncoderPositions(Hardware &io,int64_t (&positions)[4]) {
     for(uint8_t id=1;id<=4;++id) {
         const char *error=io.readPosition(id,positions[id-1]);
-        if(error){Serial.printf("[Scan] Encoder read failed: %s\n",error);return false;}
+        if(error)return error;
     }
-    return true;
+    return nullptr;
+}
+bool ReadChassisEncoderPositions(int64_t (&positions)[4]) {
+    Hardware io(0,nullptr);
+    const char *error=readChassisEncoderPositions(io,positions);
+    if(error)Serial.printf("[Chassis] Encoder read failed: %s\n",error);
+    return !error;
+}
+const char *RecordDiscEncoderPositions(int64_t (&positions)[4],bool (*cancelled)()) {
+    Hardware io(0,cancelled,DISC_FEEDBACK_ATTEMPTS,DISC_FEEDBACK_TIMEOUT_MS);
+    return readChassisEncoderPositions(io,positions);
+}
+const char *ReadDiscReturnMotorFeedback(uint8_t id,node_position::Motor &state,bool (*cancelled)()) {
+    Hardware io(0,cancelled,DISC_FEEDBACK_ATTEMPTS,DISC_FEEDBACK_TIMEOUT_MS);
+    return io.read(id,state);
+}
+static constexpr double discPulsesPerCount=double(node_position::PULSES_PER_REV)/65536;
+static const char *readDiscTravel(Hardware &io,const int64_t (&before)[4],float beforeHeading,
+    int64_t (&positions)[4],float &heading,float &yOffset) {
+    if(const char *error=readChassisEncoderPositions(io,positions))return error;
+    heading=beforeHeading;
+    uint32_t ageMs=0;
+    H30UsbGetHeading(heading,ageMs);
+    float travel[4];
+    for(uint8_t wheel=0;wheel<4;++wheel) {
+        const int sign=routeRunner.encoderToCommandSign(wheel);
+        travel[wheel]=(positions[wheel]-before[wheel])*sign*discPulsesPerCount;
+    }
+    yOffset=node_position::discYOffset(travel,X_PULSE,Y_PULSE,beforeHeading,heading);
+    return nullptr;
+}
+const char *ReadDiscYOffset(const int64_t (&before)[4],float beforeHeading,float &yOffset,bool (*cancelled)()) {
+    Hardware io(0,cancelled,DISC_FEEDBACK_ATTEMPTS,DISC_FEEDBACK_TIMEOUT_MS);
+    int64_t positions[4];
+    float heading;
+    return readDiscTravel(io,before,beforeHeading,positions,heading,yOffset);
+}
+const char *BeginDiscYReturn(const int64_t (&before)[4],float beforeHeading,uint16_t maximumRpm,
+    int64_t (&targets)[4],bool (&commanded)[4],bool (*cancelled)()) {
+    Hardware io(0,cancelled,DISC_FEEDBACK_ATTEMPTS,DISC_FEEDBACK_TIMEOUT_MS);
+    MotorBusGuard transaction;
+    int64_t positions[4],goals[4],correction[4],maximumTravel=0;
+    float heading,yOffset;
+    if(const char *error=readDiscTravel(io,before,beforeHeading,positions,heading,yOffset))return error;
+    node_position::discReturnWheelPulses(yOffset,X_PULSE,Y_PULSE,heading,correction);
+    for(uint8_t wheel=0;wheel<4;++wheel) {
+        const int sign=routeRunner.encoderToCommandSign(wheel);
+        goals[wheel]=llround(positions[wheel]*sign*discPulsesPerCount)+correction[wheel];
+        commanded[wheel]=correction[wheel]!=0;
+        targets[wheel]=commanded[wheel]?llround(goals[wheel]*sign/discPulsesPerCount):positions[wheel];
+        const int64_t wheelTravel=llabs(correction[wheel]);
+        if(wheelTravel>maximumTravel)maximumTravel=wheelTravel;
+    }
+    if(maximumTravel==0)return nullptr;
+    for(uint8_t wheel=0;wheel<4;++wheel) {
+        if(!commanded[wheel])continue;
+        const auto rpm=static_cast<uint16_t>(fmax(1.0,round(double(llabs(correction[wheel]))*maximumRpm/maximumTravel)));
+        const auto goal=goals[wheel];
+        if(const char *error=io.target(wheel+1,goal>=0,rpm,DISC_RETURN_ACCEL_LEVEL,llabs(goal))) {
+            Serial.printf("[DiscReturn] target motor=%u error=%s\n",wheel+1,error);
+            return error;
+        }
+    }
+    return io.sync();
 }
 /**
  * @brief 同步运行连续扫码底盘行程；成功返回 nullptr，结束行程(mm)写入 forwardTravel。
