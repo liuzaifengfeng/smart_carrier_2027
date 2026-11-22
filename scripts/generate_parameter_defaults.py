@@ -49,7 +49,7 @@ def supported_names():
     names.update("运动执行/" + field for field in
                  ("look末段提前量(mm)", "look2末段提前量(mm)", "机械臂反馈完成",
                   "反馈后夹持保持(ms)", "反馈后释放保持(ms)"))
-    names.add("圆环纠偏/连续达标帧数")
+    names.update("圆环纠偏/" + field for field in ("连续达标帧数", "X死区(px)", "Y死区(px)", "超时(ms)"))
     return names
 
 

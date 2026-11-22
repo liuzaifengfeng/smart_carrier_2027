@@ -34,7 +34,7 @@
           "integer": false
         },
         "搬运/待操作区/伸出(mm)": {
-          "value": 34,
+          "value": 36,
           "description": "三个小料盘共用的取放料伸出距离。",
           "minimum": 0,
           "maximum": 170,
@@ -76,14 +76,14 @@
           "integer": false
         },
         "搬运/工作区1/伸出(mm)": {
-          "value": 71.5,
+          "value": 70.5,
           "description": "工作区1：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区1/转台(deg)": {
-          "value": 49.7999992,
+          "value": 50.2000008,
           "description": "工作区1：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -97,14 +97,14 @@
           "integer": false
         },
         "搬运/工作区2/伸出(mm)": {
-          "value": 5.0,
+          "value": 7,
           "description": "工作区2：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区2/转台(deg)": {
-          "value": 85.0999985,
+          "value": 85.3000031,
           "description": "工作区2：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -118,7 +118,7 @@
           "integer": false
         },
         "搬运/工作区3/伸出(mm)": {
-          "value": 44.2000008,
+          "value": 43.5,
           "description": "工作区3：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
@@ -677,7 +677,7 @@
           "integer": false
         },
         "标定/旋转脉冲每度": {
-          "value": 49.353889,
+          "value": 49.3538895,
           "description": "旋转脉冲每度；用于运动指令换算，不是PID增益。",
           "minimum": 0.0010000000474974513,
           "maximum": 100000.0,
@@ -706,6 +706,27 @@
           "value": 2,
           "description": "连续多少个有效帧的 X、Y 都进入死区后才下放。任一轴越出死区则重新计数。",
           "minimum": 1,
+          "maximum": 16777216,
+          "integer": true
+        },
+        "圆环纠偏/X死区(px)": {
+          "value": 1.0,
+          "description": "X 偏差绝对值严格小于此值才达标。",
+          "minimum": 1.1754943508222875e-38,
+          "maximum": 3.4028234663852886e+38,
+          "integer": false
+        },
+        "圆环纠偏/Y死区(px)": {
+          "value": 1.0,
+          "description": "Y 偏差绝对值严格小于此值才达标。",
+          "minimum": 1.1754943508222875e-38,
+          "maximum": 3.4028234663852886e+38,
+          "integer": false
+        },
+        "圆环纠偏/超时(ms)": {
+          "value": 0,
+          "description": "从 RING_READY 开始计时。超时即下放，设为 0 关闭超时。",
+          "minimum": 0,
           "maximum": 16777216,
           "integer": true
         }

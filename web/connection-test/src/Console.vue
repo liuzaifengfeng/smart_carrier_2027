@@ -58,6 +58,7 @@ watch(connected, value => {
   if (!value) {
     model.cancel()
     model.parameters.value = []
+    model.directoryLoaded.value = false
     model.edits.value = {}
     preview.value = []
     map.value = emptyMapTelemetry()
@@ -169,7 +170,8 @@ function pickTarget(x: number, y: number) {
             </div>
             <p>前置动作闭爪并停在对应工位上方 10 mm。完整试放前，将车停在工作区并装好三个载物台。</p>
           </fieldset>
-          <RingVisionPanel v-show="page === '视觉'" :controller="controller" />
+          <RingVisionPanel v-show="page === '视觉' || page === '机械臂'"
+            :controller="controller" :model="model" :show-vision="page === '视觉'" />
           <CommandPanel :page="page" :controller="controller" />
           <div v-show="page === 'EMM 电机'"><MotorPanel :controller="controller" /></div>
           <div v-show="page === '旋转料盘'"><TrayPanel :controller="controller" /></div>

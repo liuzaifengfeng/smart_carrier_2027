@@ -343,7 +343,7 @@ int main(int argc,char **argv) {
         dispatch("{CMD,ARM,RING_DEMO}");
         assert(active&&captured.kind==MotionKind::DEMO_PLACE&&captured.ringCorrection);
         ring::Frame sample;
-        const uint32_t token=ring::input().ready(2);
+        const uint32_t token=ring::input().ready(2,ring::Deadzone{});
         bool stable=false;
         assert(token==1);
         Serial.text.clear();

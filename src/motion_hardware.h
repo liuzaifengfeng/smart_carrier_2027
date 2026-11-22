@@ -11,11 +11,10 @@ class MotionHardware : public motion::SequenceIO {
     bool (*cancel)()=nullptr;
     bool ringVisionActive=false, ringHasLastFrame=false;
     uint32_t ringLastFrameMs=0;
-    bool ringTurretPending=false,ringXQueued=false,ringStable=false;
-    ring::Frame ringXFrame;
-    uint32_t ringLastXFrameMs=0;
+    uint32_t ringStartedMs=0,ringTimeoutMs=0;
     float ringMinTurret=0,ringMaxTurret=0,ringMinLength=0,ringMaxLength=0;
     ring::Settings ringSettings;
+    ring::Deadzone ringDeadzone;
     ring::Pid ringX,ringY;
     const char *correctRing(const motion::Step &step,bool &done);
 public:

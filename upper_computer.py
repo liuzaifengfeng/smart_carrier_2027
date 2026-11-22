@@ -389,6 +389,8 @@ def build_parameter_test_command(action: str, stage: str, selected_name: str | N
         if not selected_name or selected_name not in values:
             raise ValueError("请先选中一个机械臂位置或夹爪角度参数")
         value = values[selected_name]
+        if selected_name in tuple(f"搬运/旋转料盘{i}/角度(deg)" for i in range(1, 4)):
+            return build_frame("CMD", "TRAY", "ROTATE", value, 0, 0)
         speed = values.get("搬运/速度", 150)
         if selected_name.startswith("搬运/") and selected_name.endswith("/高度(mm)"):
             return build_debug_command("MoveArm_1", [str(value), "-1", str(speed)])

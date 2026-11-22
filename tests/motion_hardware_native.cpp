@@ -11,8 +11,6 @@
 NativeSerial Serial;
 uint32_t clockMs=0;bool stop=false,servoAvailable=true;
 float turretMeasured=0,clawMeasured=0;
-uint8_t turretFlags=2;
-int16_t turretRpm=0;
 float trayMeasured=0,trayTarget=0;
 uint32_t trayInterval=0;
 uint16_t trayPower=0;
@@ -26,6 +24,7 @@ int issued=0;
 float issuedLength=-1;
 float issuedTurret=0;
 uint16_t issuedRamp=0;bool issuedSlowLower=false;
+uint16_t issuedTurretRpm=0;
 uint32_t millis(){return clockMs;}
 volatile bool taskMotionAborted=false;
 uint32_t ARM_FEEDBACK_ENABLED=0,ARM_GRIP_HOLD_MS=0,ARM_RELEASE_HOLD_MS=0;
@@ -35,7 +34,7 @@ CargoPlatform cargoPlatforms[3]={{MATERIAL_NONE},{MATERIAL_NONE},{MATERIAL_NONE}
 float cargoTrayAngles[3]={150,213,276};
 bool cancelled(){return stop;}
 bool MoveArm(float,float length,float turret,float,float,uint8_t ramp,bool slowLower){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
-bool MoveArmPlanned(float,float length,float turret,float,float,uint8_t ramp,bool slowLower){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;return true;}
+bool MoveArmPlanned(float,float length,float turret,float,float,uint8_t ramp,bool slowLower,uint16_t rpm){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;issuedTurretRpm=rpm;return true;}
 bool BeginPositionMove(float,float,float,float){++issued;return true;}
 void TickPositionMove(){}
 bool PositionMoveActive(){return false;}
@@ -51,10 +50,6 @@ void Servo_HoldPosition(uint8_t id){assert(id==SERVO_ID_CARGO_TRAY);trayHeld=tru
 void Emm_V5_En_Control_all(bool){++issued;}
 void MovePose(int,float,bool){++issued;}
 bool ReadArmTurretAngle(float &angle){angle=turretMeasured;return servoAvailable;}
-bool TurretMotorReadState(TurretMotorState &state){
-    state.angle=turretMeasured;state.flags=turretFlags;state.rpm=turretRpm;
-    return servoAvailable;
-}
 bool Servo_QueryAngleMTurn(uint8_t id,float &angle,uint32_t){
     angle=id==SERVO_ID_CARGO_TRAY?trayMeasured:id==2?turretMeasured:clawMeasured;return servoAvailable;
 }
@@ -181,6 +176,7 @@ void feedback() {
     clawMeasured=50;assert(!hardware.ready(s,done)&&done);
     s.turretAcceleration=TURRET_ACCELERATION_FAST;assert(!hardware.issue(s)&&issuedRamp==TURRET_ACCELERATION_FAST&&!issuedSlowLower);
     s.planned=true;s.turretAcceleration=TURRET_ACCELERATION_SLOW;s.slowLower=true;assert(!hardware.issue(s)&&issuedRamp==TURRET_ACCELERATION_SLOW&&issuedSlowLower);
+    assert(issuedTurretRpm==83);
     issued=0;
     stop=true;assert(hardware.issue(s)&&!issued);
     stop=false;s.kind=motion::StepKind::COMMIT;s.cargo=1;s.color=6;
@@ -256,35 +252,35 @@ void ringCorrection() {
     frame.x=1;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==2);
-    assert(issuedRamp==200);
+    assert(issuedRamp==200&&issuedTurretRpm==10);
     frame.x=0;
     frame.y=-4;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==3&&issuedTurret==-1);
-    assert(fabsf(issuedLength-71.3f)<0.002f);
+    assert(fabsf(issuedLength-71.368f)<0.002f);
     frame.y=4;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==4&&issuedTurret==-1);
-    assert(fabsf(issuedLength-71.7f)<0.002f);
+    assert(fabsf(issuedLength-71.632f)<0.002f);
     frame.x=4;
     frame.y=0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==5&&issuedLength==-1);
-    assert(fabsf(issuedTurret-85.76f)<0.001f);
+    assert(fabsf(issuedTurret-85.8292f)<0.001f);
     frame.x=-4;
     frame.y=-0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==6&&issuedLength==-1);
-    assert(fabsf(issuedTurret-86.24f)<0.001f);
+    assert(fabsf(issuedTurret-86.1708f)<0.001f);
     frame.y=4;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==7);
-    assert(fabsf(issuedTurret-86.24f)<0.001f&&fabsf(issuedLength-71.7f)<0.002f);
+    assert(fabsf(issuedTurret-86.1708f)<0.001f&&fabsf(issuedLength-71.632f)<0.002f);
     frame.x=0.5f;
     frame.y=-0.5f;
-    assert(ring::withinDeadzone(frame));
+    assert(ring::withinDeadzone(frame,ring::configuredDeadzone()));
     frame.y=-1;
-    assert(!ring::withinDeadzone(frame));
+    assert(!ring::withinDeadzone(frame,ring::configuredDeadzone()));
     frame.y=-0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==7);
@@ -296,18 +292,14 @@ void ringCorrection() {
     assert(ring::input().submit(1,frame));
     frame.x=6;
     assert(ring::input().submit(1,frame));
-    assert(!hardware.ready(correct,done)&&!done&&issued==8);
-    frame.x=0;
-    assert(ring::input().submit(1,frame));
-    assert(ring::input().submit(1,frame));
-    assert(!hardware.ready(correct,done)&&done&&issued==8);
+    assert(!hardware.ready(correct,done)&&done&&issued==7);
     assert(Serial.text.find("{EVT,VISION,STOP_REQUEST,RING_CORRECTION}")!=std::string::npos);
     assert(!ring::input().submit(1,frame));
 
     assert(!hardware.issue(hover));
     assert(!hardware.issue(correct));
-    frame.x=-200;
-    frame.y=500;
+    frame.x=-300;
+    frame.y=700;
     assert(ring::input().submit(2,frame));
     assert(!hardware.ready(correct,done)&&!done);
     assert(issuedTurret>95.9f&&issuedTurret<=96);
@@ -320,8 +312,8 @@ void ringCorrection() {
     assert(!hardware.ready(correct,done)&&!done);
     assert(issuedTurret==upperTurret&&issuedLength==upperLength);
 
-    frame.x=300;
-    frame.y=-700;
+    frame.x=400;
+    frame.y=-1000;
     assert(ring::input().submit(2,frame));
     assert(!hardware.ready(correct,done)&&!done);
     assert(issuedTurret>=76&&issuedTurret<76.1f);
@@ -346,39 +338,40 @@ void ringCorrection() {
     assert(!hardware.ready(correct,done)&&done);
     ring::requiredStableFrames()=2;
 
+    auto &deadzone=ring::configuredDeadzone();
+    deadzone.x=2;
+    deadzone.y=0.5f;
     turretMeasured=86;
     customPosition=llround(-71.5*LENGTH_PULSE*65536/3200);
-    assert(!hardware.issue(hover));
-    assert(!hardware.issue(correct));
-    frame.x=4;
+    assert(!hardware.issue(hover)&&!hardware.issue(correct));
+    frame.x=1.5f;
+    frame.y=0.5f;
     assert(ring::input().submit(4,frame));
-    assert(!hardware.ready(correct,done)&&!done&&fabsf(issuedTurret-85.76f)<0.001f);
-    int commands=issued;
+    assert(!hardware.ready(correct,done)&&!done&&issuedTurret==-1&&issuedLength>71.5f);
+    frame.x=2;
+    frame.y=0.4f;
+    assert(ring::input().submit(4,frame));
+    assert(!hardware.ready(correct,done)&&!done&&issuedTurret<86&&issuedLength==-1);
+    frame.x=1.5f;
+    assert(ring::input().submit(4,frame));
+    assert(ring::input().submit(4,frame));
+    assert(!hardware.ready(correct,done)&&done);
+    deadzone=ring::Deadzone{};
 
-    turretFlags=0;
-    frame.x=10;
-    frame.y=4;
-    assert(ring::input().submit(4,frame));
-    assert(!hardware.ready(correct,done)&&!done&&issued==++commands);
-    assert(issuedTurret==-1&&fabsf(issuedLength-71.7f)<0.002f);
-    frame.x=-8;
-    frame.y=0;
-    assert(ring::input().submit(4,frame));
-    assert(!hardware.ready(correct,done)&&!done&&issued==commands);
-    turretFlags=2;
-    turretRpm=1;
-    assert(!hardware.ready(correct,done)&&!done&&issued==commands);
-    turretRpm=0;
-    assert(!hardware.ready(correct,done)&&!done&&issued==++commands);
-    assert(fabsf(issuedTurret-86.48f)<0.001f);
+    ring::configuredTimeoutMs()=100;
+    clockMs=UINT32_MAX-40;
+    assert(!hardware.issue(hover)&&!hardware.issue(correct));
+    clockMs+=99;
+    assert(!hardware.ready(correct,done)&&!done);
+    ++clockMs;
+    assert(!hardware.ready(correct,done)&&done);
+    assert(Serial.text.find("{EVT,VISION,RING_TIMEOUT,100}\n{EVT,VISION,STOP_REQUEST,RING_CORRECTION}\n")!=std::string::npos);
 
-    turretFlags=0;
-    frame.x=0;
-    assert(ring::input().submit(4,frame));
-    assert(ring::input().submit(4,frame));
-    assert(!hardware.ready(correct,done)&&!done&&issued==commands);
-    turretFlags=2;
-    assert(!hardware.ready(correct,done)&&done&&issued==commands);
+    ring::configuredTimeoutMs()=0;
+    assert(!hardware.issue(hover)&&!hardware.issue(correct));
+    clockMs+=10000;
+    assert(!hardware.ready(correct,done)&&!done);
+    hardware.stopRingVision();
 }
 int main(int argc,char **argv) {
     if(argc==2&&!strcmp(argv[1],"ring")){ringCorrection();return 0;}

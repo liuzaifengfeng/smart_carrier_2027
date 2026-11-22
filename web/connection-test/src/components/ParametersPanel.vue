@@ -25,6 +25,7 @@ async function filterStage() {
   } catch (error) { note.value = String(error) }
 }
 async function test() {
+  note.value = ''
   try {
     const py = await python()
     py.globals.set('test_data', JSON.stringify({ action: testAction.value, stage: stage.value,
@@ -112,8 +113,8 @@ function trial() {
   </template>
   <template v-else>
     <label>比赛阶段<select v-model="stage" @change="filterStage"><option v-for="name in stageNames" :key="name">{{ name }}</option></select></label>
-    <label>导入 JSON<input type="file" accept=".json" :disabled="!model.parameters.value.length || model.busy.value" @change="importFile"></label>
-    <button :disabled="!model.parameters.value.length" @click="exportConfig">导出烧录默认参数 JSON</button>
+    <label>导入 JSON<input type="file" accept=".json" :disabled="!model.directoryLoaded.value || model.busy.value" @change="importFile"></label>
+    <button :disabled="!model.directoryLoaded.value" @click="exportConfig">导出烧录默认参数 JSON</button>
     <button :disabled="!controller.canControl.value || model.busy.value || !model.parameters.value.length" @click="model.write(() => controller.send('{CMD,SYS,RELEASE}'))">发送并进入主流程</button>
     <fieldset><legend>当前阶段试动作</legend>
       <label>试动作<select v-model="testAction"><option v-for="name in ['试选中机械臂轴','圆盘抓取一件','三件放到工作区','三件码垛第二层','三件从工作区取回','开启视觉定位','底盘小距离移动','开局机械臂姿态']" :key="name">{{ name }}</option></select></label>

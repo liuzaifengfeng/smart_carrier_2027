@@ -149,7 +149,9 @@ bool ReadArmTurretAngle(float &angle);
  * @param turretAcceleration 张大头原生加速度档位（0~255）。
  * @return true 指令下发成功，不表示实测到位。
  */
-bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed, uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, bool slowLower=false);
+bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed,
+    uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, bool slowLower=false,
+    uint16_t turretRpm=TURRET_MOTOR_POSITION_RPM);
 
 /**
  * @brief 按0~24节点导航：全部路段位置模式，到节点停车转向，不漂移切弯。

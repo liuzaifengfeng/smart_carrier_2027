@@ -82,8 +82,8 @@ static bool moveProfile(float angle,uint16_t rpm,uint8_t acceleration,uint32_t p
     return true;
 }
 
-bool TurretMotorMove(float angle,uint8_t acceleration) {
-    return moveProfile(angle,motorRpm(TURRET_MOTOR_SPEED_DEG_S),acceleration,50,0);
+bool TurretMotorMove(float angle,uint8_t acceleration,uint16_t rpm) {
+    return moveProfile(angle,rpm,acceleration,50,0);
 }
 
 bool TurretMotorTrial(float angle,float speedDegS,uint16_t rampMs,uint32_t periodMs,uint32_t durationMs) {

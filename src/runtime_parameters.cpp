@@ -174,6 +174,9 @@ void initialize() {
     RegisterRuntimeFloat("搬运/载物台/夹爪张开(deg)", materialTransferLayout.cargoClawOpenAngle, -360, 360);
     // CFG 以 float 暂存参数，2^24 是可逐个精确表示的整数上界。
     RegisterRuntimeUInt("圆环纠偏/连续达标帧数",ring::requiredStableFrames(),1,16777216);
+    RegisterRuntimeFloat("圆环纠偏/X死区(px)",ring::configuredDeadzone().x,FLT_MIN,FLT_MAX);
+    RegisterRuntimeFloat("圆环纠偏/Y死区(px)",ring::configuredDeadzone().y,FLT_MIN,FLT_MAX);
+    RegisterRuntimeUInt("圆环纠偏/超时(ms)",ring::configuredTimeoutMs(),0,16777216);
 }
 
 bool parseUnsigned(const char *text, uint32_t &value) {
@@ -260,7 +263,7 @@ bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writab
         reply(action, 0, "ERR", "FORMAT");
         return true;
     }
-    const bool correctSize = (strcmp(action, "GET") == 0 && size == 2)
+    const bool correctSize = (strcmp(action, "GET") == 0 && (size == 2 || size == 3))
         || (strcmp(action, "BEGIN") == 0 && size == 2)
         || (strcmp(action, "SET") == 0 && size == 4)
         || (strcmp(action, "COMMIT") == 0 && size == 2);
@@ -269,9 +272,26 @@ bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writab
         return true;
     }
     if (registrationFailed) { reply(action, id, "ERR", "REGISTRY"); return true; }
-    if (strcmp(fields[0], "GET") == 0 && size == 2) {
+    if (strcmp(action, "GET") == 0) {
         transaction = false;
-        for (size_t i = 0; i < count; ++i) {
+        size_t first = 0, end = count;
+        if (size == 3) {
+            uint32_t index = 0;
+            if (parseUnsigned(fields[2], index)) {
+                first = index;
+            } else {
+                const void *address = nullptr;
+                if (strcmp(fields[2], "RING_X") == 0) address = &ring::configuredDeadzone().x;
+                if (strcmp(fields[2], "RING_Y") == 0) address = &ring::configuredDeadzone().y;
+                if (strcmp(fields[2], "RING_TIMEOUT") == 0) address = &ring::configuredTimeoutMs();
+                first = 0;
+                while (address && first < count && parameters[first].address != address) ++first;
+                if (!address) first = count;
+            }
+            if (first >= count) { reply(action, id, "ERR", "RANGE"); return true; }
+            end = first + 1;
+        }
+        for (size_t i = first; i < end; ++i) {
             const Parameter &p = parameters[i];
             // 参数值保持便于阅读的9位精度；范围使用足够精度，避免上位机导出时
             // 将 FLT_MAX 舍入成略大的数。uint32上限在float表中会舍入到2^32，回传时恢复准确边界。
@@ -285,7 +305,7 @@ bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writab
             Serial.flush();
             delay(2);
         }
-        Serial.printf("{RSP,CFG,GET,END,%lu,%u}\n", static_cast<unsigned long>(id), static_cast<unsigned>(count));
+        Serial.printf("{RSP,CFG,GET,END,%lu,%u}\n", static_cast<unsigned long>(id), static_cast<unsigned>(end-first));
         return true;
     }
     if (!writable) {

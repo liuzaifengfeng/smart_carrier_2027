@@ -49,7 +49,7 @@ class ConfigTests(unittest.TestCase):
                     entry['minimum'], entry['maximum'], entry['integer'])
 
     def test_defaults_and_name_mapping(self):
-        self.assertEqual(len(self.parameters), 102)
+        self.assertEqual(len(self.parameters), 105)
         ring = self.data['groups']['圆环纠偏']['parameters']['圆环纠偏/连续达标帧数']
         self.assertEqual((ring['value'], ring['minimum'], ring['integer']), (2, 1, True))
         self.assertEqual(config_edits(self.data, self.parameters), {})
@@ -69,7 +69,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(saved['groups']['PID']['parameters'][name]['value'], 0.025)
             self.assertEqual(saved['groups']['PID']['parameters']['PID/视觉X/Kp']['value'], shared)
             self.assertEqual(config_edits(saved, self.parameters), {p.index: '0.025'})
-            self.assertEqual(generate(source, header), 102)
+            self.assertEqual(generate(source, header), 105)
             self.assertIn(f'"{name}", 0.025', header.read_text(encoding='utf-8'))
 
     def test_map_coordinates_stay_out_of_json_defaults(self):
@@ -83,7 +83,7 @@ class ConfigTests(unittest.TestCase):
             source, header = folder/'settings.json', folder/'defaults.h'
             export_config(source, self.parameters, {999: '999'})
             self.assertNotIn('地图', load_config(source)['groups'])
-            self.assertEqual(generate(source, header), 102)
+            self.assertEqual(generate(source, header), 105)
             self.assertNotIn('地图/', header.read_text(encoding='utf-8'))
 
     def test_node_acceleration_exports_and_compiles_as_default(self):
@@ -94,7 +94,7 @@ class ConfigTests(unittest.TestCase):
             export_config(source, self.parameters, {p.index: '225'})
             saved = load_config(source)
             self.assertEqual(saved['groups']['底盘']['parameters'][name]['value'], 225)
-            self.assertEqual(generate(source, header), 102)
+            self.assertEqual(generate(source, header), 105)
             self.assertIn(f'"{name}", 225', header.read_text(encoding='utf-8'))
 
     def test_legacy_outer_acceleration_uses_saved_wheel_calibration(self):
@@ -126,7 +126,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(parameters[names[1]]['value'], 800)
             self.assertEqual(parameters['底盘/节点导航速度(mm/s)']['value'], 3000)
             self.assertEqual(parameters['底盘/节点导航外圈加速度档位(EMM V5)']['value'], 200)
-            self.assertEqual(generate(source, header), 102)
+            self.assertEqual(generate(source, header), 105)
             for name, value in zip(names, ('1200', '800')):
                 self.assertIn(f'"{name}", {value}', header.read_text(encoding='utf-8'))
 
@@ -165,7 +165,7 @@ class ConfigTests(unittest.TestCase):
             source, header = folder / 'robot.json', folder / 'generated.h'
             entry['value'] = 1500
             source.write_text(json.dumps(self.data, ensure_ascii=False), encoding='utf-8')
-            self.assertEqual(generate(source, header), 102)
+            self.assertEqual(generate(source, header), 105)
             self.assertIn('"搬运/等待时间(ms)", 1500', header.read_text(encoding='utf-8'))
             entry['value'] = 60001
             source.write_text(json.dumps(self.data, ensure_ascii=False), encoding='utf-8')

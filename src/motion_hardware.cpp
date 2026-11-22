@@ -78,10 +78,12 @@ const char *MotionHardware::issue(const Step &s) {
         ringX=ring::Pid{};
         ringY=ring::Pid{};
         ringHasLastFrame=false;
-        ringTurretPending=ringXQueued=ringStable=false;
         ringSettings=ring::input().settings();
+        ringDeadzone=ring::configuredDeadzone();
+        ringTimeoutMs=ring::configuredTimeoutMs();
+        ringStartedMs=now();
         Serial.printf("{EVT,VISION,RING_READY,%lu}\n",
-            static_cast<unsigned long>(ring::input().ready(ring::requiredStableFrames())));
+            static_cast<unsigned long>(ring::input().ready(ring::requiredStableFrames(),ringDeadzone)));
         return nullptr;
     }
     case StepKind::POSITION: return BeginPositionMove(s.high,s.length,s.turret,s.speed)?nullptr:"EXECUTION";
@@ -120,43 +122,41 @@ bool MotionHardware::feedback(const Step &s) {
 
 const char *MotionHardware::correctRing(const Step &s,bool &done) {
     ring::Frame frame;
-    float targetLength=-1;
-    if(ring::input().take(frame,ringStable)) {
-        ringXQueued=!ring::withinDeadzone(frame.x);
-        if(ringXQueued)ringXFrame=frame;
-        else ringX=ring::Pid{};
-        const float dt=ringHasLastFrame?(frame.timeMs-ringLastFrameMs)*0.001f:0.0f;
-        ringHasLastFrame=true;
-        ringLastFrameMs=frame.timeMs;
-        if(ring::withinDeadzone(frame.y))ringY=ring::Pid{};
-        else {
-            float length=0;
-            if(const char *error=readExtension(length))return error;
-            targetLength=fmaxf(ringMinLength,fminf(ringMaxLength,length+ringY.update(frame.y,dt,ringSettings.extension)));
-        }
-    }
-    TurretMotorState turret;
-    if(ringTurretPending||ringXQueued) {
-        if(!TurretMotorReadState(turret))return "MOTOR_READ";
-        if((turret.flags&2)&&turret.rpm==0)ringTurretPending=false;
-    }
-    if(ringStable&&!ringTurretPending) {
-        stopRingVision();
+    const bool received=ring::input().take(frame,done);
+    if(!done&&ringTimeoutMs&&now()-ringStartedMs>=ringTimeoutMs) {
+        Serial.printf("{EVT,VISION,RING_TIMEOUT,%lu}\n",static_cast<unsigned long>(ringTimeoutMs));
         done=true;
+    }
+    if(done) {
+        stopRingVision();
         return nullptr;
     }
-    if(ringXQueued&&!ringTurretPending) {
-        const float dt=ringX.hasPrevious?(ringXFrame.timeMs-ringLastXFrameMs)*0.001f:0.0f;
-        ringLastXFrameMs=ringXFrame.timeMs;
-        const float angle=turret.angle-ringX.update(ringXFrame.x,dt,ringSettings.turret);
-        const float targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,angle));
-        if(!MoveArmPlanned(-1,targetLength,targetTurret,-1,s.speed,ring::TURRET_CORRECTION_ACCELERATION))return "EXECUTION";
-        ringTurretPending=true;
-        ringXQueued=false;
+    if(!received)return nullptr;
+    if(ring::withinDeadzone(frame,ringDeadzone)) {
+        ringX=ring::Pid{};
+        ringY=ring::Pid{};
         return nullptr;
     }
-    if(targetLength!=-1&&!MoveArm(-1,targetLength,-1,-1,s.speed,TURRET_ACCELERATION_SLOW))return "EXECUTION";
-    return nullptr;
+    const float dt=ringHasLastFrame?(frame.timeMs-ringLastFrameMs)*0.001f:0.0f;
+    ringHasLastFrame=true;
+    ringLastFrameMs=frame.timeMs;
+    float targetLength=-1;
+    if(ring::withinDeadzone(frame.y,ringDeadzone.y))ringY=ring::Pid{};
+    else {
+        float length=0;
+        if(const char *error=readExtension(length))return error;
+        targetLength=fmaxf(ringMinLength,fminf(ringMaxLength,length+ringY.update(frame.y,dt,ringSettings.extension)));
+    }
+    if(ring::withinDeadzone(frame.x,ringDeadzone.x)) {
+        ringX=ring::Pid{};
+        return MoveArm(-1,targetLength,-1,-1,s.speed,TURRET_ACCELERATION_SLOW)?nullptr:"EXECUTION";
+    }
+    float turret=0;
+    if(!ReadArmTurretAngle(turret))return "MOTOR_READ";
+    const float angle=turret-ringX.update(frame.x,dt,ringSettings.turret);
+    const float targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,angle));
+    return MoveArmPlanned(-1,targetLength,targetTurret,-1,s.speed,
+        ring::TURRET_CORRECTION_ACCELERATION,false,ring::TURRET_CORRECTION_RPM)?nullptr:"EXECUTION";
 }
 /**
  * @brief 检查位置移动、转台或机械臂实测到位条件，并通过 done 返回本次结果。

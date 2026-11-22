@@ -20,6 +20,7 @@ struct Step {
     bool planned=false;
     bool turretArrival=false; // 独立转向步骤由转盘电机实测多圈角度决定完成。
     bool lengthArrival=false; // 装盘转向时同时检查伸缩轴到位。
+    bool cargoPlaceTurn=false; // 持料转向料盘使用独立的加速度配置。
     bool workPlaceLiftArrival=false; // 工位放料后抬升：实测高度误差小于10mm即继续。
     bool liftArrival=false; // 初始化抬升实测到位后，才允许后续转盘动作。
     bool timed=false; // 此步按waitMs计时，即使开启机械臂反馈模式也不改为等待到位。

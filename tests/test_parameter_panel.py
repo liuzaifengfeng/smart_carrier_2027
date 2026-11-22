@@ -12,6 +12,12 @@ from action_group_config import (DELAY_NAMES, DELAY_PREFIX, TRANSFER_GROUPS, FOR
 
 
 class ValidationTests(unittest.TestCase):
+    def test_tray_parameter_trial_uses_the_edited_absolute_angle(self):
+        for position in range(1, 4):
+            name = f"搬运/旋转料盘{position}/角度(deg)"
+            self.assertEqual(build_parameter_test_command("试选中机械臂轴", "全部参数",
+                name, {name: 215.5}), "{CMD,TRAY,ROTATE,215.5,0,0}")
+
     def test_stage_action_uses_tuned_value(self):
         values = {"搬运/圆盘/高度(mm)": 145, "搬运/速度": 250}
         self.assertEqual(build_parameter_test_command("试选中机械臂轴", "圆盘抓取（两轮）",

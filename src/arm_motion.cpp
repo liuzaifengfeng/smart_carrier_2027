@@ -72,7 +72,7 @@ void place(Program &p,const MaterialStationPose &pose,float height,const Materia
     if(retracted) {
         wait(p,"PLACE_TRANSLATE_WAIT",d.placeAbove.translateMs);wait(p,"PLACE_SETTLE",d.placeAbove.settleMs);
         rotateArm(p,"PLACE_ROTATE",-1,destinationCargo?pose.length:-1,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,angle);
-        if(destinationCargo)p.steps[p.count-1].turretAcceleration=TURRET_ACCELERATION_CARGO_PLACE;
+        p.steps[p.count-1].cargoPlaceTurn=destinationCargo!=0;
         p.steps[p.count-1].lengthArrival=destinationCargo!=0;
         p.steps[p.count-1].trayClearanceCargo=sourceCargo;
         p.steps[p.count-1].trayClearanceWorkPosition=workPosition;
@@ -291,8 +291,8 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
     }
     for(size_t i=0;i<p.count;++i) {
         auto &step=p.steps[i];
-        if(step.kind==StepKind::ARM&&step.turretAcceleration!=TURRET_ACCELERATION_CARGO_PLACE)
-            step.turretAcceleration=turretAcceleration;
+        if(step.kind==StepKind::ARM)
+            step.turretAcceleration=step.cargoPlaceTurn?TURRET_ACCELERATION_CARGO_PLACE:turretAcceleration;
     }
     return nullptr;
 }

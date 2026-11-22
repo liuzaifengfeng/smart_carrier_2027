@@ -187,7 +187,7 @@ ESP32  {EVT,VISION,STOP_REQUEST,CORNER}
 
 ### 圆环纠偏调试
 
-Web 上位机「机械臂」页提供工位 1、2、3 的前置按钮，以及独立的「三件圆环纠偏放料」。前置动作闭爪并到达对应工位的升降轴 10 mm 预放位。三件试放由载物台 1、2、3 顺序取料，分别放到工位 1、2、3。粗加工区与暂存区共用工位标定，2 号工位的默认伸出量为 5 mm。调试员需将小车停在目标区域并装好载物台。正式任务不启动圆环视觉闭环。
+Web 上位机「机械臂」页提供工位 1、2、3 的前置按钮，以及独立的「三件圆环纠偏放料」。前置动作闭爪并到达对应工位的升降轴 10 mm 预放位。三件试放由载物台 1、2、3 顺序取料，分别放到工位 1、2、3。粗加工区与暂存区共用工位标定，2 号工位的默认伸出量为 7 mm。调试员需将小车停在目标区域并装好载物台。正式任务不启动圆环视觉闭环。
 
 | 方向 | 报文 | 含义 |
 | --- | --- | --- |
@@ -198,16 +198,18 @@ Web 上位机「机械臂」页提供工位 1、2、3 的前置按钮，以及�
 | ESP32 → 机载电脑 | `{EVT,VISION,RING_READY,token}` | 升降反馈确认 10 mm 且伸缩到位，读取本件的转台和伸缩基准位置，再开始接收纠偏帧。每件生成一个新的无符号十进制令牌 |
 | 机载电脑 → ESP32 | `{CMD,VISION,RING_OFFSET,token,x,y}` | 原样回传本件令牌，`x,y` 为有限的有符号像素偏差。只上报 READY 之后采集的图像 |
 | ESP32 → 机载电脑 / 上位机日志 | `{EVT,VISION,RING_OFFSET,token,x,y,status}` | 主控逐帧回显原始字段。`ACCEPTED` 表示令牌和当前会话匹配，`IGNORED` 表示尚未 READY、会话已结束或令牌不匹配。机载端无需回复回显 |
-| ESP32 → 机载电脑 | `{EVT,VISION,STOP_REQUEST,RING_CORRECTION}` | 视觉连续达到设定帧数，且上一条转台指令到位后发送。每个达标帧都须满足 `abs(x) < 1` 和 `abs(y) < 1`。随后按原低速下放、松爪、抬升。已开启视觉的试放被取消或执行失败时也发送 |
+| ESP32 → 机载电脑 | `{EVT,VISION,STOP_REQUEST,RING_CORRECTION}` | 连续达标或到达设定超时后发送，随后按原低速下放、松爪、抬升。已开启视觉的试放被取消或执行失败时也发送 |
+| ESP32 → 上位机日志 | `{EVT,VISION,RING_TIMEOUT,timeout_ms}` | 因超时放行时，在 STOP_REQUEST 前记录本次设定的超时毫秒数 |
 
-三个工位逐件重复 TARGET → START → READY → OFFSET → STOP。等待有效帧或偏差未进入死区时，主控保持 10 mm 高度，使用 `{CMD,NAV,STOP}` 可以取消。在 Debug 空闲时，上位机「视觉」页选择圆环号后发送 `{CMD,VISION,START_REQUEST,RING_CORRECTION,position}`。主控回复 `{RSP,VISION,START_REQUEST,ACK,RING_CORRECTION,position}`，然后依次发 TARGET 和 START。停止命令为 `{CMD,VISION,STOP_REQUEST,RING_CORRECTION}`，回复 `{RSP,VISION,STOP_REQUEST,ACK,RING_CORRECTION}` 后发 STOP。手动启停仅检查相机链路，没有 READY，反馈不会驱动机械臂。缺少圆环号回复 `ERR,FORMAT`，编号超出 1～3 回复 `ERR,RANGE`。试放中手动视觉启停回 `ERR,BUSY`。
+三个工位逐件重复 TARGET → START → READY → OFFSET → STOP。达标或超时之前，主控保持 10 mm 高度，使用 `{CMD,NAV,STOP}` 可以取消。在 Debug 空闲时，上位机「视觉」页选择圆环号后发送 `{CMD,VISION,START_REQUEST,RING_CORRECTION,position}`。主控回复 `{RSP,VISION,START_REQUEST,ACK,RING_CORRECTION,position}`，然后依次发 TARGET 和 START。停止命令为 `{CMD,VISION,STOP_REQUEST,RING_CORRECTION}`，回复 `{RSP,VISION,STOP_REQUEST,ACK,RING_CORRECTION}` 后发 STOP。手动启停仅检查相机链路，没有 READY，反馈不会驱动机械臂。缺少圆环号回复 `ERR,FORMAT`，编号超出 1～3 回复 `ERR,RANGE`。试放中手动视觉启停回 `ERR,BUSY`。
 
 「视觉」页可读取 `{CMD,VISION,RING_AXIS_PID_GET}`，或写入 `{CMD,VISION,RING_AXIS_PID_SET,x_kp,x_ki,x_kd,y_kp,y_ki,y_kd}`。成功时回复 `{RSP,VISION,RING_AXIS_PID_GET,OK,x_kp,x_ki,x_kd,y_kp,y_ki,y_kd}` 或同字段的 `RING_AXIS_PID_SET`。写入只在 Debug 空闲时接受，参数在 RAM 生效。格式、数值、模式和运动占用错误沿用 `FORMAT`、`RANGE`、`MODE`、`BUSY`。调参需要使用新版网页和固件。
 
-- X 像素偏差直接输入转台 PID，输出为角度修正（°）。从实测转台角度减去修正量，再以张大头加速度档位 200 发令。默认增益为 `0.06,0,0`，X 为正时减小角度，为负时增大角度。
-- Y 像素偏差直接输入伸缩 PID，输出为位移修正（mm），叠加到实测伸出量上。默认增益为 `0.05,0,0`，Y 为正时伸出，为负时缩回。两轴均使用张大头绝对位置模式执行。
-- 两轴分别计算积分与微分。某轴误差绝对值小于 1 px 时，本帧跳过该轴发令并清除其 PID 历史。转台上一条指令到位且实测电机转速为零后，才用最新的 X 帧计算下一条。等待期间伸缩轴仍按 Y 独立纠偏。
-- 默认连续两帧双轴都进死区且上一条转台指令到位后才放料。任一轴越出死区则重新计数。可在 Web 上位机「参数 → 圆环纠偏/连续达标帧数」调整正整数，下次开始纠偏时取值。计数按当前令牌的接收顺序更新。
+- X 像素偏差直接输入转台 PID，输出为角度修正（°）。从实测转台角度减去修正量，再以 10 RPM 和张大头加速度档位 200 发令。默认增益为 `0.0427,0.01,0`，X 为正时减小角度，为负时增大角度。
+- Y 像素偏差直接输入伸缩 PID，输出为位移修正（mm），叠加到实测伸出量上。默认增益为 `0.033,0.007,0`，Y 为正时伸出，为负时缩回。两轴均使用张大头绝对位置模式执行。
+- 两轴分别计算积分与微分。某轴偏差绝对值严格小于该轴死区时，本帧跳过该轴发令并清除其 PID 历史。两轴死区默认均为 1 px，可在 Web 上位机「机械臂 → 圆环纠偏调参」或「参数」页分别调整 `圆环纠偏/X死区(px)` 和 `圆环纠偏/Y死区(px)`。写入正数，下次开始纠偏时取值。
+- 默认连续两帧双轴都进死区后放料。每帧的两轴偏差绝对值均须严格小于各自的死区，达标前任一轴越出死区则重新计数。可在 Web 上位机「参数 → 圆环纠偏/连续达标帧数」调整正整数，下次开始纠偏时取值。计数按当前令牌的接收顺序更新。
+- `圆环纠偏/超时(ms)` 可在「机械臂 → 圆环纠偏调参」或「参数」页修改，默认 0 表示无超时。每件从主控发出 RING_READY 时开始计时。设为正数时，到达设定毫秒数即停止视觉并下放，包含未收到首帧的情况。机械臂页用 `{CMD,CFG,GET,id,RING_TIMEOUT}` 单独读取。
 - 每件纠偏过程中，转台目标限制在本件预放位实测角度的 ±10°，伸缩目标限制在本件预放位实测伸出量的 ±20 mm，同时受现有伸缩行程和转台线缆范围限制。驱动器的脉冲取整余量朝限位内侧预留。连续帧使用同一基准。达到限位后仍按视觉死区判定是否放料。
 
 一件工位放料的串口示例
@@ -276,12 +278,15 @@ CFG 参数只在 RAM 中生效，重启恢复默认值。读取须停止视觉�
 | 旧帧 | v2 帧 |
 |---|---|
 | `{CFG:GET,id}` | `{CMD,CFG,GET,id}` |
+| 无 | `{CMD,CFG,GET,id,index}` 或 `{CMD,CFG,GET,id,RING_X}` / `RING_Y` / `RING_TIMEOUT` |
 | `{CFG:VALUE,id,index,name,value,min,max,int}` | `{RSP,CFG,GET,VALUE,id,index,name,value,min,max,int}` |
 | `{CFG:END,id,count}` | `{RSP,CFG,GET,END,id,count}` |
 | `{CFG:BEGIN,id}` | `{CMD,CFG,BEGIN,id}` → `{RSP,CFG,BEGIN,OK,id}` |
 | `{CFG:SET,id,index,value}` | `{CMD,CFG,SET,id,index,value}` → `{RSP,CFG,SET,OK,id,index}` |
 | `{CFG:COMMIT,id}` | `{CMD,CFG,COMMIT,id}` → `{RSP,CFG,COMMIT,OK,id}` |
 | `{CFG:ERR,id,reason}` | `{RSP,CFG,动作,ERR,id,reason}` |
+
+指定选择器的 GET 只回一条 VALUE 和 `{RSP,CFG,GET,END,id,1}`。数字选择器使用本次固件目录的参数编号。`RING_X` 和 `RING_Y` 分别读取圆环纠偏 X、Y 死区并返回其实际编号。未知参数回复 `{RSP,CFG,GET,ERR,id,RANGE}`。全量回读收到 END 后若有缺项，Web 上位机逐项补读。`RING_TIMEOUT` 单独读取圆环纠偏超时。机械臂页按需读取死区或超时，写入后只回读实际写入的参数。
 
 `id` 为非零 uint32，`index` 为有效参数 ID；值必须有限、在该项范围内，整数项必须为整数。BEGIN 建立暂存副本；SET 只修改暂存值；COMMIT 持有对齐锁统一写入并清除 PID 历史。GET 或新的 BEGIN 丢弃旧事务。上位机逐条等待确认，COMMIT 后自动 GET 核对；错误或超时立即停止后续发送，超时不自动重发 COMMIT。常见原因：`BUSY_OR_MODE`、`RANGE`、`TRANSACTION`、`FORMAT`、`REGISTRY`、`LOCK`。
 

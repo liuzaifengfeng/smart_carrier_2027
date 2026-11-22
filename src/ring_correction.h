@@ -6,13 +6,27 @@
 
 namespace ring {
 constexpr float HOVER_MM = 10.0f;
-constexpr float DEADZONE_PX = 1.0f;
 constexpr float MAX_TURRET_CORRECTION_DEG = 10.0f;
 constexpr float MAX_EXTENSION_CORRECTION_MM = 20.0f;
 constexpr uint8_t TURRET_CORRECTION_ACCELERATION = 200;
+constexpr uint16_t TURRET_CORRECTION_RPM = 10;
 
 inline uint32_t &requiredStableFrames() {
     static uint32_t value = 2;
+    return value;
+}
+
+inline uint32_t &configuredTimeoutMs() {
+    static uint32_t value = 0;
+    return value;
+}
+
+struct Deadzone {
+    float x = 1.0f, y = 1.0f;
+};
+
+inline Deadzone &configuredDeadzone() {
+    static Deadzone value;
     return value;
 }
 
@@ -21,8 +35,8 @@ struct Gains {
 };
 
 struct Settings {
-    Gains turret{0.06f, 0, 0}; // X 像素 → 转台角度修正（deg）
-    Gains extension{0.05f, 0, 0}; // Y 像素 → 伸缩位移修正（mm）
+    Gains turret{0.0427f, 0.01f, 0}; // X 像素 → 转台角度修正（deg）
+    Gains extension{0.033f, 0.007f, 0}; // Y 像素 → 伸缩位移修正（mm）
 };
 
 struct Frame {
@@ -30,17 +44,18 @@ struct Frame {
     uint32_t timeMs = 0;
 };
 
-inline bool withinDeadzone(float error) {
-    return std::fabs(error) < DEADZONE_PX;
+inline bool withinDeadzone(float error, float limit) {
+    return std::fabs(error) < limit;
 }
 
-inline bool withinDeadzone(const Frame &frame) {
-    return withinDeadzone(frame.x) && withinDeadzone(frame.y);
+inline bool withinDeadzone(const Frame &frame, const Deadzone &limits) {
+    return withinDeadzone(frame.x, limits.x) && withinDeadzone(frame.y, limits.y);
 }
 
 class VisionInput {
     std::mutex mutex;
     Settings config;
+    Deadzone deadzone;
     Frame latest;
     uint32_t generation = 0;
     uint32_t required = 0, consecutive = 0;
@@ -54,9 +69,10 @@ public:
         std::lock_guard<std::mutex> lock(mutex);
         config = value;
     }
-    uint32_t ready(uint32_t requiredFrames) {
+    uint32_t ready(uint32_t requiredFrames, const Deadzone &limits) {
         std::lock_guard<std::mutex> lock(mutex);
         required = requiredFrames;
+        deadzone = limits;
         consecutive = 0;
         pending = false;
         accepting = true;
@@ -69,8 +85,8 @@ public:
     bool submit(uint32_t token, const Frame &frame) {
         std::lock_guard<std::mutex> lock(mutex);
         if (!accepting || token != generation) return false;
-        if (!withinDeadzone(frame)) consecutive = 0;
-        else if (consecutive < required) ++consecutive;
+        if (consecutive == required) return true;
+        consecutive = withinDeadzone(frame, deadzone) ? consecutive + 1 : 0;
         latest = frame;
         pending = true;
         return true;
