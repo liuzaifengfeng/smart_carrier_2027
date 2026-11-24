@@ -14,6 +14,7 @@
 #include "continuous_trial.h"
 #include "motion_executor.h"
 #include "competition_flow.h"
+#include "start_panel.h"
 
 // 作业编号 0 保留给主流程时间线；这里只记录观察到的变化，不改变运动或故障处理。
 /**
@@ -61,7 +62,9 @@ static void logMainMotionState(RobotState state, int progress) {
 namespace {
 class RuntimeCompetition : public CompetitionIO {
     uint32_t startedAt=0;
+    const bool fromStartPanel;
 public:
+    explicit RuntimeCompetition(bool fromStartPanel):fromStartPanel(fromStartPanel){}
     /**
      * @brief 读取主流程使用的设备运行毫秒数，供阶段间隔计时。
      */
@@ -81,7 +84,14 @@ public:
     /**
      * @brief 读取当前选择的起始区号；主流程在启动准备时锁定返家区号。
      */
-    uint8_t zone()override{return static_cast<uint8_t>(currentStartZone);}
+    uint8_t zone()override{
+        const auto selected=SelectReleaseStartZone(fromStartPanel);
+        if(selected!=START_ZONE_UNKNOWN&&ReadPanelStartRequest()!=START_ZONE_UNKNOWN) {
+            currentStartZone=selected;
+            Serial.printf("[StartPanel] zone=%u\n",static_cast<unsigned>(selected));
+        }
+        return static_cast<uint8_t>(selected);
+    }
     void beginHeadingCalibration()override{H30UsbBeginHeadingAverage();}
     bool headingCalibrationDone()override {
         const int result=H30UsbPollHeadingAverage();
@@ -91,7 +101,7 @@ public:
     /**
      * @brief 查询正式比赛启动许可，许可到达后开始计时并进入扫码。
      */
-    bool permission()override{return enableRun;}
+    bool permission()override{return ReadPanelStartRequest()!=START_ZONE_UNKNOWN||enableRun;}
     /**
      * @brief 读取当前轮已经完成抓取并登记到载物台的物料件数。
      */
@@ -125,7 +135,7 @@ public:
     /**
      * @brief 请求开启指定视觉功能；工位对齐与单件物料识别使用不同模式。
      */
-    void visionStart(VisionStartMode mode)override{requestVisionStart(mode);}
+    void visionStart(VisionStartMode mode,float headingOnAlignment)override{requestVisionStart(mode,headingOnAlignment);}
     /**
      * @brief 读取当前自动视觉对齐的 WAITING、DONE 或 FAILED 状态。
      */
@@ -147,10 +157,10 @@ public:
      */
     void materialStop()override{firstDiscGrabReady=false;requestVisionStop(VisionStartMode::DISC_MATERIAL);}
     /**
-     * @brief 发布已解析的任务码显示，并设置扫码结束后的位姿准备标志。
+     * @brief 发布已解析的任务码显示。
      */
     void taskReady()override {
-        scanPosePending=true;xQueueReset(xVisualTaskQueue);
+        xQueueReset(xVisualTaskQueue);
         char text[16];snprintf(text,sizeof(text),"%d%d%d+%d%d%d+%d%d%d+%d%d%d",
             currentTask.round1_colors[0],currentTask.round1_colors[1],currentTask.round1_colors[2],
             currentTask.round1_pos[0],currentTask.round1_pos[1],currentTask.round1_pos[2],
@@ -194,10 +204,11 @@ public:
 /**
  * @brief 比赛主任务，每10ms调用 CompetitionFlow::tick，处理状态编排及主阶段日志。
  */
-void Task_MainStateMachine(void *) {
+void Task_MainStateMachine(void *startPanel) {
     vTaskDelay(pdMS_TO_TICKS(1000));
-    RuntimeCompetition runtime;CompetitionMap map;
+    RuntimeCompetition runtime(startPanel!=nullptr);CompetitionMap map;
     map.scan=SCAN_AREA_NODE;map.disc=DISC_AREA_NODE;map.coarse=COARSE_AREA_NODE;map.temp=TEMP_AREA_NODE;
+    map.coarseHeading=COARSE_AREA_HEADING;map.tempHeading=TEMP_AREA_HEADING;
     map.home1=HOME_ZONE1_NODE;map.home2=HOME_ZONE2_NODE;map.homeHeading=HOME_ZONE_HEADING;
     CompetitionFlow flow(runtime,map);
     for(;;) {
@@ -214,6 +225,11 @@ void Task_MainStateMachine(void *) {
  */
 void setup() {
     pinMode(BOOT0_PIN, INPUT_PULLUP);
+    pinMode(START_ZONE_SWITCH_PIN,INPUT);
+    pinMode(START_BUTTON_PIN,INPUT);
+    ledcSetup(BUTTON_LED_PWM_CHANNEL,BUTTON_LED_PWM_HZ,BUTTON_LED_PWM_BITS);
+    ledcWrite(BUTTON_LED_PWM_CHANNEL,0);
+    ledcAttachPin(BUTTON_LED_PIN,BUTTON_LED_PWM_CHANNEL);
     BatteryMonitorBegin();
     const bool ledPwmReady = LedPwm_Init();
     Serial.begin(115200);

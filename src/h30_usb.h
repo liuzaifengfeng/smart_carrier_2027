@@ -18,11 +18,12 @@ const char *H30UsbGetAttitude(H30Attitude &sample, uint32_t &ageMs);
 
 // 仅在车体实际朝向被确认时调用。失败会清除旧参考，绝不延迟绑定未来样本。
 /**
- * @brief 将当前有效原始Yaw绑定到已知车体地图航向；失败清除旧参考。
+ * @brief 将当前有效原始Yaw绑定到已知车体地图航向。
  * @param mapHeading 已确认的地图航向(deg)，0~360。
+ * @param keepReferenceOnFailure true 时保留原参考，false 时清除原参考。
  * @return nullptr 成功，否则为不可标定原因。
  */
-const char *H30UsbCalibrateHeading(float mapHeading);
+const char *H30UsbCalibrateHeading(float mapHeading,bool keepReferenceOnFailure=false);
 // 地图航向，0~360 deg；与 currentPose 的理想航向独立，不驱动电机。
 // 除原数据错误外，还可能返回 NOT_CALIBRATED。
 /**

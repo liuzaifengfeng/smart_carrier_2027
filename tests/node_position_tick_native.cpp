@@ -75,6 +75,43 @@ void nodeTick() {
         assert(triggered&&cornerTriggered&&!runner.failure());
     }
 }
+void scanStartOffset() {
+    for(bool right:{false,true}) {
+        const float startX=right?2050:320;
+        Node nodes[]={{{startX,240},0},{{right?1680.f:720.f,240},0},{{1200,240},0}};
+        Config config;config.count=3;config.policy=2;
+        config.startHeading=right?135:45;config.endHeading=right?180:0;
+        Route path;assert(!path.build(nodes,config));
+        Sim car;car.location={right?2150.f:250.f,250};car.heading=config.startHeading;
+        Settings settings;settings.outerStraightVelocity=true;settings.startOffset=car.location-nodes[0].p;
+        settings.alignStartToRoad=true;
+        Result result;assert(!run(path,settings,car,result));
+        assert(car.velocityUpdates>0);
+        assert(norm(car.location-nodes[2].p)<3&&norm(result.estimated-nodes[2].p)<3);
+        assert(fabsf(turn(car.heading,config.endHeading))<settings.headingDeadbandDeg);
+    }
+
+    struct BypassSim : Sim {
+        bool followedRoad=false;
+        void wait(uint32_t ms) override {
+            Sim::wait(ms);
+            if(location.y>270) {
+                followedRoad=true;
+                assert(fabsf(location.x-2050)<3);
+            } else if(location.x>2053) {
+                assert(fabsf(location.y-250)<3);
+            }
+        }
+    } car;
+    Node bypass[]={{{2050,240},0},{{2050,720},0},{{2050,1200},0}};
+    Config config;config.count=3;config.policy=2;config.startHeading=135;config.endHeading=90;
+    Route path;assert(!path.build(bypass,config));
+    car.location={2150,250};car.heading=135;
+    Settings settings;settings.outerStraightVelocity=true;settings.alignStartToRoad=true;
+    settings.startOffset=car.location-bypass[0].p;
+    Result result;assert(!run(path,settings,car,result));
+    assert(car.followedRoad&&norm(car.location-bypass[2].p)<3);
+}
 void middleProfile() {
     for(bool reverse:{false,true}) {
         Node points[]={{{310,1200},0},{{600,1200},0},{{900,1200},0,true},{{1200,1200},0}};
@@ -322,11 +359,11 @@ void discReturnArrival() {
     }
 
     const int64_t target=100000;
-    // 斜移时较慢的轮已经进入编码器容差内，驱动器仍在执行位置指令。
-    assert(!encoderReturnArrived(Motor{1,95700,2},target,true));
-    assert(encoderReturnArrived(Motor{3,target,0},target,true));
-    assert(encoderReturnArrived(Motor{1,target,0},target,false));
-    assert(!encoderReturnArrived(Motor{3,94000,0},target,true));
+    // 仅使能标志也可在实测位置和转速均达标后结束回位。
+    assert(encoderReturnArrived(Motor{1,95000,-3},target));
+    assert(encoderReturnArrived(Motor{3,target,0},target));
+    assert(!encoderReturnArrived(Motor{3,target,4},target));
+    assert(!encoderReturnArrived(Motor{3,94999,0},target));
     int requests=0;
     const char *error=RetryEmmFeedback(3,[&]() -> const char * {
         return ++requests==1?"MOTOR_FEEDBACK_TIMEOUT":nullptr;
@@ -357,4 +394,4 @@ void discReturnArrival() {
     error=RetryEmmFeedback(3,readsState);
     assert(!strcmp(error,"MOTOR_COMMAND_ERROR")&&requests==1);
 }
-int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"stable"))stableFrames();else if(!strcmp(argv[1],"hold"))middleHold();else if(!strcmp(argv[1],"middle"))middleProfile();else if(!strcmp(argv[1],"representative"))representativePolling();else if(!strcmp(argv[1],"disc-return"))discReturnArrival();else nodeTick();}
+int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"stable"))stableFrames();else if(!strcmp(argv[1],"hold"))middleHold();else if(!strcmp(argv[1],"middle"))middleProfile();else if(!strcmp(argv[1],"representative"))representativePolling();else if(!strcmp(argv[1],"disc-return"))discReturnArrival();else if(!strcmp(argv[1],"scan-start-offset"))scanStartOffset();else nodeTick();}

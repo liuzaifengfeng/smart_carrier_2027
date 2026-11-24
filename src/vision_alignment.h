@@ -29,20 +29,23 @@ constexpr bool IsWithinAlignmentDeadzone(const VisionAlignmentDeadzone &zone, fl
         && (angle<0?-angle:angle) <= zone.angleDeg;
 }
 
-constexpr uint8_t ALIGNMENT_REQUIRED_FRAMES = 5;
+constexpr uint8_t ALIGNMENT_REQUIRED_FRAMES = 2;
 constexpr uint8_t DISC_ALIGNMENT_REQUIRED_FRAMES = 1;
+constexpr uint8_t WORK_AREA_ALIGNMENT_REQUIRED_FRAMES = 5;
 
 constexpr uint8_t RequiredAlignmentFrames(VisionStartMode mode) {
     return mode == VisionStartMode::DISC
-        ? DISC_ALIGNMENT_REQUIRED_FRAMES : ALIGNMENT_REQUIRED_FRAMES;
+        ? DISC_ALIGNMENT_REQUIRED_FRAMES
+        : mode == VisionStartMode::WORK_AREA ? WORK_AREA_ALIGNMENT_REQUIRED_FRAMES : ALIGNMENT_REQUIRED_FRAMES;
 }
 
 /**
  * @brief 根据本帧死区判定和模式是否连续，更新连续到位帧数。
  */
-constexpr uint8_t NextAlignmentFrameCount(uint8_t count, bool withinDeadzone, bool sameMode) {
+constexpr uint8_t NextAlignmentFrameCount(uint8_t count, bool withinDeadzone, bool sameMode,
+                                         uint8_t requiredFrames = ALIGNMENT_REQUIRED_FRAMES) {
     return !withinDeadzone ? 0 : !sameMode ? 1
-        : count < ALIGNMENT_REQUIRED_FRAMES ? count + 1 : ALIGNMENT_REQUIRED_FRAMES;
+        : count < requiredFrames ? count + 1 : requiredFrames;
 }
 
 // 每个新反馈帧调用一次；重复轮询不得调用 update。
@@ -64,9 +67,10 @@ struct AlignmentFrameWaiter {
      * @return true 连续到位帧数达到要求。
      */
     bool update(VisionStartMode newMode, bool withinDeadzone) {
+        const uint8_t requiredFrames = RequiredAlignmentFrames(newMode);
         consecutiveFrames = NextAlignmentFrameCount(consecutiveFrames,
-            newMode != VisionStartMode::NONE && withinDeadzone, mode == newMode);
+            newMode != VisionStartMode::NONE && withinDeadzone, mode == newMode, requiredFrames);
         mode = newMode;
-        return consecutiveFrames >= RequiredAlignmentFrames(newMode);
+        return consecutiveFrames >= requiredFrames;
     }
 };

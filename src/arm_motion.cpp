@@ -79,9 +79,9 @@ void place(Program &p,const MaterialStationPose &pose,float height,const Materia
         p.steps[p.count-1].cargoPlaceTurn=destinationCargo!=0;
         p.steps[p.count-1].lengthArrival=destinationCargo!=0;
         p.steps[p.count-1].trayClearanceCargo=sourceCargo;
-        p.steps[p.count-1].trayClearanceWorkPosition=workPosition;
     } else above(p,pose,-1,d.placeAbove,angle); // 已夹紧物料，移位和下降不再重复操作夹爪。
     if(destinationCargo)prepareTray(p,destinationCargo,true,trayTolerance);
+    const size_t firstLower=p.count;
     if(slowLower) {
         const bool enableVision=ringCorrection&&ring::configuredTimeoutMs()!=0;
         arm(p,"PLACE_DESCEND_10",ring::HOVER_MM,retracted?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
@@ -102,11 +102,13 @@ void place(Program &p,const MaterialStationPose &pose,float height,const Materia
         }
         arm(p,"PLACE_DESCEND",0,-1,-1,-1,materialMotionSteps.placeDescendSpeed,100);
         p.steps[p.count-1].slowLower=true;
+        p.steps[p.count-1].slowLowerAcceleration=200;
         p.steps[p.count-1].timed=true;
     } else {
         const float releaseHeight=height+(destinationCargo?CARGO_TRAY_RELEASE_OFFSET_MM:0.0f);
         arm(p,"PLACE_DESCEND",releaseHeight,retracted&&!destinationCargo?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
     }
+    if(workPosition==3)p.steps[firstLower].trayWork3LimitCargo=sourceCargo;
     p.steps[p.count-1].placementPosition=workPosition;
     if(slowLower) { // 仅工位第一层：先卸去夹紧力，300ms后再完全张开。
         arm(p,"PLACE_RELEASE_ZERO",-1,-1,-1,0,materialMotionSteps.placeReleaseSpeed,300);

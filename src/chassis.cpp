@@ -48,7 +48,7 @@ VisionAlignmentDeadzone ALIGN_DEADZONES[] = {
     {10.0f, 10.0f, 0.3f}, // DISC 圆盘对齐
     {5.0f, 5.0f, 0.1f},   // DISC_MATERIAL 圆盘物料对齐
     {1.0f, 1.0f, 0.1f},   // WORK_AREA
-    {1.0f, 1.0f, 0.1f},   // WORK_AREA_LOADED
+    {3.0f, 3.0f, 0.1f},   // WORK_AREA_LOADED
     {8.0f, 8.0f, 0.3f},   // CORNER
 };
 AlignmentFrameWaiter s_alignmentWaiter;
@@ -237,7 +237,7 @@ bool ReadArmTurretAngle(float &angle) {
  */
 static bool MoveArmInternal(float high, float length, float turret_angle, float pawl_angle, float speed,
     bool absoluteTurret, uint8_t turretAcceleration, bool slowLower, uint16_t turretRpm,
-    uint8_t lengthAcceleration) {
+    uint8_t lengthAcceleration, uint8_t slowLowerAcceleration) {
     if (taskMotionAborted) return false;
     // 夹爪原标定为 speed=200 对应约90°/s；时间缩短至1/5后等效为450°/s。
     // 实际指令耗时按回读角度到最近等效目标的行程计算，不再使用与角度无关的线性映射。
@@ -259,8 +259,7 @@ static bool MoveArmInternal(float high, float length, float turret_angle, float 
         const uint32_t pulses = static_cast<uint32_t>(high * HEIGHT_PULSE);
         // RPM 写入协议的 16 位字段，在此完成数值饱和。
         const uint16_t rpm = speed >= UINT16_MAX / 15.0f ? UINT16_MAX : speed * 15.0f;
-        // EMM实际加速度正比1/(256-档位)：252→248减半；只降低升降轴。
-        Emm_V5_Pos_Control(5, 1, slowLower ? rpm / 2 : rpm, slowLower ? 248 : 252, pulses, true, false);
+        Emm_V5_Pos_Control(5, 1, slowLower ? rpm / 2 : rpm, slowLower ? slowLowerAcceleration : 252, pulses, true, false);
         vTaskDelay(pdMS_TO_TICKS(10));
         currentArm.high = high;
     }
@@ -304,9 +303,9 @@ static bool MoveArmInternal(float high, float length, float turret_angle, float 
 }
 
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed,
-    uint8_t turretAcceleration, bool slowLower, uint8_t lengthAcceleration) {
+    uint8_t turretAcceleration, bool slowLower, uint8_t lengthAcceleration, uint8_t slowLowerAcceleration) {
     return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, false,
-        turretAcceleration, slowLower, TURRET_MOTOR_POSITION_RPM, lengthAcceleration);
+        turretAcceleration, slowLower, TURRET_MOTOR_POSITION_RPM, lengthAcceleration, slowLowerAcceleration);
 }
 
 /**
@@ -316,7 +315,7 @@ bool MoveArm(float high, float length, float turret_angle, float pawl_angle, flo
 bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed,
     uint8_t turretAcceleration, bool slowLower, uint16_t turretRpm) {
     return MoveArmInternal(high, length, turret_angle, pawl_angle, speed, true,
-        turretAcceleration, slowLower, turretRpm, ARM_EXTENSION_ACCELERATION);
+        turretAcceleration, slowLower, turretRpm, ARM_EXTENSION_ACCELERATION, ARM_SLOW_LOWER_ACCELERATION);
 }
 
 

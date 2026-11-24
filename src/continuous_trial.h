@@ -69,7 +69,8 @@ bool H30RunNodePath(const uint8_t *path,size_t count,float speedMmS,float finalH
 /**
  * @brief 在运动任务内构建正式路径并冻结本次速度/加速度配置；不等待行程完成。
  */
-bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async,float startYOffset=0);
+bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async,
+                       float startYOffset=0,float *plannedArrivalHeading=nullptr,bool preserveStartPosition=false);
 /**
  * @brief 启动已经准备好的节点导航或连续试跑执行过程，仅由运动任务调用。
  */

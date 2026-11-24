@@ -416,7 +416,7 @@ const char *ReadDiscYOffset(const int64_t (&before)[4],float beforeHeading,float
     return readDiscTravel(io,before,beforeHeading,positions,heading,yOffset);
 }
 const char *BeginDiscYReturn(const int64_t (&before)[4],float beforeHeading,uint16_t maximumRpm,
-    int64_t (&targets)[4],bool (&commanded)[4],bool (*cancelled)()) {
+    int64_t (&targets)[4],bool (*cancelled)()) {
     Hardware io(0,cancelled,DISC_FEEDBACK_ATTEMPTS,DISC_FEEDBACK_TIMEOUT_MS);
     MotorBusGuard transaction;
     int64_t positions[4],goals[4],correction[4],maximumTravel=0;
@@ -426,14 +426,13 @@ const char *BeginDiscYReturn(const int64_t (&before)[4],float beforeHeading,uint
     for(uint8_t wheel=0;wheel<4;++wheel) {
         const int sign=routeRunner.encoderToCommandSign(wheel);
         goals[wheel]=llround(positions[wheel]*sign*discPulsesPerCount)+correction[wheel];
-        commanded[wheel]=correction[wheel]!=0;
-        targets[wheel]=commanded[wheel]?llround(goals[wheel]*sign/discPulsesPerCount):positions[wheel];
+        targets[wheel]=correction[wheel]!=0?llround(goals[wheel]*sign/discPulsesPerCount):positions[wheel];
         const int64_t wheelTravel=llabs(correction[wheel]);
         if(wheelTravel>maximumTravel)maximumTravel=wheelTravel;
     }
     if(maximumTravel==0)return nullptr;
     for(uint8_t wheel=0;wheel<4;++wheel) {
-        if(!commanded[wheel])continue;
+        if(correction[wheel]==0)continue;
         const auto rpm=static_cast<uint16_t>(fmax(1.0,round(double(llabs(correction[wheel]))*maximumRpm/maximumTravel)));
         const auto goal=goals[wheel];
         if(const char *error=io.target(wheel+1,goal>=0,rpm,DISC_RETURN_ACCEL_LEVEL,llabs(goal))) {

@@ -138,8 +138,8 @@ static_assert(legacyClawPacket(), "ID 1 retains simple multiturn packet");
             "bool MoveArm(", "bool MoveArmPlanned("))
         actual = re.sub(r"(?:static )?bool (ReadArmTurretAngle|MoveArmInternal|MoveArm|MoveArmPlanned)\(",
                         r"constexpr bool \1(", actual)
-        actual = actual.replace("uint8_t turretAcceleration, bool slowLower, uint8_t lengthAcceleration)",
-                                "uint8_t turretAcceleration=150, bool slowLower=false, uint8_t lengthAcceleration=240)")
+        actual = actual.replace("uint8_t turretAcceleration, bool slowLower, uint8_t lengthAcceleration, uint8_t slowLowerAcceleration)",
+                                "uint8_t turretAcceleration=150, bool slowLower=false, uint8_t lengthAcceleration=240, uint8_t slowLowerAcceleration=248)")
         actual = actual.replace("uint8_t turretAcceleration, bool slowLower, uint16_t turretRpm) {",
                                 "uint8_t turretAcceleration=150, bool slowLower=false, uint16_t turretRpm=83) {")
         harness = r'''
@@ -153,19 +153,22 @@ constexpr void vTaskDelay(int){}
 constexpr float TURRET_CABLE_MIN_DEG=-150,TURRET_CABLE_MAX_DEG=360;
 constexpr uint16_t TURRET_MOTOR_POSITION_RPM=83;
 constexpr uint8_t ARM_EXTENSION_ACCELERATION=240;
+constexpr uint8_t ARM_SLOW_LOWER_ACCELERATION=248;
 struct Log {constexpr void println(const char*){} template<class... A> constexpr void printf(const char*,A...) {}};
 struct Pose {float high=0,length=0,turret_angle=0,pawl_angle=0;};
 struct Run {
     bool taskMotionAborted=false,queryOk=true;
     float measured=0,HEIGHT_PULSE=80,LENGTH_PULSE=30;
-    int commands=0,queries=0; float angle=0; uint16_t ramp=0; uint8_t extensionRamp=0;
+    int commands=0,queries=0; float angle=0; uint16_t ramp=0, liftRpm=0;
+    uint8_t extensionRamp=0,liftRamp=0;
     Log Serial; Pose currentArm;
     constexpr bool TurretMotorReadAngle(float &v){++queries;v=measured;return queryOk;}
     constexpr bool TurretMotorMove(float v,uint16_t r,uint16_t){++commands;angle=v;ramp=r;return true;}
     constexpr bool Servo_QueryAngleMTurn(int,float &v,int){v=0;return true;}
     constexpr void Servo_SetAngleMTurn(int,float,uint32_t,uint16_t){++commands;}
-    constexpr void Emm_V5_Pos_Control(uint8_t id,uint8_t,uint16_t,uint8_t accel,uint32_t,bool,bool){
+    constexpr void Emm_V5_Pos_Control(uint8_t id,uint8_t,uint16_t rpm,uint8_t accel,uint32_t,bool,bool){
         ++commands;if(id==6)extensionRamp=accel;
+        if(id==5){liftRamp=accel;liftRpm=rpm;}
     }
     ACTUAL
 };
@@ -206,6 +209,11 @@ constexpr bool extension(){
         &&r.MoveArm(-1,20,-1,-1,500)&&r.extensionRamp==240;
 }
 static_assert(extension(),"extension acceleration is sent to motor 6");
+constexpr bool finalLower(){
+    Run r;return r.MoveArm(10,-1,-1,-1,300,150,true)&&r.liftRamp==248&&r.liftRpm==2250
+        &&r.MoveArm(0,-1,-1,-1,300,150,true,240,200)&&r.liftRamp==200&&r.liftRpm==2250;
+}
+static_assert(finalLower(),"final lowering uses level 200 without changing the speed limit");
 '''.replace("ACTUAL",actual)
         self.compile_assertions(harness)
 

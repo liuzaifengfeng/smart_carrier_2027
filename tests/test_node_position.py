@@ -7,7 +7,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PositionTests(unittest.TestCase):
-    def test_disc_return_waits_for_commanded_wheels_to_finish(self):
+    def test_scan_route_corrects_start_offsets_from_both_zones(self):
+        from native_support import build_native, run_native
+        sources = ["tests/node_position_tick_native.cpp", "src/node_position_control.cpp", "src/continuous_route.cpp", "src/hybrid_route.cpp", "src/scan_motion_control.cpp"]
+        run_native(build_native("node-tick", sources), "scan-start-offset")
+
+    def test_disc_return_uses_encoder_position_and_speed(self):
         from native_support import build_native, run_native
         sources = ["tests/node_position_tick_native.cpp", "src/node_position_control.cpp", "src/continuous_route.cpp", "src/hybrid_route.cpp", "src/scan_motion_control.cpp"]
         run_native(build_native("node-tick", sources), "disc-return")

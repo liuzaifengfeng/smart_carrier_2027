@@ -123,7 +123,7 @@ void ResetDiscAlignmentPid();
 // 通用单帧 PID：角差由调用方选择来源（DISC用H30实测-目标，其余用视觉）；true只代表这一帧进入死区。
 bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);
 
-// 非阻塞等待：仅在新帧到达时调用，同时更新 PID；连续 5 帧进入死区返回 true。
+// 非阻塞等待：仅在新帧到达时调用，同时更新 PID；连续达标帧达到模式要求后返回 true。
 // 调用方应在启停、断流、反馈丢帧或无效反馈时调用 ResetAlignmentWait。
 bool WaitForAlignment(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);
 void ResetAlignmentWait();
@@ -134,12 +134,14 @@ void ResetAlignmentWait();
 // 返回值表示所请求的控制命令是否全部成功下发，不代表机构已物理到位。
 // 契约：目标在机械行程内，速度为正；RPM 在写入协议时饱和。
 // 串口和参数入口负责校验；-1 跳过对应轴。
-// slowLower仅将升降轴转速及实际加速度减半，伸缩、转台和夹爪保持原参数。
+// slowLower 将升降轴转速减半，并使用慢降加速度档位。
 // turretAcceleration 使用张大头原生加速度档位（0~255，0表示不使用加减速）。
 constexpr uint8_t ARM_EXTENSION_ACCELERATION = 240;
+constexpr uint8_t ARM_SLOW_LOWER_ACCELERATION = 248;
 bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed,
     uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, bool slowLower=false,
-    uint8_t lengthAcceleration=ARM_EXTENSION_ACCELERATION);
+    uint8_t lengthAcceleration=ARM_EXTENSION_ACCELERATION,
+    uint8_t slowLowerAcceleration=ARM_SLOW_LOWER_ACCELERATION);
 
 // 读取7号张大头转盘实际多圈角度并检查线缆范围；失败时不改写 angle，也不更新目标缓存。
 /**

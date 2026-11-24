@@ -223,13 +223,16 @@ bool placeAt(const MaterialStationPose &pose, float targetHeight,
         if (!(plannedAngle
                 ? MoveArmPlanned(-1, targetLength, *plannedAngle, -1, materialMotionSteps.approachRotateSpeed, rotateAcceleration)
                 : MoveArm(-1, targetLength, pose.turretAngle, -1, materialMotionSteps.approachRotateSpeed, rotateAcceleration))) return false;
-        if (CargoTrayNeedsClearance(sourceCargo) || CargoTrayHasPlacementLimit(workPosition)) {
-            Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY, CargoTrayPlacementAngle(sourceCargo, workPosition));
+        if (CargoTrayNeedsClearance(sourceCargo)) {
+            Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY, CargoTrayClearanceAngle(sourceCargo));
         }
         if(!waitForTurret(targetLength))return false;
     } else if (!moveAbove(pose, -1,
                           delays.placeAbove, plannedAngle, turretAcceleration)) return false;
     if (destinationCargo && !waitForTrayAngle(cargoTrayAngles[destinationCargo - 1])) return false;
+    if (workPosition == 3 && CargoTrayNeedsWork3Limit(sourceCargo)) {
+        Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY, WORK_POSITION_3_TRAY_TARGET_DEG);
+    }
     if(turretAcceleration==TURRET_ACCELERATION_SLOW) {
         // 第一段沿用原下降延时，最后10mm只等待100ms，不查到位反馈。
         if(!MoveArm(10,fromRetracted?pose.length:-1,-1,

@@ -17,6 +17,7 @@
 .desktop .connection-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .desktop .connection-status {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 2px 12px;
   margin-top: 4px;

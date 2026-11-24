@@ -285,17 +285,20 @@ const char *headingSampleError(uint32_t &ageMs) {
 }
 
 /**
- * @brief 将当前有效原始Yaw绑定到已知车体地图航向；失败清除旧参考。
+ * @brief 将当前有效原始Yaw绑定到已知车体地图航向。
  * @param mapHeading 已确认的地图航向(deg)，0~360。
  * @return nullptr 成功，否则为不可标定原因。
  */
-const char *H30UsbCalibrateHeading(float mapHeading) {
+const char *H30UsbCalibrateHeading(float mapHeading,bool keepReferenceOnFailure) {
     portENTER_CRITICAL(&mux);
-    headingReference.reset();
-    ++headingReferenceVersion;
     uint32_t age = 0;
     const char *error = headingSampleError(age);
-    if (!error && !headingReference.calibrate(latest.yaw, mapHeading)) error = "RANGE";
+    H30HeadingReference reference;
+    if (!error && !reference.calibrate(latest.yaw, mapHeading)) error = "RANGE";
+    if (!error || !keepReferenceOnFailure) {
+        headingReference=reference;
+        ++headingReferenceVersion;
+    }
     portEXIT_CRITICAL(&mux);
     return error;
 }

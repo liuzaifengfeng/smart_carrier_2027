@@ -13,7 +13,7 @@ struct Step {
     uint16_t trayPowerMw=0;
     uint8_t cargo=0,color=0;
     uint8_t trayClearanceCargo=0; // 放料转向时检查取料盘的相邻小一号盘是否占用。
-    uint8_t trayClearanceWorkPosition=0; // 用于放料转向时选择料盘避让角度。
+    uint8_t trayWork3LimitCargo=0; // 下放到工位 3 前，按取料盘号判断是否需要限制料盘角度。
     const char *materialEvent=nullptr;
     uint8_t materialPosition=0;
     uint8_t placementPosition=0; // 非零：工位放料下降结束时回读角度和伸出长度并记录偏差。
@@ -24,10 +24,11 @@ struct Step {
     bool workPlaceLiftArrival=false; // 工位放料后抬升：实测高度误差小于10mm即继续。
     bool liftArrival=false; // 初始化抬升实测到位后，才允许后续转盘动作。
     bool timed=false; // 此步按waitMs计时，即使开启机械臂反馈模式也不改为等待到位。
-    bool slowLower=false; // 第一层工位放料下降：升降转速和实际加速度各减半。
+    bool slowLower=false; // 第一层工位放料下降：升降转速减半。
     uint8_t ringVisionPosition=0; // 非零时在预放下降前上报工位号并开启相机。
     uint8_t turretAcceleration=TURRET_ACCELERATION_FAST; // 张大头原生加速度档位，由动作阶段指定。
     uint8_t lengthAcceleration=ARM_EXTENSION_ACCELERATION;
+    uint8_t slowLowerAcceleration=ARM_SLOW_LOWER_ACCELERATION;
     uint8_t positionAcceleration=POSITION_MOVE_DEFAULT_ACCELERATION;
     float trayArrivalToleranceDeg=CARGO_TRAY_ARRIVAL_TOLERANCE_DEG;
 };

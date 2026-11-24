@@ -12,6 +12,7 @@ NativeSerial Serial;
 uint32_t clockMs=0;bool stop=false,servoAvailable=true;
 float turretMeasured=0,clawMeasured=0;
 float trayMeasured=0,trayTarget=0;
+float trayTargetAtArmIssue=0;
 uint32_t trayInterval=0;
 uint16_t trayPower=0;
 bool trayHeld=false;
@@ -25,6 +26,7 @@ float issuedLength=-1;
 float issuedTurret=0;
 uint16_t issuedRamp=0;bool issuedSlowLower=false;
 uint8_t issuedLengthAcceleration=0;
+uint8_t issuedSlowLowerAcceleration=0;
 uint16_t issuedTurretRpm=0;
 uint32_t millis(){return clockMs;}
 volatile bool taskMotionAborted=false;
@@ -34,7 +36,7 @@ ArmPose currentArm{100,20,90,50};
 CargoPlatform cargoPlatforms[3]={{MATERIAL_NONE},{MATERIAL_NONE},{MATERIAL_NONE}};
 float cargoTrayAngles[3]={150,213,276};
 bool cancelled(){return stop;}
-bool MoveArm(float,float length,float turret,float,float,uint8_t ramp,bool slowLower,uint8_t lengthAcceleration){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;issuedLengthAcceleration=lengthAcceleration;return true;}
+bool MoveArm(float,float length,float turret,float,float,uint8_t ramp,bool slowLower,uint8_t lengthAcceleration,uint8_t slowLowerAcceleration){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;issuedLengthAcceleration=lengthAcceleration;issuedSlowLowerAcceleration=slowLowerAcceleration;trayTargetAtArmIssue=trayTarget;return true;}
 void LedPwm_SetRingVisionActive(bool){}
 bool MoveArmPlanned(float,float length,float turret,float,float,uint8_t ramp,bool slowLower,uint16_t rpm){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;issuedTurretRpm=rpm;return true;}
 bool BeginPositionMove(float,float,float,float,uint8_t){++issued;return true;}
@@ -93,12 +95,17 @@ void trayArrival() {
     s.trayClearanceCargo=1;
     assert(!hardware.issue(s)&&trayTarget==243);
 
-    s.trayClearanceCargo=3;s.trayClearanceWorkPosition=3;
-    assert(!hardware.issue(s)&&trayTarget==239);
+    // 任务码 513+312：黑色从料盘 3 去工位 3，此时两个较小盘位都有料。
+    cargoPlatforms[2].material=MATERIAL_BLACK;
+    s.trayClearanceCargo=3;
+    assert(!hardware.issue(s)&&trayTarget==306);
     trayMeasured=276;
     assert(hardware.feedback(s)&&!hardware.ready(s,done)&&done);
+    s=motion::Step{};
+    s.kind=motion::StepKind::ARM;s.high=10;s.trayWork3LimitCargo=3;
+    assert(!hardware.issue(s)&&trayTargetAtArmIssue==239);
     cargoPlatforms[1].material=MATERIAL_NONE;
-    s.kind=motion::StepKind::ARM;trayTarget=276;
+    trayTarget=276;
     assert(!hardware.issue(s)&&trayTarget==239); // 仅 1 号有料也要避让。
     cargoPlatforms[0].material=MATERIAL_NONE;
     trayTarget=276;
@@ -185,6 +192,8 @@ void feedback() {
     s.turretAcceleration=TURRET_ACCELERATION_FAST;assert(!hardware.issue(s)&&issuedRamp==TURRET_ACCELERATION_FAST&&!issuedSlowLower);
     assert(issuedLengthAcceleration==240);
     s.lengthAcceleration=245;assert(!hardware.issue(s)&&issuedLengthAcceleration==245);
+    s.slowLower=true;s.slowLowerAcceleration=200;
+    assert(!hardware.issue(s)&&issuedSlowLower&&issuedSlowLowerAcceleration==200);
     s.planned=true;s.turretAcceleration=TURRET_ACCELERATION_SLOW;s.slowLower=true;assert(!hardware.issue(s)&&issuedRamp==TURRET_ACCELERATION_SLOW&&issuedSlowLower);
     assert(issuedTurretRpm==83);
     issued=0;
@@ -262,30 +271,30 @@ void ringCorrection() {
     frame.x=1;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==2);
-    assert(issuedRamp==200&&issuedTurretRpm==10);
+    assert(issuedRamp==160&&issuedTurretRpm==10);
     frame.x=0;
     frame.y=-4;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==3&&issuedTurret==-1);
-    assert(fabsf(issuedLength-71.368f)<0.002f);
+    assert(fabsf(issuedLength-71.28f)<0.002f);
     frame.y=4;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==4&&issuedTurret==-1);
-    assert(fabsf(issuedLength-71.632f)<0.002f);
+    assert(fabsf(issuedLength-71.72f)<0.002f);
     frame.x=4;
     frame.y=0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==5&&issuedLength==-1);
-    assert(fabsf(issuedTurret-85.8292f)<0.001f);
+    assert(fabsf(issuedTurret-85.868f)<0.001f);
     frame.x=-4;
     frame.y=-0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==6&&issuedLength==-1);
-    assert(fabsf(issuedTurret-86.1708f)<0.001f);
+    assert(fabsf(issuedTurret-86.132f)<0.001f);
     frame.y=4;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==7);
-    assert(fabsf(issuedTurret-86.1708f)<0.001f&&fabsf(issuedLength-71.632f)<0.002f);
+    assert(fabsf(issuedTurret-86.132f)<0.001f&&fabsf(issuedLength-71.72f)<0.002f);
     frame.x=0.5f;
     frame.y=-0.5f;
     assert(ring::withinDeadzone(frame,ring::configuredDeadzone()));
@@ -308,7 +317,7 @@ void ringCorrection() {
 
     assert(!hardware.issue(hover));
     assert(!hardware.issue(correct));
-    frame.x=-300;
+    frame.x=-400;
     frame.y=700;
     assert(ring::input().submit(2,frame));
     assert(!hardware.ready(correct,done)&&!done);
@@ -322,7 +331,7 @@ void ringCorrection() {
     assert(!hardware.ready(correct,done)&&!done);
     assert(issuedTurret==upperTurret&&issuedLength==upperLength);
 
-    frame.x=400;
+    frame.x=500;
     frame.y=-1000;
     assert(ring::input().submit(2,frame));
     assert(!hardware.ready(correct,done)&&!done);

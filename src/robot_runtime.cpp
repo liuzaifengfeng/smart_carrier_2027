@@ -18,7 +18,6 @@ float NODE_PATH_TURN_ACCEL_DEG_S2 = 400.0f;  // 节点路径原地转向的角�
 float NODE_PATH_HEADING_DEADBAND_DEG = 1.0f; // 停稳后独立航向修正的允许误差，单位°；误差在此范围内不再转动。
 uint32_t SCAN_APPROACH_SPEED_RPM = 1500;        // 启停区接近扫码区域时的位置模式最大轮速，单位RPM。
 uint32_t SCAN_SEARCH_SPEED_RPM = 1000;          // 扫码区域往返搜索任务码时的位置模式最大轮速，单位RPM。
-bool scanPosePending=false;
 
 CRGB leds[NUM_LEDS];  // LED 像素数组(板载 WS2812B)
 
@@ -62,6 +61,7 @@ NodePathState nodePathState = NodePathState::IDLE;
 portMUX_TYPE nodePathMux = portMUX_INITIALIZER_UNLOCKED;
 uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH] = {0};
 size_t nodePathLen = 0;
+uint32_t nodePathRequestedAt = 0;
 
 QueueHandle_t xAlignmentQueue = NULL;
 SemaphoreHandle_t xAlignmentMotionMutex = NULL;
@@ -72,6 +72,7 @@ bool alignmentStopPending=false;
 AutoAlignmentState autoAlignmentState = AutoAlignmentState::IDLE;
 uint32_t autoAlignmentStartedMs = 0;
 uint32_t alignmentGeneration = 0; // 受运动锁保护，丢弃跨启停周期的已出队帧。
+static float alignmentTargetHeading=NAN; // 仅正式工位对齐提供，和视觉会话共用运动锁。
 
 namespace {
 /** @brief 对齐或圆盘识别任一开启时补光10%，全部关闭时关灯。 */
@@ -124,7 +125,8 @@ AutoAlignmentState getAutoAlignmentState() {
  * @param owner 拥有该次对齐的视觉模式。
  * @param onlyOwner 是否仅允许匹配拥有者关闭。
  */
-void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic, VisionStartMode owner, bool onlyOwner) {
+void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic, VisionStartMode owner, bool onlyOwner,
+    float headingOnAlignment) {
     if (xAlignmentMotionMutex != NULL
             && xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
         // 结束旧定位功能不能停止随后开启的另一种定位或手动连续对齐。
@@ -151,6 +153,7 @@ void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic, VisionSt
         alignmentStopPending=alignmentStopPending||alignmentEnabled||enable;
         alignmentEnabled = false;
         alignmentOwner = enable ? owner : VisionStartMode::NONE;
+        alignmentTargetHeading=enable?headingOnAlignment:NAN;
         ++alignmentGeneration;
         if (xAlignmentQueue != NULL) xQueueReset(xAlignmentQueue);
         ResetDiscAlignmentPid();
@@ -231,6 +234,8 @@ void TickVisualAlignment() {
     static bool alignedReported=false;
     static bool discHeadingUnavailable=false;
     static uint32_t lastFeedbackMs=0,lastLogMs=0,previousGeneration=0,previousFrameSequence=0;
+    static bool hasFeedback=false;
+    static float lastAngleError=NAN,lastVisualX=0,lastVisualY=0;
     if(!xAlignmentMotionMutex)return;
     xSemaphoreTake(xAlignmentMotionMutex,portMAX_DELAY);
     const uint32_t generation=alignmentGeneration;
@@ -238,14 +243,26 @@ void TickVisualAlignment() {
     if(generation!=previousGeneration) {
         alignedReported=false;lastFeedbackMs=0;
         discHeadingUnavailable=false;
+        hasFeedback=false;
         previousGeneration=generation;previousFrameSequence=0;
     }
+    const auto mode=alignmentOwner==VisionStartMode::NONE?VisionStartMode::DISC:alignmentOwner;
+    const auto reportResult=[mode](const char *result) {
+        const char *name=visionNames[static_cast<uint8_t>(mode)];
+        if(!hasFeedback) {
+            Serial.printf("{EVT,VISION,ALIGN_RESULT,%s,%s,0,NA,NA,NA}\n",name,result);
+            return;
+        }
+        char angle[24]="NA";
+        if(!isnan(lastAngleError))snprintf(angle,sizeof(angle),"%.3f",lastAngleError);
+        Serial.printf("{EVT,VISION,ALIGN_RESULT,%s,%s,1,%s,%.3f,%.3f}\n",
+            name,result,angle,lastVisualX,lastVisualY);
+    };
     if(autoAlignmentState==AutoAlignmentState::WAITING&&millis()-autoAlignmentStartedMs>=AUTO_ALIGN_TIMEOUT_MS) {
         OmniMove(0,0,0,0);ResetDiscAlignmentPid();ResetAlignmentWait();
         traceVision(alignmentOwner,false,false);alignmentEnabled=false;autoAlignmentState=AutoAlignmentState::DONE;
         updateVisionLight();
-        Serial.println("[Align] Timeout; alignment accepted");
-        Serial.println("{EVT,VISION,ALIGN_DONE}");
+        reportResult("TIMEOUT_CONTINUE");
     }
     if(!alignmentEnabled){alignedReported=false;lastFeedbackMs=0;xSemaphoreGive(xAlignmentMotionMutex);return;}
     VisualAlignmentFrame_t alignment;
@@ -256,7 +273,6 @@ void TickVisualAlignment() {
     lastFeedbackMs=now;
     if((previousFrameSequence&&alignment.sequence!=previousFrameSequence+1)||dt>=ALIGN_FEEDBACK_TIMEOUT_MS*.001f)ResetAlignmentWait();
     previousFrameSequence=alignment.sequence;
-    const auto mode=alignmentOwner==VisionStartMode::NONE?VisionStartMode::DISC:alignmentOwner;
     traceVisionFirstFrame(mode);
     float angleError=alignment.angleDeg;
     const char *headingError=nullptr;
@@ -278,7 +294,22 @@ void TickVisualAlignment() {
     } else {
         aligned=WaitForAlignment(mode,angleError,alignment.visualX,alignment.visualY,dt,ALIGN_PID_MAX_SPEED_RPM);
     }
-    if(aligned&&autoAlignmentState==AutoAlignmentState::WAITING)autoAlignmentState=AutoAlignmentState::DONE;
+    hasFeedback=true;
+    lastAngleError=headingError?NAN:angleError;
+    lastVisualX=alignment.visualX;
+    lastVisualY=alignment.visualY;
+    if(aligned&&autoAlignmentState==AutoAlignmentState::WAITING) {
+        if(isfinite(alignmentTargetHeading)) {
+            if(const char *error=H30UsbCalibrateHeading(alignmentTargetHeading,true))
+                Serial.printf("{EVT,IMU,REFERENCE,ERR,%s}\n",error);
+            else {
+                currentPose.theta=alignmentTargetHeading;
+                Serial.printf("{EVT,IMU,REFERENCE,OK,%.3f}\n",alignmentTargetHeading);
+            }
+        }
+        autoAlignmentState=AutoAlignmentState::DONE;
+        reportResult("ALIGNED");
+    }
     if(aligned&&!alignedReported)Serial.println("{EVT,VISION,ALIGN_DONE}");
     alignedReported=aligned;
     if(!aligned&&now-lastLogMs>=ALIGN_LOG_INTERVAL_MS) {
@@ -321,7 +352,7 @@ bool updateDisplay(const char *commandType, const char *displayType, const char 
 
 // 主控请求机载电脑切换视觉功能；这些是单次请求，不代表视觉已启动或已对齐。
 // 顺序与 Document/serial_protocol.md 中的五种模式一致。
-static void requestVisionFunction(VisionStartMode mode, bool start) {
+static void requestVisionFunction(VisionStartMode mode, bool start,float headingOnAlignment=NAN) {
     if (mode == VisionStartMode::DISC_MATERIAL) {
         discMessageResumeRequested = false;
         discMaterialActive = start;
@@ -351,7 +382,7 @@ static void requestVisionFunction(VisionStartMode mode, bool start) {
     }
     // 自动流程和串口按钮共用入口：先开启底盘闭环，再请求相机反馈。
     if (VisionModeUsesAlignment(mode)) {
-        setAlignmentEnabled(start, false, start, mode, !start);
+        setAlignmentEnabled(start, false, start, mode, !start,headingOnAlignment);
     }
     if (name) Serial.printf("{EVT,VISION,%s,%s}\n", start ? "START_REQUEST" : "STOP_REQUEST", name);
 }
@@ -359,7 +390,7 @@ static void requestVisionFunction(VisionStartMode mode, bool start) {
 /**
  * @brief 发送开启指定视觉模式的请求，并按模式设置对齐或物料识别状态。
  */
-void requestVisionStart(VisionStartMode mode) { requestVisionFunction(mode, true); }
+void requestVisionStart(VisionStartMode mode,float headingOnAlignment) { requestVisionFunction(mode,true,headingOnAlignment); }
 
 // 定位功能同时结束其底盘闭环；事件不表示相机已经停止。
 /**

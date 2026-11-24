@@ -76,17 +76,21 @@ struct Runtime : CompetitionIO {
     }
     uint32_t submit(const MotionRequest &r)override {
         if(r.discDeparture)assert(!material&&r.kind==MotionKind::NAVIGATE&&r.startNode==14);
+        if(r.kind==MotionKind::SCAN_TASK)assert(r.startNode==(startZone==1?4:0)&&r.endNode==2&&r.automatic);
         assert(!pending);requests.push_back(r);pending=++nextId;
         MotionStatus s;s.id=pending;s.state=MotionState::QUEUED;jobs[pending]=s;return pending;
     }
     uint32_t lidar(uint8_t zone)override{MotionRequest r;r.kind=MotionKind::LIDAR_POSE;r.zone=zone;return submit(r);}
     MotionStatus status(uint32_t id)override{return jobs.at(id);}
-    void visionStart(VisionStartMode mode)override{
+    void visionStart(VisionStartMode mode,float headingOnAlignment)override{
         assert(!pending&&jobs.at(nextId).state==MotionState::DONE);
         if(mode==VisionStartMode::DISC)
             assert(requests.back().kind==MotionKind::DISC_RECORD_POSITION);
         if(mode==VisionStartMode::WORK_AREA||mode==VisionStartMode::WORK_AREA_LOADED)
             assert(requests.back().kind==MotionKind::NAVIGATE&&jobs.at(nextId).chassisDone&&jobs.at(nextId).armReady);
+        if(mode==VisionStartMode::WORK_AREA||mode==VisionStartMode::WORK_AREA_LOADED)
+            assert(headingOnAlignment==(requests.back().endNode==10?270:180));
+        else assert(isnan(headingOnAlignment));
         if(mode==VisionStartMode::CORNER)
             assert(requests.back().kind==MotionKind::HOME_OBSERVE&&requests.back().armPrepared);
         vision.push_back(mode);alignment=AutoAlignmentState::WAITING;visionPolls=0;

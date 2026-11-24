@@ -9,6 +9,7 @@
 struct CompetitionMap {
     uint8_t scan=2,disc=14,coarse=10,temp=22,home1=4,home2=0;
     float homeHeading=180;
+    float coarseHeading=270,tempHeading=180;
 };
 struct CompetitionIO {
     virtual ~CompetitionIO()=default;
@@ -69,7 +70,7 @@ struct CompetitionIO {
     /**
      * @brief 请求开启指定视觉功能；工位对齐与单件物料识别使用不同模式。
      */
-    virtual void visionStart(VisionStartMode mode)=0;
+    virtual void visionStart(VisionStartMode mode,float headingOnAlignment=NAN)=0;
     /**
      * @brief 读取当前自动视觉对齐的 WAITING、DONE 或 FAILED 状态。
      */
@@ -241,8 +242,8 @@ public:
             }
             break;
         case Phase::START_WAIT_ZONE:
-            if(io.zone()) {
-                homeZone=io.zone(); // 锁定开局区号，返家时使用同一区号。
+            if(const uint8_t zone=io.zone()) {
+                homeZone=zone; // 锁定开局区号，返家时使用同一区号。
                 phase=Phase::START_PREPARE_LIDAR;
             }
             break;
@@ -268,10 +269,12 @@ public:
         case Phase::SCAN_TASK: {
             MotionRequest request;
             request.kind=MotionKind::SCAN_TASK;
-            request.zone=homeZone;
+            request.startNode=homeZone==1?map.home1:map.home2;
+            request.endNode=map.scan;
+            request.automatic=true;
             io.display("READ TASK");
             if(motion(request,STATE_SCAN_FAILED)==1) { // 扫码作业完成后再发布任务；失败按扫码错误处理。
-                io.taskReady(); // 发布任务码显示，并设置扫码结束后的准备标志。
+                io.taskReady(); // 发布任务码显示。
                 next(STATE_GRAB_ROUND1); // 开始第一轮圆盘取料。
             }
             break;
@@ -334,7 +337,7 @@ public:
             auto request=path(map.disc,map.coarse,ArmObservation::LOOK,CargoForGrabIndex(0));
             request.discDeparture=true;
             if(motion(request,STATE_ROUTE_FAILED)==1) {
-                io.visionStart(VisionStartMode::WORK_AREA); // 开启粗加工区工位对齐。
+                io.visionStart(VisionStartMode::WORK_AREA,map.coarseHeading);
                 phase=Phase::COARSE_ALIGN;
             }
             break;
@@ -380,7 +383,7 @@ public:
         case Phase::TEMP_NAVIGATE:
             io.display(secondRound?"GO TEMP2":"GO TEMP1");
             if(motion(path(map.coarse,map.temp,ArmObservation::LOOK,CargoForGrabIndex(0)),STATE_ROUTE_FAILED)==1) { // 三件取回后去暂存区，途中提前展开 LOOK。
-                io.visionStart(tempVision); // 第一轮使用空工位对齐，第二轮使用已有物料的工位对齐。
+                io.visionStart(tempVision,map.tempHeading);
                 phase=Phase::TEMP_ALIGN;
             }
             break;

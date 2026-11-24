@@ -8,7 +8,7 @@ namespace ring {
 constexpr float HOVER_MM = 10.0f;
 constexpr float MAX_TURRET_CORRECTION_DEG = 10.0f;
 constexpr float MAX_EXTENSION_CORRECTION_MM = 20.0f;
-constexpr uint8_t TURRET_CORRECTION_ACCELERATION = 200;
+constexpr uint8_t TURRET_CORRECTION_ACCELERATION = 160;
 constexpr uint16_t TURRET_CORRECTION_RPM = 10;
 
 inline uint32_t &requiredStableFrames() {
@@ -35,8 +35,8 @@ struct Gains {
 };
 
 struct Settings {
-    Gains turret{0.0427f, 0.01f, 0}; // X 像素 → 转台角度修正（deg）
-    Gains extension{0.033f, 0.007f, 0}; // Y 像素 → 伸缩位移修正（mm）
+    Gains turret{0.033f, 0.004f, 0}; // X 像素 → 转台角度修正（deg）
+    Gains extension{0.055f, 0.014f, 0}; // Y 像素 → 伸缩位移修正（mm）
 };
 
 struct Frame {

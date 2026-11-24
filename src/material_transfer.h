@@ -77,6 +77,8 @@ constexpr float CARGO_TRAY_CLEARANCE_DEG = 30.0f;
 constexpr float CARGO_TRAY_RELEASE_OFFSET_MM = 3.0f;
 constexpr float CARGO_TRAY_ARRIVAL_TOLERANCE_DEG = 1.0f;
 constexpr float WORK_POSITION_3_TRAY_LIMIT_DEG = 240.0f;
+constexpr float WORK_POSITION_3_TRAY_TARGET_DEG =
+    WORK_POSITION_3_TRAY_LIMIT_DEG - CARGO_TRAY_ARRIVAL_TOLERANCE_DEG;
 
 // 每一项均为毫秒，0 表示跳过该处等待；只控制衔接，不改变 MoveArm 速度。
 struct MaterialApproachDelays {
@@ -111,15 +113,13 @@ extern CargoPlatform cargoPlatforms[MATERIAL_STATION_COUNT];
 inline bool CargoTrayNeedsClearance(uint8_t sourceCargo) {
     return sourceCargo > 1 && cargoPlatforms[sourceCargo - 2].material != MATERIAL_NONE;
 }
-inline bool CargoTrayHasPlacementLimit(uint8_t workPosition) {
-    return workPosition == 3 && cargoPlatforms[0].material != MATERIAL_NONE;
-}
-inline float CargoTrayPlacementAngle(uint8_t sourceCargo, uint8_t workPosition) {
-    const float normalAngle = cargoTrayAngles[sourceCargo - 1]
+inline float CargoTrayClearanceAngle(uint8_t sourceCargo) {
+    return cargoTrayAngles[sourceCargo - 1]
         + (CargoTrayNeedsClearance(sourceCargo) ? CARGO_TRAY_CLEARANCE_DEG : 0.0f);
-    if (!CargoTrayHasPlacementLimit(workPosition)) return normalAngle;
-    const float targetLimit = WORK_POSITION_3_TRAY_LIMIT_DEG - CARGO_TRAY_ARRIVAL_TOLERANCE_DEG;
-    return normalAngle < targetLimit ? normalAngle : targetLimit;
+}
+inline bool CargoTrayNeedsWork3Limit(uint8_t sourceCargo) {
+    return sourceCargo && cargoPlatforms[0].material != MATERIAL_NONE
+        && CargoTrayClearanceAngle(sourceCargo) > WORK_POSITION_3_TRAY_TARGET_DEG;
 }
 
 // ================= 四个单次搬运动作 =================

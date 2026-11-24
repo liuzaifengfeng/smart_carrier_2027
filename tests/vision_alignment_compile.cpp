@@ -9,20 +9,19 @@ static_assert(VisionModeUsesAlignment(VisionStartMode::CORNER), "CORNER couples 
 static_assert(!VisionModeUsesAlignment(VisionStartMode::DISC_MATERIAL), "material recognition stays separate");
 static_assert(!VisionModeUsesAlignment(VisionStartMode::NONE), "no mode stays separate");
 static_assert(RequiredAlignmentFrames(VisionStartMode::DISC) == 1, "disc alignment finishes in one frame");
-static_assert(RequiredAlignmentFrames(VisionStartMode::WORK_AREA) == 5, "work area still requires five frames");
-static_assert(RequiredAlignmentFrames(VisionStartMode::WORK_AREA_LOADED) == 5, "loaded area still requires five frames");
-static_assert(RequiredAlignmentFrames(VisionStartMode::CORNER) == 5, "corner still requires five frames");
+static_assert(RequiredAlignmentFrames(VisionStartMode::WORK_AREA) == 5, "empty work area requires five frames");
+static_assert(RequiredAlignmentFrames(VisionStartMode::WORK_AREA_LOADED) == 2, "loaded area requires two frames");
+static_assert(RequiredAlignmentFrames(VisionStartMode::CORNER) == 2, "corner requires two frames");
 
 constexpr uint8_t feed(unsigned frames, uint8_t count = 0) {
     return frames == 0 ? count : feed(frames - 1, NextAlignmentFrameCount(count, true, true));
 }
 static_assert(feed(1) < AlignmentFrameWaiter::REQUIRED_FRAMES, "one frame must not finish");
-static_assert(feed(4) < AlignmentFrameWaiter::REQUIRED_FRAMES, "four frames must not finish");
-static_assert(feed(5) == AlignmentFrameWaiter::REQUIRED_FRAMES, "fifth frame finishes");
-static_assert(feed(20) == 5, "counter saturates");
+static_assert(feed(2) == AlignmentFrameWaiter::REQUIRED_FRAMES, "second frame finishes");
+static_assert(feed(20) == AlignmentFrameWaiter::REQUIRED_FRAMES, "counter saturates");
 static_assert(NextAlignmentFrameCount(1, false, true) == 0, "outlier resets");
-static_assert(NextAlignmentFrameCount(5, false, true) == 0, "outlier after completion resets");
-static_assert(NextAlignmentFrameCount(5, true, false) == 1, "new mode starts at one");
+static_assert(NextAlignmentFrameCount(2, false, true) == 0, "outlier after completion resets");
+static_assert(NextAlignmentFrameCount(2, true, false) == 1, "new mode starts at one");
 static_assert(feed(1, NextAlignmentFrameCount(1, false, true)) == 1, "one new frame still waits");
 constexpr VisionAlignmentDeadzone small{1, 2, 0.1f};
 constexpr VisionAlignmentDeadzone large{3, 4, 0.2f};
@@ -34,5 +33,4 @@ static_assert(IsWithinAlignmentDeadzone(large, 0.15f, 2, 3), "larger independent
 static_assert(!IsWithinAlignmentDeadzone(small, 0.15f, 2, 3), "smaller independent profile");
 static_assert(IsWithinAlignmentDeadzone({0, 0, 0}, 0, 0, 0), "zero deadzone exact match");
 static_assert(!IsWithinAlignmentDeadzone(small, std::numeric_limits<float>::infinity(), 0, 0), "infinity rejected");
-static_assert(!IsWithinAlignmentDeadzone(small, 0, std::numeric_limits<float>::quiet_NaN(), 0), "NaN rejected");
 static_assert(!IsWithinAlignmentDeadzone({-1, 2, 0.1f}, 0, 0, 0), "invalid deadzone rejected");

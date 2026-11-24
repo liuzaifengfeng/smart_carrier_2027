@@ -50,6 +50,11 @@ const char *MotionHardware::issue(const Step &s) {
     if(cancelled())return "STOPPED";
     switch(s.kind) {
     case StepKind::ARM:
+        if(CargoTrayNeedsWork3Limit(s.trayWork3LimitCargo)) {
+            trayPreselected=false;
+            Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY,WORK_POSITION_3_TRAY_TARGET_DEG,0,0);
+            trayMoving=true;
+        }
         if(s.ringVisionPosition) {
             ringVisionActive=true;
             LedPwm_SetRingVisionActive(true);
@@ -57,12 +62,13 @@ const char *MotionHardware::issue(const Step &s) {
             Serial.println("{EVT,VISION,START_REQUEST,RING_CORRECTION}");
         }
         if(!(s.planned?MoveArmPlanned(s.high,s.length,s.turret,s.pawl,s.speed,s.turretAcceleration,s.slowLower):
-             MoveArm(s.high,s.length,s.turret,s.pawl,s.speed,s.turretAcceleration,s.slowLower,s.lengthAcceleration)))return "EXECUTION";
+             MoveArm(s.high,s.length,s.turret,s.pawl,s.speed,s.turretAcceleration,s.slowLower,
+                s.lengthAcceleration,s.slowLowerAcceleration)))return "EXECUTION";
         if(s.turretArrival)turretTarget=currentArm.turret_angle;
-        if(CargoTrayNeedsClearance(s.trayClearanceCargo)||CargoTrayHasPlacementLimit(s.trayClearanceWorkPosition)) {
+        if(CargoTrayNeedsClearance(s.trayClearanceCargo)) {
             trayPreselected=false;
             Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY,
-                CargoTrayPlacementAngle(s.trayClearanceCargo,s.trayClearanceWorkPosition),0,0);
+                CargoTrayClearanceAngle(s.trayClearanceCargo),0,0);
             trayMoving=true;
         }
         return nullptr;

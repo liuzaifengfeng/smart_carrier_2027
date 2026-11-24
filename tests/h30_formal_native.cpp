@@ -17,8 +17,6 @@ static uint32_t NODE_PATH_OUTER_ACCEL_LEVEL=190,NODE_PATH_MIDDLE_ACCEL_LEVEL=170
 static float NODE_PATH_MIDDLE_SPEED_MM_S=3000;
 static float NODE_PATH_TURN_DEG_S=150,NODE_PATH_TURN_ACCEL_DEG_S2=360;
 static float NODE_PATH_HEADING_DEADBAND_DEG=1;
-static bool scanPosePending=false;
-constexpr uint8_t SCAN_AREA_NODE=2;
 static bool initialized=true;static int trialMux=0,launches=0;static const char *sensorError=nullptr;
 struct ConfigurationGuard{bool held=!busy;};
 struct Logger{template<class... T>void printf(const char*,T...) {}} Serial;
@@ -34,7 +32,7 @@ static const char *H30UsbGetMotionSnapshot(H30Attitude &sample,float &heading,ui
 }
 static bool ChassisGetNodePosition(uint8_t n,float &x,float &y){
     if(n>=25)return false;
-    const float xs[]={310,720,1200,1680,2050},ys[]={240,720,1200,1680,2020};
+    const float xs[]={320,720,1200,1680,2050},ys[]={240,720,1200,1680,2020};
     int row=n/5,col=n%5;if(row%2)col=4-col;x=xs[col];y=ys[row];return true;
 }
 static bool adjacent(uint8_t a,uint8_t b){
@@ -72,15 +70,23 @@ int main(){
     CHECK(fabsf(formalSettings.accelMmS2-307.57f)<.01f);status.state=DONE;
     NODE_PATH_OUTER_ACCEL_LEVEL=255;NODE_PATH_TURN_DEG_S=500;NODE_PATH_TURN_ACCEL_DEG_S2=720;
     CHECK(H30PrepareNodePath(path,5,5000,180,true));CHECK(formalSettings.accelMmS2>78000);
-    status.state=DONE;scanPosePending=true;currentPose={1350,150,180};
-    uint8_t scannedPath[]={2,1,0,9,10,19,20,21,22};
-    CHECK(H30PrepareNodePath(scannedPath,9,300,180,true));
-    CHECK(!scanPosePending&&currentPose.x==1350&&currentPose.y==150);
-    CHECK(formalSettings.startOffset.x==150&&formalSettings.startOffset.y==-90);
-    status.state=DONE;CHECK(H30PrepareNodePath(scannedPath,9,300,180,true));
-    CHECK(formalSettings.startOffset.x==0&&formalSettings.startOffset.y==0&&currentPose.x==1200&&currentPose.y==240);
+    float arrivalHeading=0;
+    uint8_t rightScan[]={4,3,2},leftScan[]={0,1,2},middleScan[]={4,5,14,13,12,7,2},departScan[]={2,3,4,5,14};
+    status.state=DONE;sensorError="OFFLINE";currentPose={2150,250,135};
+    CHECK(H30PrepareNodePath(rightScan,3,300,NAN,true,0,&arrivalHeading,true));
+    CHECK(arrivalHeading==180&&currentPose.x==2150&&currentPose.y==250&&currentPose.theta==135);
+    CHECK(formalSettings.alignStartToRoad&&formalSettings.startOffset.x==100&&formalSettings.startOffset.y==10);
+    status.state=DONE;currentPose={250,250,45};
+    CHECK(H30PrepareNodePath(leftScan,3,300,NAN,true,0,&arrivalHeading,true));
+    CHECK(arrivalHeading==0&&currentPose.x==250&&currentPose.y==250&&currentPose.theta==45);
+    CHECK(formalSettings.startOffset.x==-70&&formalSettings.startOffset.y==10);
+    status.state=DONE;currentPose={2150,250,135};
+    CHECK(H30PrepareNodePath(middleScan,7,300,270,true,0,&arrivalHeading,true));
+    CHECK(arrivalHeading==270&&route.config.endHeading==270);
+    status.state=DONE;CHECK(H30PrepareNodePath(departScan,5,300,90,true));
+    CHECK(!formalSettings.alignStartToRoad&&formalSettings.startOffset.x==0&&formalSettings.startOffset.y==0&&currentPose.x==1200&&currentPose.y==240);
     CHECK(H30StartNodePath(path,5,300,180));CHECK(launches==1&&submitted.kind==MotionKind::NODE_PATH&&submitted.automatic);
     CHECK(submitted.pathCount==5&&submitted.path[4]==22&&submitted.speed==300&&submitted.theta==180);
     CHECK(H30RunNodePath(path,5,120,90));CHECK(launches==2&&!submitted.automatic&&submitted.theta==90);
-    puts("formal preparation retains position policy, frozen parameters and scan offset; wrappers submit jobs");return 0;
+    puts("formal preparation retains position policy and reports planned scan arrival heading");return 0;
 }

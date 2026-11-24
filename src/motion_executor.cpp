@@ -29,14 +29,13 @@ motion::Join join;
 MotionHardware hardware;
 bool running=false;
 bool armSpanOpen=false;
-uint8_t stage=0,scanAttempt=0;
-RobotPose scanStart;
-int64_t scanBefore[4]={};
+uint8_t stage=0,scanTurn=0;
+constexpr uint8_t SCAN_WAIT=4,SCAN_SWEEP=5;
+uint32_t scanArrivedAt=0,scanTurnAt=0;
+float scanTrayAngle=0;
 int64_t discBefore[4]={};
 float discBeforeHeading=0;
 int64_t discReturnTargets[4]={};
-bool discReturnCommanded[4]={};
-float scanDistance=0;
 const char *activeSpan=nullptr;
 
 void publishBaseEstimate(bool force=false) {
@@ -146,7 +145,7 @@ void finish(MotionState state,const char *reason=nullptr) {
     hardware.stopRingVision();
     if(activeSpan){span(activeSpan,false);activeSpan=nullptr;}
     if(armSpanOpen){span("ARM_PROGRAM",false);armSpanOpen=false;}
-    if(job.request.kind==MotionKind::NAVIGATE) {
+    if(job.request.kind==MotionKind::NAVIGATE||job.request.kind==MotionKind::SCAN_TASK) {
         portENTER_CRITICAL(&nodePathMux);nodePathState=state==MotionState::DONE?NodePathState::DONE:NodePathState::FAILED;portEXIT_CRITICAL(&nodePathMux);
     }
     if(job.request.kind==MotionKind::LIDAR_POSE&&state==MotionState::DONE&&!job.request.debug)
@@ -193,6 +192,7 @@ bool tickArm() {
  * @brief 选择导航终点航向：显式theta优先，否则按功能区节点确定。
  */
 float endpointHeading(const MotionRequest &r) {
+    if(r.kind==MotionKind::SCAN_TASK)return r.path[r.pathCount-2]==7?270.0f:NAN;
     if(isfinite(r.theta))return r.theta;
     const uint8_t end=r.kind==MotionKind::NAVIGATE?r.endNode:r.path[r.pathCount-1];
     return end==DISC_AREA_NODE?DISC_AREA_HEADING:end==COARSE_AREA_NODE?COARSE_AREA_HEADING:end==TEMP_AREA_NODE?TEMP_AREA_HEADING:NAN;
@@ -209,8 +209,10 @@ void startTray(float angle) {
  */
 bool beginPath(float startYOffset=0) {
     const auto &r=job.request;
-    if(!H30PrepareNodePath(r.path,r.pathCount,r.kind==MotionKind::NAVIGATE?NODE_PATH_SPEED_MM_S:r.speed,
-        endpointHeading(r),r.automatic,startYOffset)) {
+    const bool scan=r.kind==MotionKind::SCAN_TASK;
+    float plannedHeading=0;
+    if(!H30PrepareNodePath(r.path,r.pathCount,r.kind==MotionKind::NODE_PATH?r.speed:NODE_PATH_SPEED_MM_S,
+        endpointHeading(r),r.automatic,startYOffset,scan?&plannedHeading:nullptr,scan)) {
         Serial.println("{EVT,NAV,ROUTE_FAILED,START}");finish(MotionState::FAILED,"START");return false;
     }
     char route[sizeof("{EVT,NAV,ROUTE_PATH,4294967295}")+MAX_NODE_PATH_LENGTH*3];
@@ -220,7 +222,10 @@ bool beginPath(float startYOffset=0) {
     snprintf(route+length,sizeof(route)-length,"}");
     Serial.println(route);
     phase("NAVIGATION");Serial.println("{EVT,NAV,ROUTE_RUNNING}");
-    startTray(0);
+    if(scan)xQueueReset(xScannerQueue);
+    // 路上就转好扫码舵盘；终点航向沿用路径规划器选定的方向。
+    if(scan)scanTrayAngle=continuous::wrap(plannedHeading+90);
+    startTray(scan?scanTrayAngle:0);
     ContinuousMotionBegin();stage=2;join.armReady=r.observation==ArmObservation::NONE;
     return true;
 }
@@ -229,75 +234,43 @@ bool beginPath(float startYOffset=0) {
  * @return true 已取得有效任务码，false 仍未收到。
  */
 bool pollTaskCode() {
-    if(taskReceived)return true;
     char code[SCANNER_BUF_LEN];
-    if(waitScannerCode(code,sizeof(code),0)) {
+    while(!taskReceived&&waitScannerCode(code,sizeof(code),0)) {
         const auto task=parseTaskCode(code);
         portENTER_CRITICAL(&taskCodeMux);if(!taskReceived&&task.valid){currentTask=task;taskReceived=true;}portEXIT_CRITICAL(&taskCodeMux);
         Serial.printf("[SCANNER] task code %s\n",task.valid?"OK":"ERR");
     }
     return taskReceived;
 }
-/**
- * @brief 将编码器记录的扫码前后行程换算到地图坐标，更新估算位姿；不是外部实测定位。
- */
-void recordScanTravel(const RobotPose &start,float distance) {
-    const continuous::Vec d=continuous::bodyToWorld({0,distance},start.theta);
-    currentPose={start.x+d.x,start.y+d.y,start.theta};
-}
 void finishScan() {
     startTray(0);
     finish(MotionState::DONE);
 }
 /**
- * @brief 扫描完成后再转向扫码方向，随后直行接近并搜索任务码。
+ * @brief 节点到达后等待有效任务码，必要时让料盘围绕扫码角摆动三轮。
  */
-void scanTick() {
-    const bool zone1=job.request.zone==1;
-    if(stage==0) {
-        MotionRequest turn;
-        turn.kind=MotionKind::POSITION;
-        turn.theta=zone1?45:-45;
-        turn.speed=200;
-        turn.positionAcceleration=SCAN_ACCELERATION;
-        if(beginArm(turn))stage=1;
-        return;
+void scanAtNode() {
+    const bool received=pollTaskCode();
+    if(stage==SCAN_WAIT) {
+        if(received){finishScan();return;}
+        if(millis()-scanArrivedAt<3000)return;
+        stage=SCAN_SWEEP;
+        phase("SCAN_SWEEP");
     }
-    if(stage==1) {
-        if(!tickArm()||!running)return;
-        if(pollTaskCode()){finishScan();return;}
-        startTray(zone1?270:90);
-        scanStart=currentPose;
-        ScanMotionSettings cfg{600,400,Y_PULSE,static_cast<uint16_t>(SCAN_APPROACH_SPEED_RPM),static_cast<uint16_t>(SCAN_SEARCH_SPEED_RPM)};
-        BeginContinuousScan(cfg,pollTaskCode);stage=2;phase("SCAN_APPROACH");return;
-    }
-    if(stage==2) {
-        TickContinuousScan();if(ContinuousScanRunner().active())return;
-        recordScanTravel(scanStart,ContinuousScanRunner().forwardTravel());
-        if(ContinuousScanRunner().failure()){finish(MotionState::FAILED,ContinuousScanRunner().failure());return;}
-        if(pollTaskCode()){finishScan();return;}
-        scanAttempt=0;stage=3;
-    }
-    if(stage==3) {
-        if(pollTaskCode()){finishScan();return;}
-        if(scanAttempt==3){finish(MotionState::FAILED,"EXECUTION");return;}
-        ++scanAttempt;scanDistance=scanAttempt%2?-400:400;scanStart=currentPose;
-        uint32_t speed=100;
-        if(scanAttempt<3) {
-            const uint32_t reduction=scanAttempt*100;
-            speed=SCAN_SEARCH_SPEED_RPM>reduction?SCAN_SEARCH_SPEED_RPM-reduction:1;
-        }
-        if(!ReadChassisEncoderPositions(scanBefore)||!BeginPositionMove(0,scanDistance,0,speed,SCAN_ACCELERATION)){finish(MotionState::FAILED,"EXECUTION");return;}
-        stage=4;phase("SCAN_SEARCH");return;
-    }
-    if(stage==4) {
-        const bool received=pollTaskCode();if(received&&PositionMoveActive())CancelPositionMove();else TickPositionMove();
-        if(PositionMoveActive())return;
-        int64_t after[4];if(!ReadChassisEncoderPositions(after)){finish(MotionState::FAILED,"EXECUTION");return;}
-        double units=0;for(int i=0;i<4;++i)units+=fabs(static_cast<double>(after[i]-scanBefore[i]))/4;
-        recordScanTravel(scanStart,(scanDistance>=0?1:-1)*units*3200/65536/Y_PULSE);
-        if(received)finishScan();else stage=3;
-    }
+    // 每段给舵机 250 ms 完成 8° 行程，保持原摆动期间的扫码时长。
+    constexpr uint32_t travelMs=250;
+    if(scanTurn&&millis()-scanTurnAt<travelMs)return;
+    if(received&&scanTurn%2==0){finishScan();return;}
+    if(scanTurn==12){finish(MotionState::FAILED,"SCAN_TIMEOUT");return;}
+
+    constexpr float offsets[]={8,0,-8,0};
+    motion::Step tray;
+    tray.kind=motion::StepKind::TRAY_ROTATE;
+    tray.turret=scanTrayAngle+offsets[scanTurn%4];
+    tray.waitMs=travelMs;
+    hardware.issue(tray);
+    scanTurnAt=millis();
+    ++scanTurn;
 }
 bool discReturnArrived() {
     bool arrived=true;
@@ -312,34 +285,57 @@ bool discReturnArrived() {
             finish(MotionState::FAILED,error);
             return false;
         }
-        arrived=arrived&&node_position::encoderReturnArrived(motor,discReturnTargets[id-1],discReturnCommanded[id-1]);
+        arrived=arrived&&node_position::encoderReturnArrived(motor,discReturnTargets[id-1]);
     }
     return arrived;
+}
+/**
+ * @brief 消费已接收的正式路径，或结束超过回传期限的作业。
+ */
+bool takeRequestedPath(MotionRequest &request) {
+    portENTER_CRITICAL(&nodePathMux);
+    const auto state=nodePathState;
+    const bool timedOut=state==NodePathState::WAITING
+        && millis()-nodePathRequestedAt>=ROUTE_REPLY_TIMEOUT_MS;
+    if(timedOut)nodePathState=NodePathState::FAILED;
+    if(state==NodePathState::RECEIVED) {
+        request.pathCount=nodePathLen;
+        memcpy(request.path,nodePathBuffer,nodePathLen);
+        nodePathState=NodePathState::RUNNING;
+    }
+    portEXIT_CRITICAL(&nodePathMux);
+    if(timedOut) {
+        Serial.println("{EVT,NAV,ROUTE_FAILED,TIMEOUT}");
+        finish(MotionState::FAILED,"PATH_TIMEOUT");
+    } else if(state==NodePathState::FAILED) {
+        finish(MotionState::FAILED,"STOPPED");
+    }
+    return state==NodePathState::RECEIVED;
 }
 /**
  * @brief 推进导航作业：请求节点路径、执行底盘运动、按进站阶段提前启动观察姿态，等待两者合流完成。
  */
 void navigationTick() {
     auto &r=job.request;
-    if(stage==0&&r.kind==MotionKind::NAVIGATE) {
-        portENTER_CRITICAL(&nodePathMux);nodePathState=NodePathState::WAITING;nodePathLen=0;portEXIT_CRITICAL(&nodePathMux);
+    const bool scan=r.kind==MotionKind::SCAN_TASK;
+    if(scan&&stage>=SCAN_WAIT){scanAtNode();return;}
+    if(stage==0&&(r.kind==MotionKind::NAVIGATE||scan)) {
+        portENTER_CRITICAL(&nodePathMux);
+        nodePathRequestedAt=millis();
+        nodePathState=NodePathState::WAITING;nodePathLen=0;
+        portEXIT_CRITICAL(&nodePathMux);
         Serial.println("{EVT,NAV,ROUTE_WAITING}");Serial.printf("{EVT,NAV,ROUTE_REQUEST,%u,%u}\n",r.startNode,r.endNode);
         phase("PATH_WAIT");stage=1;return;
     }
     if(stage==1) {
-        portENTER_CRITICAL(&nodePathMux);
-        const auto state=nodePathState;
-        if(state==NodePathState::RECEIVED){r.pathCount=nodePathLen;memcpy(r.path,nodePathBuffer,nodePathLen);nodePathState=NodePathState::RUNNING;}
-        portEXIT_CRITICAL(&nodePathMux);
-        if(state==NodePathState::FAILED){finish(MotionState::FAILED,"STOPPED");return;}
-        if(state!=NodePathState::RECEIVED)return;
+        if(!takeRequestedPath(r))return;
         if(r.path[0]!=r.startNode||r.path[r.pathCount-1]!=r.endNode){Serial.println("{EVT,NAV,ROUTE_FAILED,ENDPOINT}");finish(MotionState::FAILED,"ENDPOINT");return;}
         float startYOffset=0;
         if(r.discDeparture) {
             if(!MergeDiscYIntoFirstStraight(r.path[1])) {
                 phase("DISC_RETURN_POSITION");
                 if(const char *error=BeginDiscYReturn(discBefore,discBeforeHeading,ALIGN_PID_MAX_SPEED_RPM,
-                    discReturnTargets,discReturnCommanded,cancelled)) {
+                    discReturnTargets,cancelled)) {
                     stopHardware();
                     finish(MotionState::FAILED,error);
                 } else stage=3;
@@ -357,6 +353,7 @@ void navigationTick() {
         if(!discReturnArrived()||!beginPath())return;
     } else if(stage==0) {if(!beginPath())return;}
     if(!join.chassisDone) {
+        if(scan)pollTaskCode();
         ContinuousMotionTick();
         if(!ContinuousMotionActive()) {
             if(ContinuousMotionFailure()){
@@ -365,6 +362,10 @@ void navigationTick() {
             }
             join.chassisDone=true;flag("CHASSIS_DONE");
             if(activeSpan){span(activeSpan,false);activeSpan=nullptr;}
+            if(scan) {
+                scanArrivedAt=millis();scanTurn=0;
+                stage=SCAN_WAIT;phase("SCAN_WAIT");scanAtNode();return;
+            }
             if(r.kind==MotionKind::NAVIGATE&&r.cargo) {
                 hardware.preselectTray(cargoTrayAngles[r.cargo-1]);
                 flag("TRAY_PRESELECT");
@@ -392,7 +393,7 @@ void navigationTick() {
     if(join.complete())finish(MotionState::DONE);
 }
 /**
- * @brief 统一运动任务循环：领取已放行作业，按MotionKind调用扫码、导航或机械臂执行入口，并推进视觉闭环。
+ * @brief 统一运动任务循环：领取已放行作业，推进导航、机械臂和视觉闭环。
  */
 void task(void *) {
     for(;;) {
@@ -421,8 +422,8 @@ void task(void *) {
         }
         TurretMotorPoll();
         const auto kind=job.request.kind;
-        if(kind==MotionKind::NAVIGATE||kind==MotionKind::NODE_PATH)navigationTick();
-        else if(kind==MotionKind::SCAN_TASK)scanTick();
+        const bool navigation=kind==MotionKind::NAVIGATE||kind==MotionKind::NODE_PATH||kind==MotionKind::SCAN_TASK;
+        if(navigation)navigationTick();
         else if(kind==MotionKind::DISC_RECORD_POSITION) {
             phase("DISC_RECORD_POSITION");
             const char *error=RecordDiscEncoderPositions(discBefore,cancelled);
@@ -475,7 +476,7 @@ void task(void *) {
         uint32_t delay=20;
         if(kind==MotionKind::TURRET_TRIAL)delay=TurretMotorNextDelay();
         if(kind==MotionKind::AXIS_TRIAL)delay=ArmAxisTrialNextDelay();
-        if((kind==MotionKind::NAVIGATE||kind==MotionKind::NODE_PATH)&&stage==2&&!join.chassisDone)delay=ContinuousMotionNextDelay();
+        if(navigation&&stage==2&&!join.chassisDone)delay=ContinuousMotionNextDelay();
         if(join.armStarted&&!join.armReady){const uint32_t next=arm.nextDelay();if(next<delay)delay=next;}
         if(kind==MotionKind::TRIAL)delay=ContinuousMotionNextDelay();
         // 通知可由新视觉帧、取消或控制请求提前唤醒；没有新增稳定窗口。
@@ -501,7 +502,7 @@ void WakeMotionExecutor(){if(worker)xTaskNotifyGive(worker);}
  */
 uint32_t CurrentMotionId(){return job.id;}
 /**
- * @brief 按值复制动作请求到队列，不等待动作执行完成。工作任务按 kind 分发到 scanTick、navigationTick 或机械臂序列。
+ * @brief 按值复制动作请求到队列，不等待动作执行完成。
  * @param request 动作类型、目标位置及本轮任务数据。
  * @param launch true 立即允许执行；false 等串口回复 ACK 后调用 LaunchMotion 放行。
  * @return 非零作业编号；0 表示未提交。提交成功不等于动作完成。

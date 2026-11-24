@@ -12,7 +12,7 @@ const { controller, model, showVision } = defineProps<{
 const gains = ['Kp', 'Ki', 'Kd']
 const axes = ['X → 转台（角度）', 'Y → 伸缩（毫米）']
 const ringPosition = ref(1)
-const values = ref(['0.0427', '0.01', '0', '0.033', '0.007', '0'])
+const values = ref(['0.033', '0.004', '0', '0.055', '0.014', '0'])
 const lastReadback = ref('')
 const deadzones = computed(() => model.parameters.value.filter(p =>
   p.name === '圆环纠偏/X死区(px)' || p.name === '圆环纠偏/Y死区(px)'))

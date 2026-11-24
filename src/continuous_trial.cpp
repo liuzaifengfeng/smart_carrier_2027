@@ -245,7 +245,8 @@ const char *ContinuousTrialStatus(uint32_t id) {
 /**
  * @brief 在运动任务内构建正式路径并冻结本次速度/加速度配置；不等待行程完成。
  */
-bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async,float startYOffset) {
+bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float finalHeading,bool async,
+                       float startYOffset,float *plannedArrivalHeading,bool preserveStartPosition) {
     ConfigurationGuard guard;if(!guard.held)return false;
     if(!initialized||otaBusy()||taskMotionAborted)return false;
     // 预留共享规划/任务资源；上传和其他运动不能在构建过程中插入。
@@ -308,14 +309,16 @@ bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float fi
     Serial.printf("[Route] Middle profile (7/11/12/13/17): %.1f mm/s, %.1f mm/s2 (EMM V5 %lu)\n",
         formalSettings.middleSpeedMmS,formalSettings.middleAccelMmS2,static_cast<unsigned long>(middleAccelLevel));
     formalSettings.startOffset={};
+    formalSettings.alignStartToRoad=preserveStartPosition;
     formalSettings.startYOffset=startYOffset;
-    if(scanPosePending&&path[0]==SCAN_AREA_NODE) {
-        formalSettings.startOffset=Vec(currentPose.x,currentPose.y)-nodes[0].p;
-        scanPosePending=false;
-        Serial.printf("[Route] Scan start offset=(%.1f, %.1f) mm\n",
-                      formalSettings.startOffset.x,formalSettings.startOffset.y);
+    if(plannedArrivalHeading)*plannedArrivalHeading=cfg.endHeading;
+    const Vec start=nodes[0].p+Vec{0,startYOffset};
+    if(preserveStartPosition) {
+        formalSettings.startOffset=Vec{currentPose.x,currentPose.y}-start;
+        Serial.printf("[Route] Start offset=(%.1f, %.1f) mm\n",
+            formalSettings.startOffset.x,formalSettings.startOffset.y);
     } else {
-        currentPose.x=nodes[0].p.x;currentPose.y=nodes[0].p.y+startYOffset;
+        currentPose.x=start.x;currentPose.y=start.y;
     }
     setAlignmentEnabled(false);
     portENTER_CRITICAL(&trialMux);

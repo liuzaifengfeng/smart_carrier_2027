@@ -1,6 +1,7 @@
 // 由 robot_runtime.cpp 在业务状态与动作函数之后包含。仅此任务读取 Serial0。
 #include <float.h>
 #include "debug_release_button.h"
+#include "start_panel.h"
 #include "h30_usb.h"
 #include "continuous_trial.h"
 #include "disc_position_grab.h"
@@ -14,18 +15,74 @@ static bool serialDebugMode = true;
  */
 static bool serialTrial(const SerialFrame &frame);
 static DebugReleaseButton bootReleaseButton;
+static DebugReleaseButton panelStartButton;
 static portMUX_TYPE bootReleaseMux = portMUX_INITIALIZER_UNLOCKED;
+static StartZone panelZone=START_ZONE_UNKNOWN;
+static StartZone panelStartZone=START_ZONE_UNKNOWN;
+static bool debugReleaseReady=false;
+static bool dialReleasePending=false;
+static bool releaseFromDial=false;
 
 // loop独立采样，串口任务执行阻塞动作时也能识别并忽略按键。
 /**
- * @brief 采样板载BOOT按钮并记录Release请求，实际切换由空闲串口任务处理。
+ * @brief 采样启动面板与板载 BOOT，实际 Release 切换由串口任务处理。
  */
 void PollDebugBootButton() {
     const bool pressed = digitalRead(BOOT0_PIN) == LOW;
     const uint32_t nowMs = millis();
+    const bool buttonHigh=digitalRead(START_BUTTON_PIN)==HIGH;
+    const bool zoneHigh=digitalRead(START_ZONE_SWITCH_PIN)==HIGH;
+    const auto zone=zoneHigh?START_ZONE_2:START_ZONE_1;
     portENTER_CRITICAL(&bootReleaseMux);
     bootReleaseButton.update(pressed, nowMs);
+    if(debugReleaseReady&&panelZone!=START_ZONE_UNKNOWN&&panelZone!=zone)
+        dialReleasePending=true;
+    panelZone=zone;
+    const bool wasPanelPressed=panelStartButton.stablePressed;
+    panelStartButton.update(buttonHigh,nowMs);
+    const bool panelPressed=!wasPanelPressed&&panelStartButton.stablePressed;
+    const bool startRequested=panelStartButton.takeRequest();
+    if(startRequested)panelStartZone=zone;
+    const bool debugReady=debugReleaseReady;
+    const bool waitingForStart=!serialDebugMode&&panelStartZone==START_ZONE_UNKNOWN;
     portEXIT_CRITICAL(&bootReleaseMux);
+
+    if(panelPressed) {
+        Serial.printf("[StartPanel] button=PRESS start_level=%u zone_level=%u zone=%u start=%s\n",
+            static_cast<unsigned>(buttonHigh),static_cast<unsigned>(zoneHigh),static_cast<unsigned>(zone),
+            startRequested?"REQUESTED":"IGNORED");
+    }
+
+    const RobotState state=currentState;
+    auto light=StartPanelLight::OFF;
+    if(StartPanelTaskActive(state))light=StartPanelLight::BREATH;
+    else if(waitingForStart&&state==STATE_WAIT_START)
+        light=zoneHigh?StartPanelLight::DOUBLE_FLASH:StartPanelLight::SINGLE_FLASH;
+    else if(debugReady)light=StartPanelLight::STEADY;
+
+    static auto lastLight=StartPanelLight::OFF;
+    static uint32_t lightSince=0;
+    if(light!=lastLight) {
+        lastLight=light;
+        lightSince=nowMs;
+    }
+    ledcWrite(BUTTON_LED_PWM_CHANNEL,StartPanelLightDuty(light,nowMs-lightSince));
+}
+
+StartZone ReadPanelStartRequest() {
+    portENTER_CRITICAL(&bootReleaseMux);
+    const auto zone=panelStartZone;
+    portEXIT_CRITICAL(&bootReleaseMux);
+    return zone;
+}
+
+StartZone SelectReleaseStartZone(bool waitForPanel) {
+    portENTER_CRITICAL(&bootReleaseMux);
+    const auto zone=panelStartZone!=START_ZONE_UNKNOWN?panelStartZone:
+        waitForPanel?START_ZONE_UNKNOWN:currentStartZone;
+    panelStartButton.setIdle(zone==START_ZONE_UNKNOWN);
+    portEXIT_CRITICAL(&bootReleaseMux);
+    return zone;
 }
 
 /**
@@ -33,7 +90,9 @@ void PollDebugBootButton() {
  */
 static void serialBootSetIdle(bool idle) {
     portENTER_CRITICAL(&bootReleaseMux);
-    bootReleaseButton.setIdle(serialDebugMode && idle && !ContinuousTrialActive() && !MotionExecutorActive());
+    const bool ready=serialDebugMode&&idle&&!ContinuousTrialActive()&&!MotionExecutorActive();
+    bootReleaseButton.setIdle(ready);
+    debugReleaseReady=ready;
     portEXIT_CRITICAL(&bootReleaseMux);
 }
 /**
@@ -77,7 +136,7 @@ static void serialCfgError(const SerialFrame &frame, const char *reason) {
 static bool serialKnownAction(const SerialFrame &frame) {
     static const char *const names[][2] = {
         {"SYS", "HELLO"}, {"SYS", "RELEASE"}, {"SYS", "READY"},
-        {"SYS", "START"}, {"SYS", "HELP"}, {"SYS", "REBOOT"}, {"SYS", "BEEP"},
+        {"SYS", "START"}, {"SYS", "HELP"}, {"SYS", "REBOOT"}, {"SYS", "BEEP"}, {"SYS", "PANEL_GET"},
         {"MOTION", "STATUS"},
         {"EMM", "AXIS_TRIAL"},
         {"TRAY", "ROTATE"}, {"TRAY", "ZERO"},
@@ -151,7 +210,8 @@ static void serialRoute(const SerialFrame &frame) {
     }
 
     portENTER_CRITICAL(&nodePathMux);
-    const bool accepting = nodePathState == NodePathState::WAITING;
+    const bool accepting = nodePathState == NodePathState::WAITING
+        && millis() - nodePathRequestedAt < ROUTE_REPLY_TIMEOUT_MS;
     if (accepting) {
         memcpy(nodePathBuffer, path, count);
         nodePathLen = count;
@@ -172,7 +232,7 @@ static void serialRoute(const SerialFrame &frame) {
 /**
  * @brief 处理进入正式运行模式，重置比赛准备状态并启动或恢复主状态机任务。
  */
-static void serialRelease(const SerialFrame &frame) {
+static void serialRelease(const SerialFrame &frame,bool fromDial=false) {
     if (!serialDebugMode) { serialError(frame, "MODE"); return; }
     if (discMaterialActive) requestVisionStop(VisionStartMode::DISC_MATERIAL);
     setAlignmentEnabled(false);
@@ -184,13 +244,17 @@ static void serialRelease(const SerialFrame &frame) {
     firstDiscGrabReady = false;
     enableRun = false;
     if (xTaskCreate(Task_MainStateMachine, "Task_MainStateMachine", 16384,
-                    NULL, 8, &xTask_MainStateMachine_Handle) != pdPASS) {
+                    fromDial?&dialReleasePending:nullptr, 8, &xTask_MainStateMachine_Handle) != pdPASS) {
         xTimerDelete(xHomeTimer, portMAX_DELAY);
         xHomeTimer = NULL;
         serialError(frame, "TASK");
         return;
     }
+    portENTER_CRITICAL(&bootReleaseMux);
     serialDebugMode = false;
+    portEXIT_CRITICAL(&bootReleaseMux);
+    serialBootSetIdle(false);
+    releaseFromDial=fromDial;
     LedPwm_PlayCue(2);
     leds[0] = CRGB::Green;
     FastLED.show();
@@ -199,18 +263,21 @@ static void serialRelease(const SerialFrame &frame) {
 }
 
 /**
- * @brief 在串口空闲时消费板载按钮的Release请求，复用正式模式切换入口。
+ * @brief 在串口空闲时处理板载按钮或拨杆触发的 Release。
  */
 static void serialBootReleaseAtIdle(bool idle) {
+    serialBootSetIdle(idle);
     portENTER_CRITICAL(&bootReleaseMux);
-    bootReleaseButton.setIdle(serialDebugMode && idle && !ContinuousTrialActive() && !MotionExecutorActive());
     const bool requested = bootReleaseButton.takeRequest();
+    const bool fromDial=debugReleaseReady&&dialReleasePending;
+    if(fromDial||!serialDebugMode)dialReleasePending=false;
     portEXIT_CRITICAL(&bootReleaseMux);
-    if (!requested) return;
+    if (!requested&&!fromDial) return;
     // 与串口命令同一个任务、同一个入口，避免并发创建定时器/主状态机。
     char command[] = "{CMD,SYS,RELEASE}";
     SerialFrame frame;
-    if (parseSerialFrame(command, frame)) serialRelease(frame);
+    if (fromDial)Serial.println("[StartPanel] dial=CHANGED release=REQUESTED");
+    if (parseSerialFrame(command, frame)) serialRelease(frame,fromDial);
 }
 
 // 串口只提交；ACK、选择事件先于 Launch，实际完成及进度由运动任务发布。
@@ -401,6 +468,14 @@ static void serialRetrieve(const SerialFrame &frame) {
  * @brief 串口业务总分发入口：按类别和动作处理系统、视觉、底盘、机械臂及参数请求。
  */
 static void serialDispatch(const SerialFrame &frame) {
+    if (frame.is("SYS", "PANEL_GET", 0)) {
+        const bool buttonHigh=digitalRead(START_BUTTON_PIN)==HIGH;
+        const bool zoneHigh=digitalRead(START_ZONE_SWITCH_PIN)==HIGH;
+        const auto zone=zoneHigh?START_ZONE_2:START_ZONE_1;
+        Serial.printf("{RSP,SYS,PANEL_GET,OK,%u,%u,%u}\n",
+            static_cast<unsigned>(buttonHigh),static_cast<unsigned>(zoneHigh),static_cast<unsigned>(zone));
+        return;
+    }
     if (frame.is("SYS", "BEEP", 0)) {
         LedPwm_PlayCue(3);
         serialReply(frame, "OK");
@@ -765,7 +840,9 @@ static void serialDispatch(const SerialFrame &frame) {
         if (xVisualTaskQueue) xQueueSend(xVisualTaskQueue, &command, 0);
         serialReply(frame, "ACK");
     } else if (frame.is("VISION", "LIDAR_POSE", 0)) {
-        SubmitLidarPoseAction(true,serialDebugMode);
+        const auto zone=ReadPanelStartRequest();
+        if(releaseFromDial&&zone==START_ZONE_UNKNOWN){serialError(frame,"NOT_READY");return;}
+        SubmitLidarPoseAction(true,serialDebugMode,static_cast<uint8_t>(zone));
     } else if (frame.starts("CFG", "GET") || frame.starts("CFG", "BEGIN")
                || frame.starts("CFG", "SET") || frame.starts("CFG", "COMMIT")) {
         const bool reading = frame.starts("CFG", "GET");

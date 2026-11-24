@@ -10,7 +10,8 @@ constexpr float STRAIGHT_LATERAL_KP=3; // 横向位置比例增益(1/s)：偏离
 struct Settings {
     float speedMmS=2000,accelMmS2=2000,turnDegS=200,turnAccelDegS2=400,headingDeadbandDeg=1;
     float middleSpeedMmS=2000,middleAccelMmS2=2000;
-    continuous::Vec startOffset; // 扫码停车位置相对首节点的偏移，并入首段四轮位置目标。
+    continuous::Vec startOffset; // 起始估算位置相对路径起点的偏移，并入首段四轮位置目标。
+    bool alignStartToRoad=false; // 先横移到道路中心，再按剩余纵向距离走首段。
     float startYOffset=0; // 圆盘离站时合入首条直线的地图 Y 偏移。
     bool outerStraightVelocity=false; // 正式节点导航启用，保留同步位置模式入口。
 };
@@ -32,9 +33,9 @@ inline void discReturnWheelPulses(float worldY,float lateralPpm,float forwardPpm
     pulses[2]=-pulses[1];
     pulses[3]=-pulses[0];
 }
-// 低转速和位置残差都可能在减速中提前达标，已下发目标的轮子还需确认驱动器到位。
-inline bool encoderReturnArrived(const Motor &motor,int64_t target,bool commanded) {
-    return (!commanded||(motor.flags&2))&&motor.rpm>=-3&&motor.rpm<=3&&
+// 圆盘 Y 回位依据实测转速和编码器残差判定。
+inline bool encoderReturnArrived(const Motor &motor,int64_t target) {
+    return motor.rpm>=-3&&motor.rpm<=3&&
         fabs(double(motor.position-target))<=STRAIGHT_ARRIVAL_ENCODER_TOLERANCE;
 }
 struct Result {continuous::Vec estimated;float heading=0,s=0;};
@@ -197,7 +198,7 @@ class Runner {
     enum Stage { IDLE, START, QUIET, SETTLE, SELECT, ALIGN, ZERO, PREPARE, MOVE, STRAIGHT_VELOCITY, OUTER, OUTER_QUIET, FINISHED } stage=IDLE;
     Stage settleNext=SELECT;
     HeadingStable3 headingStable;
-    enum Action { ROTATION, STRAIGHT, CURVE, FINAL } action=FINAL;
+    enum Action { ROTATION, START_LATERAL, STRAIGHT, CURVE, FINAL } action=FINAL;
     const continuous::Route *route=nullptr;
     const Settings *settings=nullptr;
     IO *io=nullptr;
@@ -210,6 +211,7 @@ class Runner {
     double unitsPerDistance=0,tolerance=0,hardLimit=0;
     uint32_t due=0,quietStarted=0,started=0,previous=0,deadline=0,lastReport=0,lastArrivalReport=0;
     bool prepared=false,valid=false,rotating=false,scanExit=false,sent=false,braking=false,turningForAlignment=false;
+    bool startLateralDone=false;
     uint8_t zeroId=1,attempts=0,movingWheels=0;
     uint16_t peakMeasuredRpm=0;
     uint8_t representative=1;

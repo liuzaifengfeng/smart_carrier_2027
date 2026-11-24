@@ -39,7 +39,7 @@ bool MovePosition(float,float,float,float,bool (*)(),uint8_t){return true;}
 std::vector<motion::Step> issuedArm;
 std::vector<uint32_t> armWaits;
 void vTaskDelay(uint32_t ticks){armWaits.push_back(ticks);}
-bool MoveArm(float high,float length,float turret,float pawl,float speed,uint8_t ramp,bool slowLower,uint8_t) {
+bool MoveArm(float high,float length,float turret,float pawl,float speed,uint8_t ramp,bool slowLower,uint8_t,uint8_t) {
     motion::Step s;s.high=high;s.length=length;s.turret=turret;s.pawl=pawl;s.speed=speed;s.turretAcceleration=ramp;s.slowLower=slowLower;
     if(turret!=-1){currentArm.turret_angle=turret;measuredTurret=turret;}
     if(length!=-1)currentArm.length=length;
@@ -81,14 +81,18 @@ void forward() {
             if(!strcmp(s.name,"APPROACH_ROTATE")||!strcmp(s.name,"PICK_DESCEND")||!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_10"))assert(s.pawl==-1);
             if(!strcmp(s.name,"APPROACH_ROTATE")||!strcmp(s.name,"PLACE_ROTATE"))assert(s.turretArrival&&s.waitMs==0);
             if(!strcmp(s.name,"PLACE_ROTATE")&&w==3) {
-                assert(s.trayClearanceCargo==c&&s.trayClearanceWorkPosition==3);
+                assert(s.trayClearanceCargo==c&&s.trayWork3LimitCargo==0);
                 assert(!strcmp(p.steps[i+1].name,layer==1?"PLACE_DESCEND_10":"PLACE_DESCEND"));
+                assert(p.steps[i+1].trayWork3LimitCargo==c);
             }
             if(s.kind==motion::StepKind::ARM)assert(s.turretAcceleration==(layer==1?TURRET_ACCELERATION_SLOW:TURRET_ACCELERATION_FAST));
             assert(s.slowLower==((!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_10"))&&layer==1));
             if(s.slowLower)assert(s.timed);
             if(!strcmp(s.name,"PICK_RETRACT")){assert(s.length==0);retract=true;}
-            if(!strcmp(s.name,"PLACE_DESCEND_10")){assert(s.high==10&&s.waitMs==delays.placeDescendMs&&p.steps[i+1].high==0&&p.steps[i+1].waitMs==100);}
+            if(!strcmp(s.name,"PLACE_DESCEND_10")){
+                assert(s.high==10&&s.waitMs==delays.placeDescendMs&&s.slowLowerAcceleration==248);
+                assert(p.steps[i+1].high==0&&p.steps[i+1].waitMs==100&&p.steps[i+1].slowLowerAcceleration==200);
+            }
             if(!strcmp(s.name,"PLACE_DESCEND"))assert(near(s.high,layer==1?0:materialTransferLayout.workArea[w-1].high+(layer-1)*materialTransferLayout.secondLayerOffset));
             if(!strcmp(s.name,"PLACE_RELEASE_ZERO")){
                 assert(layer==1&&s.pawl==0&&s.waitMs==300&&s.timed);

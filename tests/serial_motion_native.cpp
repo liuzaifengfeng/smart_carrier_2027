@@ -9,6 +9,7 @@
 #include "continuous_trial.h"
 #include "h30_usb.h"
 #include "debug_release_button.h"
+#include "start_panel.h"
 #include "disc_material_decision.h"
 #include "task_code.h"
 #include "led_pwm.h"
@@ -27,11 +28,20 @@ using portMUX_TYPE=int;
 #define portENTER_CRITICAL(x) ((void)(x))
 #define portEXIT_CRITICAL(x) ((void)(x))
 #define pdMS_TO_TICKS(x) (x)
-constexpr int portMAX_DELAY=1,pdTRUE=1,pdFALSE=0,pdPASS=1,BOOT0_PIN=0,LOW=0;
+constexpr int portMAX_DELAY=1,pdTRUE=1,pdFALSE=0,pdPASS=1,BOOT0_PIN=0,LOW=0,HIGH=1;
 uint32_t clockMs=100;
 int inputLevel=1,taskCreations=0;
+int startLevel=LOW,zoneLevel=LOW;
+uint32_t buttonDuty=0;
+void *mainTaskParameter=nullptr;
 uint32_t millis(){return clockMs;}
-int digitalRead(int){return inputLevel;}
+int digitalRead(int pin){
+    if(pin==START_BUTTON_PIN)return startLevel;
+    if(pin==START_ZONE_SWITCH_PIN)return zoneLevel;
+    assert(pin==BOOT0_PIN);
+    return inputLevel;
+}
+void ledcWrite(uint8_t channel,uint32_t duty){assert(channel==BUTTON_LED_PWM_CHANNEL);buttonDuty=duty;}
 int xAlignmentMotionMutex=1,xLidarPoseMutex=1,xAlignmentQueue=1,xVisualTaskQueue=1,taskCodeMux=0,nodePathMux=0;
 int xSemaphoreTake(int,int){return pdTRUE;}
 void xSemaphoreGive(int){}
@@ -45,7 +55,7 @@ void vHomeTimerCallback(TimerHandle_t){}
 TimerHandle_t xTimerCreate(const char *,int,int,void *,void (*)(TimerHandle_t)){return reinterpret_cast<void *>(1);}
 void xTimerDelete(TimerHandle_t,int){}
 void xTimerStop(TimerHandle_t,int){}
-int xTaskCreate(void (*)(void *),const char *,int,void *,int,TaskHandle_t *handle){++taskCreations;*handle=reinterpret_cast<void *>(1);return pdPASS;}
+int xTaskCreate(void (*)(void *),const char *,int,void *parameter,int,TaskHandle_t *handle){++taskCreations;mainTaskParameter=parameter;*handle=reinterpret_cast<void *>(1);return pdPASS;}
 struct {void show(){}} FastLED;
 struct CRGB {enum {Green=1};};int leds[1];
 RobotState currentState=STATE_WAIT_START;
@@ -62,6 +72,8 @@ TaskCode currentTask{};bool taskReceived=false;
 enum class NodePathState {IDLE,WAITING,RECEIVING,RECEIVED,RUNNING,DONE,FAILED};
 NodePathState nodePathState=NodePathState::IDLE;
 uint8_t nodePathBuffer[25];size_t nodePathLen=0;
+uint32_t nodePathRequestedAt=0;
+constexpr uint32_t ROUTE_REPLY_TIMEOUT_MS=3000;
 constexpr uint8_t DISC_AREA_NODE=14,COARSE_AREA_NODE=10,TEMP_AREA_NODE=22;
 constexpr float StartZoneHeading(uint8_t zone){return zone==1?180.0f:0.0f;}
 uint32_t SubmitLidarPoseAction(bool fromCommand=false,bool allowRepeat=false,uint8_t startZone=0);
@@ -301,7 +313,80 @@ void boot() {
     assert(serialDebugMode&&!taskCreations);
     inputLevel=1;clockMs+=100;PollDebugBootButton();active=false;serialBootSetIdle(true);clockMs+=100;PollDebugBootButton();
     inputLevel=LOW;clockMs+=100;PollDebugBootButton();clockMs+=100;PollDebugBootButton();serialBootReleaseAtIdle(true);
-    assert(!serialDebugMode&&taskCreations==1&&!enableRun&&!taskMotionAborted&&cuePulses==2);
+    assert(!serialDebugMode&&taskCreations==1&&!mainTaskParameter&&!enableRun&&!taskMotionAborted&&cuePulses==2);
+}
+void startPanel() {
+    serialBootSetIdle(true);
+    PollDebugBootButton();clockMs+=40;PollDebugBootButton();serialBootReleaseAtIdle(true);
+    assert(buttonDuty==BUTTON_LED_FULL_DUTY&&serialDebugMode&&!taskCreations); // 上电读取初始档位不触发。
+
+    active=true;serialBootSetIdle(true);
+    zoneLevel=HIGH;PollDebugBootButton();
+    active=false;serialBootReleaseAtIdle(true);
+    assert(serialDebugMode&&!taskCreations); // 忙碌期间拨动不排队。
+    Serial.text.clear();
+    dispatch("{CMD,SYS,PANEL_GET}");
+    assert(Serial.text=="{RSP,SYS,PANEL_GET,OK,0,1,2}\n");
+
+    zoneLevel=LOW;PollDebugBootButton();serialBootReleaseAtIdle(true);
+    assert(!serialDebugMode&&taskCreations==1&&mainTaskParameter&&!enableRun);
+    assert(Serial.text.find("dial=CHANGED release=REQUESTED")!=std::string::npos);
+    assert(Serial.text.find("{RSP,SYS,RELEASE,OK}")!=std::string::npos);
+    dispatch("{CMD,VISION,LIDAR_POSE}");
+    assert(!submissions&&Serial.text.find("LIDAR_POSE,ERR,NOT_READY")!=std::string::npos);
+
+    const auto releaseAt=clockMs;
+    startLevel=HIGH;PollDebugBootButton();clockMs+=40;PollDebugBootButton();
+    assert(buttonDuty==BUTTON_LED_FULL_DUTY&&ReadPanelStartRequest()==START_ZONE_UNKNOWN); // 初始化期间按键不生效。
+    clockMs=releaseAt+100;PollDebugBootButton();assert(buttonDuty==0);
+    clockMs=releaseAt+200;PollDebugBootButton();assert(buttonDuty==0);
+
+    zoneLevel=HIGH;PollDebugBootButton();assert(buttonDuty==BUTTON_LED_FULL_DUTY);
+    clockMs+=100;PollDebugBootButton();assert(buttonDuty==0);
+    clockMs+=100;PollDebugBootButton();assert(buttonDuty==BUTTON_LED_FULL_DUTY);
+    clockMs+=100;PollDebugBootButton();assert(buttonDuty==0);
+
+    assert(SelectReleaseStartZone(true)==START_ZONE_UNKNOWN); // 串口已有区号也要等实体启动。
+    startLevel=LOW;PollDebugBootButton();clockMs+=40;PollDebugBootButton();
+
+    startLevel=HIGH;zoneLevel=HIGH;
+    Serial.text.clear();
+    dispatch("{CMD,SYS,PANEL_GET}");
+    assert(Serial.text=="{RSP,SYS,PANEL_GET,OK,1,1,2}\n");
+    PollDebugBootButton();
+    clockMs+=39;PollDebugBootButton();serialBootReleaseAtIdle(true);
+    assert(ReadPanelStartRequest()==START_ZONE_UNKNOWN);
+    ++clockMs;PollDebugBootButton();serialBootReleaseAtIdle(true);
+    assert(!serialDebugMode&&taskCreations==1&&ReadPanelStartRequest()==START_ZONE_2);
+    assert(Serial.text.find("button=PRESS start_level=1 zone_level=1 zone=2 start=REQUESTED")!=std::string::npos);
+    zoneLevel=LOW;PollDebugBootButton();
+    assert(buttonDuty==0&&SelectReleaseStartZone(true)==START_ZONE_2);
+    dispatch("{CMD,VISION,LIDAR_POSE}");
+    assert(submissions==1&&captured.zone==START_ZONE_2);
+
+    const auto startedAt=clockMs;
+    currentState=STATE_READ_TASK;PollDebugBootButton();assert(buttonDuty==0);
+    clockMs=startedAt+500;PollDebugBootButton();assert(buttonDuty==127);
+    clockMs=startedAt+1000;PollDebugBootButton();assert(buttonDuty==BUTTON_LED_FULL_DUTY);
+    clockMs=startedAt+1500;PollDebugBootButton();assert(buttonDuty==127);
+    clockMs=startedAt+2000;PollDebugBootButton();assert(buttonDuty==0);
+    clockMs=startedAt+2500;PollDebugBootButton();assert(buttonDuty==127);
+    currentState=STATE_DONE;PollDebugBootButton();assert(buttonDuty==0);
+    serialBootReleaseAtIdle(true);assert(taskCreations==1);
+    startLevel=LOW;PollDebugBootButton();clockMs+=40;PollDebugBootButton();
+    startLevel=HIGH;PollDebugBootButton();clockMs+=40;PollDebugBootButton();
+    assert(Serial.text.find("button=PRESS start_level=1 zone_level=0 zone=1 start=IGNORED")!=std::string::npos);
+}
+void startPanelAfterSerialRelease() {
+    currentStartZone=START_ZONE_UNKNOWN;
+    PollDebugBootButton();clockMs+=40;PollDebugBootButton();
+    dispatch("{CMD,SYS,RELEASE}");
+    assert(!serialDebugMode&&taskCreations==1&&!mainTaskParameter);
+    assert(SelectReleaseStartZone(false)==START_ZONE_UNKNOWN);
+    zoneLevel=HIGH;startLevel=HIGH;
+    PollDebugBootButton();clockMs+=40;PollDebugBootButton();
+    assert(ReadPanelStartRequest()==START_ZONE_2&&SelectReleaseStartZone(false)==START_ZONE_2);
+    assert(taskCreations==1);
 }
 void startup() {
     Emm_V5_Init();
@@ -363,6 +448,8 @@ int main(int argc,char **argv) {
     if(!strcmp(argv[1],"grab"))grab();else if(!strcmp(argv[1],"positions"))positions();
     else if(!strcmp(argv[1],"maintenance"))maintenance();else if(!strcmp(argv[1],"lidar"))lidar();
     else if(!strcmp(argv[1],"trial"))trial();else if(!strcmp(argv[1],"boot"))boot();
+    else if(!strcmp(argv[1],"start-panel"))startPanel();
+    else if(!strcmp(argv[1],"start-panel-serial-release"))startPanelAfterSerialRelease();
     else if(!strcmp(argv[1],"axis-trial"))axisTrial();
     else if(!strcmp(argv[1],"startup"))startup();else if(!strcmp(argv[1],"zones"))zones();
     else if(!strcmp(argv[1],"linear-zero"))linearZero();

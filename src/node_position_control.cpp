@@ -63,7 +63,7 @@ void Runner::startMove(bool alignment) {
     ppm=rotating?route->config.rotationPpd:route->config.forwardPpm;
     const uint32_t pulses=static_cast<uint32_t>(lroundf(fabsf(delta)*ppm));
     if(!pulses){arrived();return;}
-    Vec body=scanExit&&!rotating?worldToBody(end-output->estimated,targetHeading):Vec{};
+    Vec body=scanExit&&!rotating?worldToBody(end-output->estimated,action==START_LATERAL?output->heading:targetHeading):Vec{};
     const float px=body.x*route->config.lateralPpm,py=body.y*route->config.forwardPpm;
     const float scanPulses[4]={-px+py,-px-py,px+py,px-py};
     movingWheels=0;
@@ -81,7 +81,7 @@ void Runner::startMove(bool alignment) {
 void Runner::aligned() {
     if(action==FINAL){stage=FINISHED;io->halt();return;}
     if(action==ROTATION){index=after;stage=SELECT;return;}
-    if(action==STRAIGHT){startMove(false);return;}
+    if(action==STRAIGHT||action==START_LATERAL){startMove(false);return;}
     tracker=Tracker{};tracker.begin(*route,output->heading);tracker.movingBlock=true;
     tracker.phaseIndex=curveBegin;tracker.s=route->segments[curveBegin].offset;tracker.estimated=output->estimated;
     const Segment &last=route->segments[after-1];curveStop=last.offset+last.length;
@@ -94,6 +94,7 @@ void Runner::aligned() {
  */
 void Runner::arrived() {
     if(turningForAlignment){stage=ALIGN;return;}
+    if(action==START_LATERAL){startLateralDone=true;stage=SELECT;return;}
     offset={};index=after;stage=SELECT;
 }
 const char *Runner::updateProgress(float progress,const H30Attitude &m,bool idle) {
@@ -361,7 +362,7 @@ void Runner::tick() {
         if(index>=route->segmentCount){action=FINAL;targetHeading=route->config.endHeading;attempts=0;stage=ALIGN;break;}
         const Segment &phase=route->segments[index];after=index+1;
         if(phase.kind==ROTATE) {
-            if(norm(offset)>0){++index;break;}
+            if(norm(offset)>0&&!settings->alignStartToRoad){++index;break;}
             action=ROTATION;targetHeading=phase.h1;attempts=0;stage=ALIGN;break;
         }
         size_t block=index;bool curved=false;
@@ -374,9 +375,19 @@ void Runner::tick() {
             if(next.kind!=LINE||next.middle!=phase.middle||fabsf(turn(phase.h0,next.h0))>.01f||dot(end-phase.start,next.end-next.start)<=0)break;
             end=next.end;length+=next.length;++after;
         }
-        scanExit=norm(offset)>0;const Vec direction=(end-phase.start)*(1/length);
+        const Vec direction=(end-phase.start)*(1/length);
         const float sign=dot(direction,Vec(cosf(phase.h0*PI_F/180),sinf(phase.h0*PI_F/180)))>=0?1:-1;
-        distance=sign*(scanExit?norm(end-output->estimated):length-startYOffset*direction.y);
+        scanExit=norm(offset)>0;
+        if(scanExit&&settings->alignStartToRoad) {
+            const Vec normal{-direction.y,direction.x};
+            const float lateral=dot(output->estimated-phase.start,normal);
+            if(!startLateralDone&&lroundf(fabsf(lateral)*route->config.lateralPpm)>0) {
+                action=START_LATERAL;end=output->estimated-normal*lateral;
+                distance=fabsf(lateral);stage=ALIGN;break;
+            }
+            scanExit=false;
+            distance=sign*dot(end-output->estimated,direction);
+        } else distance=sign*(scanExit?norm(end-output->estimated):length-startYOffset*direction.y);
         startYOffset=0;
         finalTranslation=true;
         for(size_t i=after;i<route->segmentCount;++i)if(route->segments[i].kind!=ROTATE)finalTranslation=false;

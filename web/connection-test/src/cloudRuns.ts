@@ -1,10 +1,27 @@
 import { onMounted, onUnmounted, ref } from 'vue'
-import type { Controller } from './useController'
+import type { ConsoleLogEntry, Controller } from './useController'
 
 export interface PendingRun {
   id: string
   captured_at: string
   frames: string[]
+}
+
+export interface LogSnapshot {
+  id: string
+  captured_at: string
+  device: string
+  note: string
+  count: number
+}
+
+export function captureRecentLogs(logs: ConsoleLogEntry[], device: string) {
+  const now = Date.now()
+  const recent = logs.filter(entry => {
+    const time = Date.parse(entry.time)
+    return time >= now - 60_000 && time <= now
+  })
+  return { id: crypto.randomUUID(), captured_at: new Date(now).toISOString(), device, logs: recent }
 }
 
 export type Phase = [name: string, start: number, end: number, duration: number]

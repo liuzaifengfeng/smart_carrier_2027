@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { CloudError, cloudRequest, type RunDetail, type RunOutline } from './cloudRuns'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { CloudError, cloudRequest, type LogSnapshot, type RunDetail, type RunOutline } from './cloudRuns'
 import { activityName, date, delta, duration, phaseActivities, phaseName, phases, seconds } from './runDisplay'
 import RunTimeline from './components/RunTimeline.vue'
 import RunActionStats from './components/RunActionStats.vue'
@@ -8,6 +8,8 @@ import RunNote from './components/RunNote.vue'
 import './runs.css'
 
 const outlines = ref<RunOutline[]>([])
+const snapshots = ref<LogSnapshot[]>([])
+const snapshotError = ref('')
 const first = ref('')
 const second = ref('')
 const details = ref<RunDetail[]>([])
@@ -50,6 +52,7 @@ function showError(reason: unknown) {
   if (reason instanceof CloudError && reason.status === 401) {
     unauthorized.value = true
     outlines.value = []
+    snapshots.value = []
     details.value = []
     first.value = second.value = ''
   }
@@ -70,6 +73,12 @@ async function load() {
     unauthorized.value = false
     if (!outlines.value.some(run => run.id === first.value)) first.value = outlines.value[0]?.id ?? ''
     if (!outlines.value.some(run => run.id === second.value)) second.value = ''
+    snapshotError.value = ''
+    try {
+      snapshots.value = await cloudRequest<LogSnapshot[]>('runs/snapshots')
+    } catch (reason) {
+      snapshotError.value = reason instanceof Error ? reason.message : String(reason)
+    }
   } catch (reason) {
     showError(reason)
   } finally {
@@ -87,6 +96,7 @@ async function authenticate(logout = false) {
       unauthorized.value = true
       details.value = []
       outlines.value = []
+      snapshots.value = []
       first.value = second.value = ''
     }
     notifyAuth()
@@ -117,7 +127,13 @@ watch([first, second], async ([a, b], _, onCleanup) => {
   }
 })
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  if (location.hash === '#log-snapshots') {
+    await nextTick()
+    document.getElementById('log-snapshots')?.scrollIntoView()
+  }
+})
 </script>
 
 <template>
@@ -133,6 +149,21 @@ onMounted(load)
     </form>
     <p v-else-if="loading" role="status">正在读取云端归档</p>
     <template v-else>
+      <section id="log-snapshots" class="panel">
+        <div class="section-head"><h2>手动上传的 60 秒日志</h2><button @click="load">刷新</button></div>
+        <p v-if="snapshotError" class="error" role="alert">{{ snapshotError }}</p>
+        <p v-else-if="!snapshots.length">暂无手动上传的日志</p>
+        <ul v-else class="snapshot-list">
+          <li v-for="snapshot in snapshots" :key="snapshot.id">
+            <div>
+              <time :datetime="snapshot.captured_at">{{ date(snapshot.captured_at) }}</time>
+              · {{ snapshot.count }} 条<span v-if="snapshot.device"> · {{ snapshot.device }}</span>
+              <p v-if="snapshot.note">{{ snapshot.note }}</p>
+            </div>
+            <a :href="`/api/runs/snapshots/${snapshot.id}`" :aria-label="`下载 ${date(snapshot.captured_at)} 的日志 JSON`">下载 JSON</a>
+          </li>
+        </ul>
+      </section>
       <section class="panel">
         <div class="section-head"><h2>完赛记录</h2><button @click="load">刷新</button></div>
         <p v-if="!outlines.length">暂无云端完赛记录</p>

@@ -7,7 +7,7 @@
  */
 bool MotionExecutorInit();
 /**
- * @brief 按值复制动作请求到队列，不等待动作执行完成。工作任务按 kind 分发到 scanTick、navigationTick 或机械臂序列。
+ * @brief 按值复制动作请求到队列，不等待动作执行完成。
  * @param request 动作类型、目标位置及本轮任务数据。
  * @param launch true 立即允许执行；false 等串口回复 ACK 后调用 LaunchMotion 放行。
  * @return 非零作业编号；0 表示未提交。提交成功不等于动作完成。

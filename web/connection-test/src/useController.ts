@@ -1,13 +1,19 @@
 import { computed, ref } from 'vue'
 import { openSerial, openUsbSerial, type Link } from './transports'
 
+export interface ConsoleLogEntry {
+  time: string
+  direction: string
+  text: string
+}
+
 export function useController() {
   const connected = ref(false)
   const ready = ref(false)
   const busy = ref(false)
   const error = ref('')
   const device = ref('')
-  const logs = ref<{ time: string; direction: string; text: string }[]>([])
+  const logs = ref<ConsoleLogEntry[]>([])
   const snapshots = ref<Record<string, string[]>>({})
   const handshake = ref('未连接')
   let link: Link | undefined

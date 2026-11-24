@@ -45,7 +45,6 @@ extern uint32_t SCAN_APPROACH_SPEED_RPM;
 extern uint32_t ALIGN_PID_MAX_SPEED_RPM;
 extern uint32_t SCAN_SEARCH_SPEED_RPM;
 constexpr uint8_t SCAN_AREA_NODE = 2;
-extern bool scanPosePending;
 constexpr uint8_t DISC_AREA_NODE = 14;
 // 粗加工区中心约为 (210, 1100)，对应当前 5x5 地图的 10 号节点。
 constexpr uint8_t COARSE_AREA_NODE = 10;
@@ -98,6 +97,8 @@ extern NodePathState nodePathState;
 extern portMUX_TYPE nodePathMux;
 extern uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH];
 extern size_t nodePathLen;
+constexpr uint32_t ROUTE_REPLY_TIMEOUT_MS = 3000;
+extern uint32_t nodePathRequestedAt; // 由 nodePathMux 保护。
 extern SemaphoreHandle_t xAlignmentMotionMutex;
 extern QueueHandle_t xVisualTaskQueue;
 extern TimerHandle_t xHomeTimer;
@@ -115,7 +116,8 @@ AutoAlignmentState getAutoAlignmentState();
  * @param owner 拥有该次对齐的视觉模式。
  * @param onlyOwner 是否仅允许匹配拥有者关闭。
  */
-void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false, VisionStartMode owner = VisionStartMode::NONE, bool onlyOwner = false);
+void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false, VisionStartMode owner = VisionStartMode::NONE, bool onlyOwner = false,
+    float headingOnAlignment = NAN);
 /**
  * @brief 按起始区提交扫码准备姿态，正式模式复用已完成标志避免重复动作。
  * @param fromCommand true 表示串口显式请求。
@@ -134,7 +136,7 @@ bool updateDisplay(const char *commandType, const char *displayType, const char 
 /**
  * @brief 发送开启指定视觉模式的请求，并按模式设置对齐或物料识别状态。
  */
-void requestVisionStart(VisionStartMode mode);
+void requestVisionStart(VisionStartMode mode,float headingOnAlignment=NAN);
 /**
  * @brief 发送停止指定视觉模式的请求，并结束对应本地控制状态。
  */
@@ -163,6 +165,8 @@ void Task_Serial_CMD(void *pvParameters);
  * @brief 采样板载BOOT按钮并记录Release请求，实际切换由空闲串口任务处理。
  */
 void PollDebugBootButton(); // loop采样，Release由空闲的串口任务统一执行。
+StartZone ReadPanelStartRequest();
+StartZone SelectReleaseStartZone(bool waitForPanel);
 /**
  * @brief 比赛总计时器超时回调，执行既有停止、失败状态及主任务暂停处理。
  */

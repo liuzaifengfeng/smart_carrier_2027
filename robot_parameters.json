@@ -534,14 +534,14 @@
           "integer": false
         },
         "对齐/WORK_AREA_LOADED/X死区": {
-          "value": 1.0,
+          "value": 3.0,
           "description": "暂存工作区对齐：X死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,
           "integer": false
         },
         "对齐/WORK_AREA_LOADED/Y死区": {
-          "value": 1.0,
+          "value": 3.0,
           "description": "暂存工作区对齐：Y死区，单位沿用视觉输出。",
           "minimum": 0.0,
           "maximum": 1000.0,

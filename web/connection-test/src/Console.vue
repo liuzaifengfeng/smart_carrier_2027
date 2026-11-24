@@ -16,6 +16,7 @@ import KeyboardPanel from './components/KeyboardPanel.vue'
 import FieldMap from './components/FieldMap.vue'
 import BatteryPanel from './components/BatteryPanel.vue'
 import RingVisionPanel from './components/RingVisionPanel.vue'
+import UploadLogSnapshot from './components/UploadLogSnapshot.vue'
 import './desktop.css'
 const controller = useController()
 const { status: archiveStatus, pending, upload } = useCloudCapture(controller)
@@ -50,7 +51,6 @@ const poseText = computed(() => {
 const display = ref<Record<string, string>>({})
 controller.onFrame(f => {
   updateMapTelemetry(map.value, f)
-  if (f[0] === 'RSP' && f[1] === 'SYS' && f[2] === 'REBOOT' && f[3] === 'ACK') void disconnect()
   if (f[0] === 'EVT' && f[1] === 'DISPLAY') display.value[f[2]!] = f.slice(3).join(' / ')
   if (f[0] === 'EVT' && f[1] === 'VISION') display.value.VISION = f.slice(2).join(' / ')
 })
@@ -115,6 +115,7 @@ function pickTarget(x: number, y: number) {
         <span><a href="./runs.html" target="_blank" rel="noopener">查看云端运行日志</a>
           <button v-if="pending" @click="upload">重试上传</button>
         </span>
+        <UploadLogSnapshot :logs="logs" :device="device" />
         <span>任务码 {{ display.TASK_CODE ?? '尚未收到' }}</span>
         <span>调试信息 {{ display.DEBUG ?? '等待小车信息' }}</span>
         <span>视觉请求 {{ display.VISION ?? '尚无请求' }}</span>

@@ -49,6 +49,10 @@ class SerialMotionTests(unittest.TestCase):
     def test_boot_release_waits_for_motion_idle(self):
         run_native(self.binary, "boot")
 
+    def test_start_panel_digital_inputs_release_and_indicator(self):
+        run_native(self.binary, "start-panel")
+        run_native(self.binary, "start-panel-serial-release")
+
     def test_reboot_acknowledges_and_restarts(self):
         run_native(self.binary, "reboot")
 

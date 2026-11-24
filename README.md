@@ -58,6 +58,8 @@ robot_chassis:
 
 新版主板其余接口的原理图分配为 `ZONE_ADC` GPIO1、`START_ADC` GPIO2、`EXPAND1` GPIO6、`EXPAND2` GPIO7、`PWM1` GPIO8、`BZE` GPIO9、`ADC_BAT` GPIO10、`BUTTON_LED` GPIO11。
 
+启动面板使用数字输入，硬件需短接 R10、拆除 R13。Debug 空闲时拨杆变化会触发 Release；上电只记录初始档位。机械臂初始化和航向采样结束后，按下 GPIO2 启动按钮锁定当时的拨杆档位，随后执行雷达位姿准备并自动进入扫码。CN12.2 接通 CN12.1 时 GPIO1 为低电平，对应区 1；接通 CN12.3 时 GPIO1 为高电平，对应区 2。拨杆断开也会读到低电平。Q3 在 Debug 空闲时常亮；Release 后未按下启动按钮时，区 1 每秒单闪、区 2 每秒双闪。正常任务期间每 2 秒呼吸一次。
+
 ## 目录结构
 
 H30 惯导已接入 ESP32-S3 原生 USB Host，上位机连接栏提供三轴姿态单次查询。接线、协议和验收参见 [H30 USB 接入说明](Document/H30_USB.md)。

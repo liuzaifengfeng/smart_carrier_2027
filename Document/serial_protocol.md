@@ -17,6 +17,10 @@
 
 Debug空闲时按BOOT0（GPIO0，低电平）等效执行 `{CMD,SYS,RELEASE}`，使用相同回复及自动开局流程；40 ms消抖，长按只触发一次，上电按住需先松开。串口动作执行或半帧接收期间按下不会排队，Release中不重复创建自动任务。切换后仍需选区及发送SYS START。
 
+发送 `{CMD,SYS,PANEL_GET}` 查询启动面板数字输入，回复 `{RSP,SYS,PANEL_GET,OK,按钮电平,拨杆电平,启停区}`。电平以 0 表示低、1 表示高。按钮高电平为按下，拨杆低电平选区 1、高电平选区 2。Debug 和 Release 均可查询。
+
+Debug 空闲时拨杆档位变化会调用 Release。收臂和航向采样完成后等待实体按钮，按下后锁定拨杆档位并执行雷达位姿准备，准备完成后自动进入扫码。上位机或板载 BOOT0 触发 Release 后，若尚未通过串口选择启停区，也可以按实体按钮选区并启动；由串口选区时继续等待 `SYS START`。
+
 下表中的参数顺序就是实际发送顺序。`两者` 指 Debug 与 Release；`Debug` 指上电调试模式。错误通常为 `{RSP,类别,动作,ERR,原因}`。下表未标为 Release 的 Debug 动作在 Release 中回复 `MODE`，不会执行。
 
 | 旧指令 | v2 指令 | 模式 | 成功回复 / 后续事件 |
@@ -28,7 +32,7 @@ Debug空闲时按BOOT0（GPIO0，低电平）等效执行 `{CMD,SYS,RELEASE}`，
 | `{Mode:Release}` | `{CMD,SYS,RELEASE}` | Debug | `{RSP,SYS,RELEASE,OK}`；失败 `TIMER` / `TASK` |
 | `{ready}` | `{CMD,SYS,READY}` | Release | `{RSP,SYS,READY,OK}` |
 | 无 | `{CMD,SYS,BEEP}` | 两者 | 播放陀螺仪校准结束时的三声三闪，立即回复 `{RSP,SYS,BEEP,OK}` |
-| `{start}` | `{CMD,SYS,START}` | Release | `{RSP,SYS,START,OK}`；Nano 收到 `LIDAR_POSE_DONE` 并完成雷达扫描后发送。上位机可代发。小车收到后反向转 45°恢复起始航向，进入扫码行驶 |
+| `{start}` | `{CMD,SYS,START}` | Release | `{RSP,SYS,START,OK}`；Nano 收到 `LIDAR_POSE_DONE` 并完成雷达扫描后发送。上位机可代发。小车收到后请求到扫码节点 2 的路径 |
 | `{help}` | `{CMD,SYS,HELP}` | 两者 | `{RSP,SYS,HELP,OK}`；帮助文字参见本文件 |
 | 无 | `{CMD,SYS,REBOOT}` | 两者（运动忙时也受理） | `{RSP,SYS,REBOOT,ACK}`，随后重启主控 |
 | 旋转料盘 | `{CMD,TRAY,ROTATE,角度,时长ms,功率mW}` | Debug | 先回 `{RSP,TRAY,ROTATE,ACK}`，绝对多圈角度到位后回 `{EVT,TRAY,ROTATE,DONE}`，作业失败或取消时回 `{EVT,TRAY,ROTATE,FAILED}`。时长 0 为尽快到达，功率 0 使用舵机默认值 |
@@ -93,12 +97,12 @@ TASK SET 在 Debug 可修改任务码并重置抓取进度为 0；开启 DISC_MA
 - `ROUTE`：2～25 个节点，节点编号 0～24，5×5 蛇形地图中相邻节点必须物理上下或左右相邻。路径的第一个节点必须是小车实际所在节点。固件执行前再检查相邻性；上位机输入框仍可输入 `0-1-8`，发送时转换为逗号字段。
 - `ALIGN_DATA`：三个有限浮点值，依次为角度偏差（度）、视觉 X 与 Y 偏差（视觉单位）；20 Hz 连续输入时只保留最新一帧。停止对齐后收到有效反馈也不驱动电机，并最多每秒回传一次 `{EVT,VISION,ALIGN_IGNORED,DISABLED}`；反馈不会自行重启运动。
 - `DISC` 圆盘整体对齐的角度环改用 H30 已标定地图航向，目标为 `DISC_AREA_HEADING=90°`（与导航终点一致），以环绕到 ±180° 的“实测航向−目标航向”驱动现有角度 PID；连续 5 帧到位判定也使用该 H30 角差和原 DISC 死区。视觉 angle 字段仍须为有限数，但不参与 DISC 控制或到位判断；X/Y、PID增益、最大轮速和控制节奏保持原设置。其他模式仍使用视觉角差。H30 查询失败（含未标定或样本超过200ms）时，该帧旋转输出为0并清空角度PID历史，X/Y继续对齐且清零连续到位计数，不退回视觉角度；数据恢复后自动继续。异常首次输出 `{EVT,VISION,DISC_HEADING,ERR,原因}`，恢复输出 `{EVT,VISION,DISC_HEADING,OK}`。`[Align]` 日志中 angle 为实际参与控制的角差，尾部 `source=IMU/IMU_UNAVAILABLE/VISION` 表示来源；原有自动对齐超时规则保留。
-- 首轮圆盘自动流程：路径结束后固件开启连续对齐，再发 `START_REQUEST,DISC`；电脑仅需回传 `ALIGN_DATA`。连续 5 帧达标或自动对齐满 5 秒时发 `ALIGN_DONE`，主流程随后发 `STOP_REQUEST,DISC`，再发 `START_REQUEST,DISC_MATERIAL`。5 秒包含等待首帧，超时时底盘停车并关闭闭环。自动对齐期间，同模式或无模式 `ALIGN_START` 回复 OK 并保留当前模式、WAITING/DONE、反馈、PID、连续帧计数及原超时起点；不同模式回复 `{RSP,VISION,ALIGN_START,ERR,BUSY}`，不改变当前对齐。`ALIGN_STOP` 仍会停车并取消业务等待，不能作为自动完成信号。
+- 首轮圆盘自动流程：路径结束后固件开启连续对齐，再发 `START_REQUEST,DISC`；电脑仅需回传 `ALIGN_DATA`。连续 5 帧达标时发 `ALIGN_DONE`，自动对齐满 5 秒则记录 `TIMEOUT_CONTINUE` 并沿用继续执行策略。主流程随后发 `STOP_REQUEST,DISC`，再发 `START_REQUEST,DISC_MATERIAL`。5 秒包含等待首帧，超时时底盘停车并关闭闭环。自动对齐期间，同模式或无模式 `ALIGN_START` 回复 OK 并保留当前模式、WAITING/DONE、反馈、PID、连续帧计数及原超时起点；不同模式回复 `{RSP,VISION,ALIGN_START,ERR,BUSY}`，不改变当前对齐。`ALIGN_STOP` 仍会停车并取消业务等待，不能作为自动完成信号。
 - `COLOR`：整数 1～6，依次为红、黄、蓝、绿、黑、浅蓝。DISC_MATERIAL 运行时，每条颜色反馈按当前轮次任务码判断：第一轮使用 round1_colors，第二轮使用 round2_colors，只与下标 roundProgress 对应的下一件颜色比较。匹配且当前抓取阶段已准备、底盘对齐停止、目标载物台为空时，发送 `{EVT,VISION,COLOR,GRAB,color,cargo}` 并调用 `GrabDiscMaterial(color,cargo)`。仅颜色不匹配时发送 `{EVT,VISION,COLOR,SKIP,color,cargo,COLOR_MISMATCH}`；状态阻止时发送 `{EVT,VISION,COLOR,BLOCKED,color,cargo,reason}`，reason 为 NO_TASK、NOT_WAITING、ROUND_COMPLETE、ALIGN_ACTIVE、NOT_READY 或 OCCUPIED。cargo 为 roundProgress+1，无有效进度时为 0；有有效任务和进度时，拒绝日志还打印 received、expected、cargo、reason。上位机兼容旧固件六字段 SKIP，但会提示旧回复未提供原因。`CONFIRM` 仍仅 Release 接令入队，不执行抓取。
 - `GRAB`：保留显式任务校验抓取入口。cargo 为 1～3；单参数使用最近 COLOR，双参数为 color,cargo。须开启物料视觉、停止底盘对齐、进入有效任务码的抓取阶段，颜色及载物台顺序须匹配，载物台须为空。拒绝原因保留 NOT_ACTIVE、ALIGN_ACTIVE、NO_COLOR、NOT_WAITING、ORDER、COLOR_MISMATCH、OCCUPIED；非法参数为 RANGE，参数数量错误为 FORMAT。Debug 不绕过任务码校验。
 - Release 首轮还要求主流程已完成圆盘导航及定位，再进入物料识别等待；提前手动开启 DISC_MATERIAL 不绕过准备条件。COLOR 此时报告 BLOCKED,NOT_READY，显式 GRAB 回复 NOT_WAITING。Debug 手动测试不要求该准备状态，但仍检查对齐停止和载物台为空。
 - 有效 GRAB 先回复 `{RSP,VISION,GRAB,ACK,color,cargo}`；COLOR 匹配先发送 COLOR,GRAB 决策。两者共用抓取完成路径：`GrabDiscMaterial` 返回 true 后发送 `{EVT,VISION,GRAB,DONE,color,cargo}` 并推进 roundProgress；返回 false 后发送 FAILED，保留进度和目标颜色。true 表示预设动作完成且已登记载物台颜色，不代表传感器确认实物。第三件成功后关闭 DISC_MATERIAL；Release 主流程进入下一放料阶段，Debug 保留完成进度。上位机兼容旧 REQUESTED 回复，但它不表示完成。强制入口不推进任务进度。
-- `VISION START_REQUEST`：`RING_CORRECTION` 的 Debug 用法见[圆环纠偏调试](#圆环纠偏调试)。常规五种模式 `DISC`、`DISC_MATERIAL`、`WORK_AREA`、`WORK_AREA_LOADED`、`CORNER` 只需一个模式参数。未知模式回复 `RANGE`，缺参数或多参数回复 `FORMAT`，均不发送视觉请求事件。常规模式在 Debug 和 Release 均可调用。`DISC` / `WORK_AREA` / `WORK_AREA_LOADED` / `CORNER` 在发送启动事件前清空旧反馈并同步开启连续 PID 对齐，电脑只需发送 `ALIGN_DATA`。自动对齐限时 5 秒，超时停车并发 `ALIGN_DONE`。`DISC_MATERIAL` 仅发送视觉请求。重复开启定位会重置等待计数；手动请求不主动切换业务阶段。
+- `VISION START_REQUEST`：`RING_CORRECTION` 的 Debug 用法见[圆环纠偏调试](#圆环纠偏调试)。常规五种模式 `DISC`、`DISC_MATERIAL`、`WORK_AREA`、`WORK_AREA_LOADED`、`CORNER` 只需一个模式参数。未知模式回复 `RANGE`，缺参数或多参数回复 `FORMAT`，均不发送视觉请求事件。常规模式在 Debug 和 Release 均可调用。`DISC` / `WORK_AREA` / `WORK_AREA_LOADED` / `CORNER` 在发送启动事件前清空旧反馈并同步开启连续 PID 对齐，电脑只需发送 `ALIGN_DATA`。自动对齐限时 5 秒，超时停车、关闭闭环并发 `ALIGN_RESULT`（`TIMEOUT_CONTINUE`）。`DISC_MATERIAL` 仅发送视觉请求。重复开启定位会重置等待计数；手动请求不主动切换业务阶段。
 - `VISION STOP_REQUEST`：只带模式参数。`RING_CORRECTION` 的 Debug 用法见[圆环纠偏调试](#圆环纠偏调试)。常规五种模式的运行模式及错误规则与 `START_REQUEST` 相同。先回复 ACK，再同步停止属于 `DISC` / `WORK_AREA` / `WORK_AREA_LOADED` / `CORNER` 对应模式的底盘对齐，清零 PID 和等待计数，再发出 STOP_REQUEST 事件。结束旧模式不会停止随后开启的另一定位模式。`DISC_MATERIAL` 仅请求结束视觉。无模式 `ALIGN_START` 的连续对齐用 `{CMD,VISION,ALIGN_STOP}` 停车；显式指定上述四种模式的手动连续对齐也可通过对应 STOP_REQUEST 停止。
 - `POSE GET`：`x,y,theta,h,l` 是软件维护的理想/开环值，单位依次为 mm、mm、度、mm、mm；`turret` 是 2 号转台舵机现场读取的真实多圈角度，`pawl` 是 1 号夹爪舵机现场读取的单圈角度（度）。读取失败回复 `{RSP,POSE,GET,ERR,SERVO_READ,2}` 或 `1`，不会用旧值冒充实测。
 - `ARM MOVE2` 的转台线缆机械范围为真实多圈角度 **-180°～360°**。固件先读取真实多圈角度；若当前已越界或读取失败，跳过转台动作。否则仅从范围内的等效目标（相差 360°）中选择最近的一项，绝不向范围外下发转台目标。转台输入也限制为 -180°～360°；夹爪仍为 -360°～360°。搬运 Demo 遇到转台失败会停止并报告 `FAILED`，失败后需人工确认物料位置。调试 `SERVO` 指令的 2 号舵机走相同保护，成功时回复 `{EVT,ARM,SERVO,ISSUED}`；不允许广播 ID 254 绕过保护。
@@ -115,7 +119,7 @@ TASK SET 在 Debug 可修改任务码并重置抓取进度为 0；开启 DISC_MA
 
 两轮自动抓取中，一旦某个位置被选中，主控就发送 `STOP_REQUEST,DISC_MATERIAL`，明确结束本次位置识别。抓取、载物台放置及恢复观察姿态期间，COLOR 不触发抓取；DISC_POSITIONS 回复 `ERR,NOT_READY`，不执行、不缓存。前两件完成 `look3` 后，主控重新发送 `START_REQUEST,DISC_MATERIAL`，并把启停边界附近已积压的数据处理到完整帧边界，随后才允许下一件抓取。诊断日志 `[DISC] Material handling resumed: expected=..., cargo=...` 表示新识别会话已开放；此后新收到的位置消息才会作为圆盘旋转后的有效位置。
 
-`{CMD,NAV,ROUTE,...}` 的外围和中间道路直行均采用速度模式，在移动中按 H30 航向和四轮里程计修正轮速。两类道路分别使用原有的平移速度和加速度配置，参数在路径启动时冻结，由 `Profile` 和 `Middle profile` 日志报告。允许倒退，同向共线且配置相同的路段合并，转角停车。原地转向和扫码离站斜移仍使用有限绝对脉冲位置动作。H30 数据不可用时继续使用编码器估算。Debug 异步执行，Release 由业务任务等待结果。功能区终点朝向为 14 号 90°、10 号 270°、22 号 180°。完成发送 `ROUTE_DONE,ESTIMATED`。最多支持 25 个节点，首节点须与实车位置一致。详见[辅助与反馈要求](continuous_trial.md)。
+`{CMD,NAV,ROUTE,...}` 的外围和中间道路直行均采用速度模式，在移动中按 H30 航向和四轮里程计修正轮速。两类道路分别使用原有的平移速度和加速度配置，参数在路径启动时冻结，由 `Profile` 和 `Middle profile` 日志报告。允许倒退，同向共线且配置相同的路段合并，转角停车。节点原地转向使用有限绝对脉冲位置动作。H30 数据不可用时继续使用编码器估算。Debug 异步执行，Release 由业务任务等待结果。功能区终点朝向为 14 号 90°、10 号 270°、22 号 180°。完成发送 `ROUTE_DONE,ESTIMATED`。最多支持 25 个节点，首节点须与实车位置一致。详见[辅助与反馈要求](continuous_trial.md)。
 
 正式模式诊断事件 `{EVT,NAV,ROUTE_POSITION,s,x,y,reference,heading}`，距离和坐标单位为 mm，角度单位为度。速度模式的外围和中间道路阶段分别为 `OUTER_HEADING_HOLD`、`MIDDLE_HEADING_HOLD`，位置模式阶段为 `POSITION_STRAIGHT`、`POSITION_TURN`。位置模式静止残差超时或超限时输出 `{EVT,NAV,ROUTE_MOTOR,id,reason,target,actual,rpm,flags}`，target 和 actual 为 65536 单位/圈，actual 保留驱动符号。
 
@@ -132,14 +136,17 @@ Web 上位机地图使用以下事件，协议版本仍为 2：
 | 旧回复或事件 | v2 事件 / 回复 | 含义 |
 |---|---|---|
 | `{way:WAITING}` | `{EVT,NAV,ROUTE_WAITING}` | Release 主状态机等待路径 |
-| `{way:start-end?}` | `{EVT,NAV,ROUTE_REQUEST,start,end}` | 上位机应返回完整路径 |
+| `{way:start-end?}` | `{EVT,NAV,ROUTE_REQUEST,start,end}` | Nano 应在 3 秒内回传完整路径。超时结束当前作业，发送 `{EVT,NAV,ROUTE_FAILED,TIMEOUT}`，运动作业错误为 `PATH_TIMEOUT`；迟到路径回复 `ERR,NOT_WAITING`。 |
 | `{way:RUNNING}` | `{EVT,NAV,ROUTE_RUNNING}` | 开始执行 |
 | `{way:DONE,ESTIMATED}` | `{EVT,NAV,ROUTE_DONE,ESTIMATED}` | 四轮到位及稳定确认通过，H30为可降级辅助，世界XY仍为估算 |
 | `{way:ERR,ENDPOINT/EXECUTION/TIMEOUT}` | `{EVT,NAV,ROUTE_FAILED,原因}` | 路径业务失败；主状态机不进入后续抓取 |
 | `{way:ERR,NOT_WAITING}` | `{RSP,NAV,ROUTE,ERR,NOT_WAITING}` | Release 尚未请求路径 |
-| `{ALIGN:OK}` | `{EVT,VISION,ALIGN_DONE}` | 对齐达标，或自动对齐满 5 秒后停车并按完成处理 |
+| `{ALIGN:OK}` | `{EVT,VISION,ALIGN_DONE}` | 连续反馈达到对齐条件 |
+| 无 | `{EVT,VISION,ALIGN_RESULT,模式,结果,有帧,角度误差,X误差,Y误差}` | 自动对齐诊断。结果为 `ALIGNED` 或 `TIMEOUT_CONTINUE`，有帧为 `0` 或 `1`。记录最后一帧用于闭环的 X/Y 和角度误差（度），圆盘角度取 H30。没有有效视觉帧时三个误差均为 `NA`，H30 不可用时仅角度为 `NA`。 |
 | `{LidarPose:OK}` / `ERR` | `{EVT,VISION,LIDAR_POSE_DONE}` / `FAILED` | 雷达扫描位姿动作结果 |
 | Release 自动触发雷达位姿 | `{EVT,VISION,LIDAR_POSE_RUNNING}` | 自动流程开始，不发送命令回复 |
+
+雷达扫描后，启停区 1 发送 `{EVT,NAV,ROUTE_REQUEST,4,2}`，启停区 2 发送 `{EVT,NAV,ROUTE_REQUEST,0,2}`。Nano 回传 `{CMD,NAV,ROUTE,4,...,2}` 或 `{CMD,NAV,ROUTE,0,...,2}`，继续使用现有节点编号。`ROUTE_DONE` 表示抵达节点 2，任务码的确认按[扫码流程](scan_position.md)执行。
 
 ### 主控请求开启机载视觉功能
 
@@ -205,8 +212,8 @@ Web 上位机「机械臂」页提供工位 1、2、3 的前置按钮，以及�
 
 「视觉」页可读取 `{CMD,VISION,RING_AXIS_PID_GET}`，或写入 `{CMD,VISION,RING_AXIS_PID_SET,x_kp,x_ki,x_kd,y_kp,y_ki,y_kd}`。成功时回复 `{RSP,VISION,RING_AXIS_PID_GET,OK,x_kp,x_ki,x_kd,y_kp,y_ki,y_kd}` 或同字段的 `RING_AXIS_PID_SET`。写入只在 Debug 空闲时接受，参数在 RAM 生效。格式、数值、模式和运动占用错误沿用 `FORMAT`、`RANGE`、`MODE`、`BUSY`。调参需要使用新版网页和固件。
 
-- X 像素偏差直接输入转台 PID，输出为角度修正（°）。从实测转台角度减去修正量，再以 10 RPM 和张大头加速度档位 200 发令。默认增益为 `0.0427,0.01,0`，X 为正时减小角度，为负时增大角度。
-- Y 像素偏差直接输入伸缩 PID，输出为位移修正（mm），叠加到实测伸出量上。默认增益为 `0.033,0.007,0`，Y 为正时伸出，为负时缩回。两轴均使用张大头绝对位置模式执行。
+- X 像素偏差直接输入转台 PID，输出为角度修正（°）。从实测转台角度减去修正量，再以 10 RPM 和张大头加速度档位 160 发令。默认增益为 `0.033,0.004,0`，X 为正时减小角度，为负时增大角度。
+- Y 像素偏差直接输入伸缩 PID，输出为位移修正（mm），叠加到实测伸出量上。默认增益为 `0.055,0.014,0`，Y 为正时伸出，为负时缩回。两轴均使用张大头绝对位置模式执行。
 - 两轴分别计算积分与微分。某轴偏差绝对值严格小于该轴死区时，本帧跳过该轴发令并清除其 PID 历史。两轴死区默认均为 1 px，可在 Web 上位机「机械臂 → 圆环纠偏调参」或「参数」页分别调整 `圆环纠偏/X死区(px)` 和 `圆环纠偏/Y死区(px)`。写入正数，下次开始纠偏时取值。
 - 默认连续两帧双轴都进死区后放料。每帧的两轴偏差绝对值均须严格小于各自的死区，达标前任一轴越出死区则重新计数。可在 Web 上位机「参数 → 圆环纠偏/连续达标帧数」调整正整数，下次开始纠偏时取值。计数按当前令牌的接收顺序更新。
 - `圆环纠偏/超时(ms)` 默认为 3000，可在「机械臂 → 圆环纠偏调参」或「参数」页修改。设为 0 时跳过圆环视觉，确认到达 10 mm 后直接下放。设为正数时，每件开启视觉并从主控发出 RING_READY 时开始计时。连续达标或到达设定毫秒数后停止视觉并下放，超时包含未收到首帧的情况。机械臂页用 `{CMD,CFG,GET,id,RING_TIMEOUT}` 单独读取。
@@ -302,7 +309,7 @@ GPIO5 接 AO3400 栅极，按低边 N 沟道开关、高电平导通驱动。LED
 
 上位机“LED 调光”页拖动滑块后点击“应用亮度”，输入频率后点击“应用频率”，也可关闭或查询。例：`{CMD,LED,SET,50}` 设置 50%；`{CMD,LED,FREQ,3500}` 改为 3500 Hz 并保持亮度；`{CMD,LED,SET,0}` 关闭并保留频率。每帧末尾发送换行。回复的 hz 是定时器配置回读值，可能与请求值有取整差异。参数不合法返回 `ERR,RANGE`，数量错误返回 `ERR,FORMAT`，PWM 配置失败返回 `ERR,PWM`；频率配置失败时尝试恢复，恢复失败则关闭输出并锁定 PWM 故障。旧固件可能返回 `ERR,UNKNOWN_ACTION`，旧版仅亮度回复仍可显示但标注未报告频率。新固件回复新增频率字段，外部解析器需同步适配。`OK` 和查询仅表示软件 PWM 设置，不代表波形或光强实测。
 
-恢复反馈后，帧间隔达到 300 ms 会清零连续达标计数。自动对齐从开启起满 5 秒时停车并报告 `ALIGN_DONE`，包含等待首帧的时间。手动 `ALIGN_START` 仍需显式停止。
+恢复反馈后，帧间隔达到 300 ms 会清零连续达标计数。自动对齐从开启起满 5 秒时停车，报告 `ALIGN_RESULT`（`TIMEOUT_CONTINUE`），主流程按原策略继续；5 秒包含等待首帧的时间。手动 `ALIGN_START` 仍需显式停止。
 
 总任务超时沿用 3000 秒配置；STATE_TIMEOUT_FAILED 结束全部视觉、停止六个步进电机、锁止后续 MoveArm 发令并暂停主任务，保留夹爪位置，等待人工恢复和重启。仍发送 `{EVT,NAV,ROUTE_FAILED,TIMEOUT}`，不从未知位置自动请求返家路径。自动流程状态提示使用既有 `{EVT,DISPLAY,DEBUG,正文}`，无需新增命令。
 

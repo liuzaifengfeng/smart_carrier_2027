@@ -15,7 +15,7 @@ const char *ReadDiscYOffset(const int64_t (&before)[4],float beforeHeading,float
 const char *ReadDiscReturnMotorFeedback(uint8_t id,node_position::Motor &state,bool (*cancelled)());
 // 按视觉校准前后的编码器差值，只补偿地图 Y，返回用于确认到位的四轮目标。
 const char *BeginDiscYReturn(const int64_t (&before)[4],float beforeHeading,uint16_t maximumRpm,
-    int64_t (&targets)[4],bool (&commanded)[4],bool (*cancelled)());
+    int64_t (&targets)[4],bool (*cancelled)());
 // 调用者持有底盘运动锁；不会用估计时间替代驱动器反馈宣布成功。
 /**
  * @brief 同步运行节点位置路径直至结束；调用者持有底盘运动锁。
