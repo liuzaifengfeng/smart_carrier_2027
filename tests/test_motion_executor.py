@@ -29,14 +29,17 @@ class MotionExecutorTests(unittest.TestCase):
         end = source.index("bool discReturnArrived()", start)
         cache = ROOT / ".pio/motion-native"
         cache.mkdir(parents=True, exist_ok=True)
-        wait_start = source.index("bool takeRequestedPath(")
+        wait_start = source.index("void sendRouteRequest(")
         wait_end = source.index("\n/**", wait_start)
         runtime = (ROOT / "src/robot_runtime.h").read_text(encoding="utf-8")
         route_definitions = "\n".join(line for line in runtime.splitlines()
-                                      if line.startswith(("enum class NodePathState", "constexpr uint32_t ROUTE_REPLY_TIMEOUT_MS")))
+                                      if line.startswith(("enum class NodePathState", "constexpr uint32_t ROUTE_REPLY_TIMEOUT_MS", "constexpr uint8_t ROUTE_REPLY_MAX_RETRIES")))
         (cache / "scan_navigation_actual.inc").write_text(
             route_definitions + "\n" + source[start:end] + source[wait_start:wait_end], encoding="utf-8")
         run_native(build_native("scan-navigation", ["tests/scan_navigation_native.cpp"]))
+
+    def test_recovery_retries_busy_snapshot_and_observation(self):
+        run_native(self.binary, "recovery")
 
     def test_failed_startup_shift_does_not_auto_start(self):
         run_native(self.binary, "startup")

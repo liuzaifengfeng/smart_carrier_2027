@@ -37,6 +37,7 @@ struct Port {
     void flush(){}
 } Serial1;
 struct Hardware {
+    const uint32_t feedbackTimeoutMs=25;
     Hardware(uint32_t,void*){}
     bool cancelled(){return false;}
     void drain(){while(Serial1.available())Serial1.read();}

@@ -1,18 +1,15 @@
 #include <WiFi.h>
-#include <ESPmDNS.h>
 #include <ArduinoOTA.h>
 #include "ota_service.h"
 #include "Emm_V5.h"
-
-static bool otaStarted = false;
-static bool wifiConnected = false;
-static const char* wifi_ssid = nullptr;
-static const char* wifi_password = nullptr;
-static const char* wifi_hostname = nullptr;
+#include "chassis.h"
 
 #include "continuous_trial.h"
 #include "motion_executor.h"
-static TaskHandle_t xOtaTaskHandle = NULL;
+
+static TaskHandle_t otaTask = nullptr;
+static constexpr uint32_t wifiDisconnected = 1;
+static constexpr uint32_t wifiGotIp = 2;
 
 // 声明外部需要暂停的业务任务句柄
 extern TaskHandle_t xTask_MainStateMachine_Handle;
@@ -20,13 +17,12 @@ extern TaskHandle_t xTask_MainStateMachine_Handle;
 static void ota_task(void *pvParameters) {
     const char* hostname = (const char*)pvParameters;
 
-    MDNS.begin(hostname);
-    Serial.printf("mDNS responder started: %s.local\n", hostname);
-
     ArduinoOTA.setHostname(hostname);
+    static bool uploadStarted = false;
 
     // OTA 开始：挂起业务任务，防止总线竞争和中断干扰
     ArduinoOTA.onStart([]() {
+        uploadStarted = true;
         ContinuousTrialSetOta(true);
         // 必须先确认四轮已由试跑任务停车；超时则重启前仍尝试直接停车。
         uint32_t stopAt=millis();
@@ -51,67 +47,38 @@ static void ota_task(void *pvParameters) {
 
     // 出错时恢复业务
     ArduinoOTA.onError([](ota_error_t error) {
-        ContinuousTrialSetOta(false);
-        Serial.printf("Error[%u]: ", error);
-        if (xTask_MainStateMachine_Handle != NULL) {
-            vTaskResume(xTask_MainStateMachine_Handle);
+        Serial.printf("[OTA] Error[%u]\n", error);
+        if (uploadStarted) {
+            uploadStarted = false;
+            ContinuousTrialSetOta(false);
+            if (xTask_MainStateMachine_Handle != nullptr && !taskMotionAborted) {
+                vTaskResume(xTask_MainStateMachine_Handle);
+            }
         }
     });
 
-    ArduinoOTA.begin();
-    Serial.println("OTA service started");
-
+    bool listening = false;
+    uint32_t wifiEvents = 0;
     for (;;) {
-        ArduinoOTA.handle();
-        vTaskDelay(pdMS_TO_TICKS(2)); // 缩短轮询延时，加快吞吐
-    }
-}
-
-static void wifi_task(void *pvParameters) {
-    (void)pvParameters;
-
-    WiFi.mode(WIFI_STA);
-    for (;;) {
-        if (WiFi.status() == WL_CONNECTED) {
-            if (!wifiConnected) {
-                wifiConnected = true;
-                Serial.printf("WiFi Connected. IP: %s\n", WiFi.localIP().toString().c_str());
-
-                if (!otaStarted && wifi_hostname != nullptr) {
-                    otaStarted = true;
-                    // 优先级提到 10（高于主状态机的 8），并绑定到 Core 0 与网络栈同核
-                    xTaskCreatePinnedToCore(
-                        ota_task, 
-                        "OTA_Task", 
-                        16384, 
-                        (void*)wifi_hostname, 
-                        10, 
-                        &xOtaTaskHandle, 
-                        0
-                    );
-                }
-            }
-        } else {
-            if (wifiConnected) {
-                wifiConnected = false;
-                Serial.println("WiFi Disconnected");
-
-                if (xOtaTaskHandle != NULL) {
-                    vTaskDelete(xOtaTaskHandle);
-                    xOtaTaskHandle = NULL;
-                }
-                otaStarted = false;
-            }
-
-            if (wifi_ssid != nullptr && wifi_password != nullptr) {
-                if (WiFi.status() != WL_CONNECTED) {
-                    Serial.println("try connecting to WiFi... " + String(wifi_ssid) + " " + String(wifi_password));
-                    WiFi.begin(wifi_ssid, wifi_password);
-                }
-                vTaskDelay(pdMS_TO_TICKS(10000));
-            }
+        const bool connected = WiFi.status() == WL_CONNECTED;
+        // 短暂断线后即使已经取回 IP，也要重建旧监听。上传返回后才处理事件。
+        if (listening && (!connected || wifiEvents)) {
+            ArduinoOTA.end();
+            listening = false;
         }
-        vTaskDelay(pdMS_TO_TICKS(30000));
+        if (connected) {
+            if (!listening) {
+                ArduinoOTA.begin();
+                listening = true;
+                Serial.printf("[OTA] %s.local, IP: %s\n", hostname, WiFi.localIP().toString().c_str());
+            }
+            ArduinoOTA.handle();
+        }
+        wifiEvents = 0;
+        if (xTaskNotifyWait(0, UINT32_MAX, &wifiEvents, pdMS_TO_TICKS(connected ? 2 : 10000)) == pdFALSE
+            && !connected && WiFi.status() != WL_CONNECTED) {
+            WiFi.reconnect();
+        }
     }
 }
 
@@ -119,14 +86,19 @@ static void wifi_task(void *pvParameters) {
  * @brief 初始化WiFi、mDNS及OTA后台任务；ssid、password为网络凭据，hostname为设备名称。
  */
 void init_ota_service(const char* ssid, const char* password, const char* hostname) {
-    wifi_ssid = ssid;
-    wifi_password = password;
-    wifi_hostname = hostname;
-
     WiFi.mode(WIFI_STA);
+    if (xTaskCreatePinnedToCore(ota_task, "OTA_Task", 16384, (void*)hostname, 10, &otaTask, 0) != pdPASS) {
+        Serial.println("[OTA] task creation failed");
+        return;
+    }
+    WiFi.onEvent([](arduino_event_id_t event) {
+        if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+            xTaskNotify(otaTask, wifiDisconnected, eSetBits);
+        } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+            xTaskNotify(otaTask, wifiGotIp, eSetBits);
+        }
+    });
     WiFi.begin(ssid, password);
     vTaskDelay(pdMS_TO_TICKS(1000));
     Serial.println("WiFi connection started in background");
-
-    xTaskCreate(wifi_task, "WiFi_Task", 8192, NULL, 3, NULL);
 }

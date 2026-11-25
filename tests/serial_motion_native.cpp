@@ -73,7 +73,7 @@ enum class NodePathState {IDLE,WAITING,RECEIVING,RECEIVED,RUNNING,DONE,FAILED};
 NodePathState nodePathState=NodePathState::IDLE;
 uint8_t nodePathBuffer[25];size_t nodePathLen=0;
 uint32_t nodePathRequestedAt=0;
-constexpr uint32_t ROUTE_REPLY_TIMEOUT_MS=3000;
+constexpr uint32_t ROUTE_REPLY_TIMEOUT_MS=2000;
 constexpr uint8_t DISC_AREA_NODE=14,COARSE_AREA_NODE=10,TEMP_AREA_NODE=22;
 constexpr float StartZoneHeading(uint8_t zone){return zone==1?180.0f:0.0f;}
 uint32_t SubmitLidarPoseAction(bool fromCommand=false,bool allowRepeat=false,uint8_t startZone=0);
@@ -97,6 +97,7 @@ void LaunchMotion(uint32_t id) {
     gate.release(id);result.state=MotionState::RUNNING;++launches;
 }
 bool MotionExecutorActive(){return active;}
+bool ResumeMaterialMotion(uint32_t id,uint32_t token){return active&&id==result.id&&token==9&&strcmp(result.phase,"MATERIAL_CHECK")==0;}
 MotionStatus GetMotionStatus(uint32_t id){return id==result.id?result:MotionStatus{};}
 bool WaitMotion(uint32_t id){return id&&result.state==MotionState::DONE;}
 void CancelMotion(){++cancels;gate.cancel();active=false;result.state=MotionState::CANCELLED;}
@@ -217,6 +218,11 @@ void maintenance() {
     dispatch("{CMD,SYS,BEEP}");
     assert(cuePulses==3&&active&&submissions==1&&Serial.text.find("{RSP,SYS,BEEP,OK}")!=std::string::npos);
     dispatch("{CMD,ARM,DEMO1}");assert(submissions==1&&Serial.text.find("ERR,BUSY")!=std::string::npos);
+    result.phase="MATERIAL_CHECK";
+    dispatch("{CMD,MOTION,RESUME_MATERIAL,1,8}");
+    assert(Serial.text.find("{RSP,MOTION,RESUME_MATERIAL,ERR,NOT_WAITING}")!=std::string::npos);
+    dispatch("{CMD,MOTION,RESUME_MATERIAL,1,9}");
+    assert(Serial.text.find("{RSP,MOTION,RESUME_MATERIAL,ACK,1,9}")!=std::string::npos);
     dispatch("{CMD,NAV,STOP}");finish();
     dispatch("{CMD,ARM,TRANSFER,2,3}");assert(captured.kind==MotionKind::TRANSFER&&captured.debug&&captured.cargo==2&&captured.work==3);
     assert(cargoPlatforms[1].material==MATERIAL_NONE);finish();

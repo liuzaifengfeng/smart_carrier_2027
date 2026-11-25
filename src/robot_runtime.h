@@ -97,7 +97,8 @@ extern NodePathState nodePathState;
 extern portMUX_TYPE nodePathMux;
 extern uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH];
 extern size_t nodePathLen;
-constexpr uint32_t ROUTE_REPLY_TIMEOUT_MS = 3000;
+constexpr uint32_t ROUTE_REPLY_TIMEOUT_MS = 2000;
+constexpr uint8_t ROUTE_REPLY_MAX_RETRIES = 10;
 extern uint32_t nodePathRequestedAt; // 由 nodePathMux 保护。
 extern SemaphoreHandle_t xAlignmentMotionMutex;
 extern QueueHandle_t xVisualTaskQueue;

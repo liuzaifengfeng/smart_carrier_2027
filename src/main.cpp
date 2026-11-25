@@ -124,6 +124,13 @@ public:
      * @brief 提交一个非阻塞运动请求；返回作业编号，后续用 status 查询完成结果。
      */
     uint32_t submit(const MotionRequest &request)override{return SubmitMotion(request);}
+    uint32_t submit(const MotionRequest &request,MotionSubmitError &error)override {
+        const uint32_t id=SubmitMotion(request,true,&error);
+        if(!id&&error!=MotionSubmitError::BUSY)
+            Serial.printf("{EVT,MOTION,SUBMIT_FAILED,%s}\n",error==MotionSubmitError::QUEUE?"QUEUE":"UNAVAILABLE");
+        return id;
+    }
+    bool motionBusy()override{return MotionExecutorActive();}
     /**
      * @brief 提交起始区扫码准备姿态作业；返回作业编号，不在主流程等待物理动作。
      */
@@ -193,7 +200,7 @@ public:
         if(taskMotionAborted)return;
         if(xHomeTimer)xTimerStop(xHomeTimer,0);
         currentState=reason;CancelMotion();
-        display(reason==STATE_ROUTE_FAILED?"ROUTE ERR":reason==STATE_ALIGN_FAILED?"ALIGN ERR":reason==STATE_SCAN_FAILED?"TASK ERR":"TRANSFER ERR");
+        display(reason==STATE_ROUTE_FAILED?"ROUTE ERR":reason==STATE_ALIGN_FAILED?"ALIGN ERR":reason==STATE_SCAN_FAILED?"SCAN ROUTE ERR":"TRANSFER ERR");
     }
     /**
      * @brief 向上位机发布当前业务阶段的显示文本。

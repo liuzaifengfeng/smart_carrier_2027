@@ -139,6 +139,13 @@ float normalizeHeading(float heading) {
 /**
  * @brief 按节点编号读取当前地图X/Y坐标(mm)，成功时写入x和y并返回true。
  */
+bool WithinAlignmentTimeoutTolerance(VisionStartMode mode,float angle,float x,float y) {
+    const auto &deadzone=ALIGN_DEADZONES[static_cast<uint8_t>(mode)];
+    const float scale=mode==VisionStartMode::WORK_AREA_LOADED?1.0f:1.5f;
+    return fabsf(angle)<=deadzone.angleDeg*scale
+        && fabsf(x)<=deadzone.visualX*scale && fabsf(y)<=deadzone.visualY*scale;
+}
+
 bool ChassisGetNodePosition(uint8_t node,float &x,float &y) {
     NodePosition p;
     if(!getNodePosition(node,p))return false;
@@ -282,7 +289,8 @@ static bool MoveArmInternal(float high, float length, float turret_angle, float 
     if (taskMotionAborted) return false;
     if (pawl_angle != -1) {
         float measuredAngle = 0.0f;
-        if (!Servo_QueryAngleMTurn(1, measuredAngle, 100) || !isfinite(measuredAngle)) {
+        if ((!Servo_QueryAngleMTurn(1, measuredAngle, 100)&&!Servo_QueryAngleMTurn(1, measuredAngle, 100))
+                || !isfinite(measuredAngle)) {
             Serial.println("[Arm] ERR: gripper multi-turn angle read failed; motion skipped");
             return false;
         }

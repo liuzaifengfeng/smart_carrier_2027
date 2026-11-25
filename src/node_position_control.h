@@ -13,6 +13,7 @@ struct Settings {
     continuous::Vec startOffset; // 起始估算位置相对路径起点的偏移，并入首段四轮位置目标。
     bool alignStartToRoad=false; // 先横移到道路中心，再按剩余纵向距离走首段。
     float startYOffset=0; // 圆盘离站时合入首条直线的地图 Y 偏移。
+    bool recoverSmallResidual=false; // 正式路径按场地余量低速补偿一次小残差。
     bool outerStraightVelocity=false; // 正式节点导航启用，保留同步位置模式入口。
 };
 struct Motor {uint8_t flags=0;int64_t position=0;int16_t rpm=0;}; // 位置：65536单位/圈
@@ -228,7 +229,7 @@ class Runner {
     H30HeadingHold headingHold;
     float straightSpeed=0,straightTravel=0;
     bool straightStopping=false;
-    bool quietSeen=false;
+    bool quietSeen=false,residualRetried=false,headingRecoveryUsed=false;
     uint32_t residualSince=0;
     uint8_t quietCount=0;
     int64_t quietAnchor[4]={};

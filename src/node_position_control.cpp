@@ -141,7 +141,7 @@ void Runner::moveTick() {
     }
     const uint32_t checkStarted=io->now();
     bool arrivedNow=sent,allIdle=true;double progress=0,maxResidual=0;Motor measured[4];
-    float residuals[4];
+    float residuals[4],remainingPulses[4];
     uint16_t measuredRpm=0;
     for(uint8_t id=1;id<=4;++id) {
         Motor state=stopped[id-1];
@@ -156,6 +156,7 @@ void Runner::moveTick() {
             static_cast<double>(llabs(rawDelta));
         const double residual=fabs(current-goal);maxResidual=fmax(maxResidual,residual);
         residuals[id-1]=static_cast<float>((current-goal)/unitsPerDistance);
+        remainingPulses[id-1]=(goal-current)*PULSES_PER_REV/65536*(directions[id-1]?1:-1);
         if(current>goal+hardLimit){io->motorDiagnostic(id,"MOTOR_POSITION_OVERRUN",absoluteGoal,state);fail("MOTOR_POSITION_OVERRUN");return;}
         measuredRpm=static_cast<uint16_t>(fmaxf(measuredRpm,abs(state.rpm)));
         if(abs(state.rpm)>3)allIdle=false;
@@ -201,14 +202,33 @@ void Runner::moveTick() {
         if(calm&&quietCount>=2&&io->now()-residualSince>=500) {
             for(uint8_t id=1;id<=4;++id)io->motorDiagnostic(id,"MOTOR_RESIDUAL_TIMEOUT",
                 static_cast<double>(goals[id-1])*(encoderSign[id-1]?encoderSign[id-1]:1)*65536/PULSES_PER_REV,measured[id-1]);
-            fail("MOTOR_RESIDUAL_TIMEOUT");return;
+            const Vec body{
+                (-remainingPulses[0]-remainingPulses[1]+remainingPulses[2]+remainingPulses[3])/(4*route->config.lateralPpm),
+                (remainingPulses[0]-remainingPulses[1]+remainingPulses[2]-remainingPulses[3])/(4*route->config.forwardPpm)
+            };
+            const float angle=(remainingPulses[0]+remainingPulses[1]+remainingPulses[2]+remainingPulses[3])/(4*route->config.rotationPpd);
+            bool clear=settings->recoverSmallResidual&&!residualRetried&&(!rotating||!headingRecoveryUsed)
+                &&norm(body)<=10&&fabsf(angle)<=3;
+            const Vec world=bodyToWorld(body,output->heading+angle*.5f);
+            for(int i=0;clear&&i<=10;++i) {
+                const float ratio=i/10.0f;
+                const Vec pose=output->estimated+world*ratio;
+                clear=!field::check(pose.x,pose.y,output->heading+angle*ratio,route->config.margin);
+            }
+            if(!clear){fail("MOTOR_RESIDUAL_TIMEOUT");return;}
+            residualRetried=true;
+            headingRecoveryUsed|=rotating;
+            sent=quietSeen=false;
+            quietCount=0;
+            io->timing("POSITION_RESIDUAL_RETRY");
         }
     }
     if(!sent) {
-        const uint16_t rpm=rpmFor(maximum,ppm);
+        const float speed=residualRetried?fminf(maximum*.25f,rotating?30.0f:200.0f):maximum;
+        const uint16_t rpm=rpmFor(speed,ppm);
         for(uint8_t id=1;id<=4;++id) {
             const float wheelPpm=scanExit&&!rotating?travelPulses[id-1]/fabsf(delta):ppm;
-            failure=io->target(id,goals[id-1]>=0,scanExit&&!rotating?rpmFor(maximum,wheelPpm):rpm,
+            failure=io->target(id,goals[id-1]>=0,scanExit&&!rotating?rpmFor(speed,wheelPpm):rpm,
                 driverAccelerationFor(acceleration,wheelPpm),static_cast<uint32_t>(llabs(goals[id-1])));
             if(failure){fail(failure);return;}
         }
@@ -359,15 +379,15 @@ void Runner::tick() {
         break;
     case SELECT: {
         finalTranslation=false;terminalTurn=false;
-        if(index>=route->segmentCount){action=FINAL;targetHeading=route->config.endHeading;attempts=0;stage=ALIGN;break;}
+        if(index>=route->segmentCount){action=FINAL;targetHeading=route->config.endHeading;attempts=0;headingRecoveryUsed=false;stage=ALIGN;break;}
         const Segment &phase=route->segments[index];after=index+1;
         if(phase.kind==ROTATE) {
             if(norm(offset)>0&&!settings->alignStartToRoad){++index;break;}
-            action=ROTATION;targetHeading=phase.h1;attempts=0;stage=ALIGN;break;
+            action=ROTATION;targetHeading=phase.h1;attempts=0;headingRecoveryUsed=false;stage=ALIGN;break;
         }
         size_t block=index;bool curved=false;
         while(block<route->segmentCount&&route->segments[block].kind!=ROTATE){curved|=route->segments[block].kind==CUBIC;++block;}
-        targetHeading=phase.h0;attempts=0;
+        targetHeading=phase.h0;attempts=0;headingRecoveryUsed=false;
         if(curved){action=CURVE;curveBegin=index;after=block;stage=ALIGN;break;}
         action=STRAIGHT;end=phase.end;float length=phase.length;
         while(after<route->segmentCount) {
@@ -399,9 +419,11 @@ void Runner::tick() {
         failure=sample(m);if(failure)break;
         const float angle=turn(output->heading,targetHeading);
         if(fabsf(angle)<=settings->headingDeadbandDeg){aligned();break;}
-        if(attempts>=3){failure="TURN_HEADING_ERROR";break;}
-        for(int i=0;i<=90;++i)if(field::check(output->estimated.x,output->estimated.y,wrap(output->heading+angle*i/90),0)){failure="TURN_SPACE";break;}
-        if(!failure){++attempts;startMove(true);}break;
+        const bool slowCorrection=attempts==3&&settings->recoverSmallResidual&&!headingRecoveryUsed&&fabsf(angle)<=3;
+        if(attempts>=3&&!slowCorrection){failure="TURN_HEADING_ERROR";break;}
+        const float margin=slowCorrection?route->config.margin:0;
+        for(int i=0;i<=90;++i)if(field::check(output->estimated.x,output->estimated.y,wrap(output->heading+angle*i/90),margin)){failure="TURN_SPACE";break;}
+        if(!failure){headingRecoveryUsed|=slowCorrection;++attempts;startMove(true);}break;
     }
     case ZERO:
         failure=io->zero(zeroId);if(failure)break;
@@ -418,10 +440,11 @@ void Runner::tick() {
         if(failure)break;
         valid=false;io->beginAction();start=output->estimated;baseS=output->s;
         maximum=rotating?settings->turnDegS:route->segments[index].middle?settings->middleSpeedMmS:settings->speedMmS;
+        if(rotating&&attempts>3)maximum=fminf(maximum*.25f,30.0f);
         acceleration=rotating?settings->turnAccelDegS2:route->segments[index].middle?settings->middleAccelMmS2:settings->accelMmS2;
         started=previous=io->now();lastReport=lastArrivalReport=0;
         deadline=static_cast<uint32_t>((fabsf(delta)/maximum+maximum/acceleration+5)*3000);
-        sent=braking=quietSeen=false;quietCount=0;peakMeasuredRpm=0;headingGuard=HeadingGuard{};startHeading=output->heading;
+        sent=braking=quietSeen=residualRetried=false;quietCount=0;peakMeasuredRpm=0;headingGuard=HeadingGuard{};startHeading=output->heading;
         representative=1;
         for(uint8_t id=2;id<=4;++id)if(travelPulses[id-1]>travelPulses[representative-1])representative=id;
         representativePulses=0;previousRepresentativeRpm=0;

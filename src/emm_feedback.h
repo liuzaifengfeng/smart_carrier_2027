@@ -31,7 +31,7 @@ public:
             if(bytes[0]<1||bytes[0]>7){discard(1);continue;}
             uint8_t n=length(bytes[1]);if(!n){discard(1);continue;}
             if(size<n)return false;
-            if(bytes[n-1]!=0x6B||((bytes[1]==0x35||bytes[1]==0x36)&&bytes[2]>1)){discard(1);continue;}
+            if(bytes[n-1]!=0x6B||((bytes[1]==0x33||bytes[1]==0x35||bytes[1]==0x36)&&bytes[2]>1)){discard(1);continue;}
             if(bytes[1]==0x43&&(bytes[2]!=31||bytes[18]>1)){discard(1);continue;}
             if(bytes[1]==0x42&&(bytes[2]!=33||bytes[3]!=21)){discard(1);continue;}
             out.id=bytes[0];out.function=bytes[1];out.size=n;
@@ -65,7 +65,7 @@ private:
      * @brief 根据回复功能码确定固定帧长，未知功能返回0。
      */
     static uint8_t length(uint8_t f) {
-        if(f==0x42)return 33;if(f==0x21)return 15;if(f==0x43)return 31;if(f==0x36)return 8;if(f==0x35)return 6;
+        if(f==0x42)return 33;if(f==0x21)return 15;if(f==0x43)return 31;if(f==0x33||f==0x36)return 8;if(f==0x35)return 6;
         return f==0x48||f==0x46||f==0xF3||f==0x0E||f==0x4A||f==0x3A||f==0x0A||f==0xFD||f==0xFE||f==0xFF||f==0?4:0;
     }
     /**

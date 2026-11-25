@@ -29,12 +29,16 @@ motion::Join join;
 MotionHardware hardware;
 bool running=false;
 bool armSpanOpen=false;
-uint8_t stage=0,scanTurn=0;
-constexpr uint8_t SCAN_WAIT=4,SCAN_SWEEP=5;
+bool materialPaused=false,resumeMaterial=false;
+size_t materialFirstStep=0;
+uint32_t materialCheckToken=0;
+uint8_t stage=0,scanTurn=0,pathRetries=0;
+constexpr uint8_t SCAN_WAIT=4,SCAN_SWEEP=5,SCAN_WAIT_CODE=6;
 uint32_t scanArrivedAt=0,scanTurnAt=0;
 float scanTrayAngle=0;
 int64_t discBefore[4]={};
-float discBeforeHeading=0;
+float discBeforeHeading=0,discMeasuredYOffset=0;
+bool discMeasuredYOffsetValid=false;
 int64_t discReturnTargets[4]={};
 const char *activeSpan=nullptr;
 
@@ -154,6 +158,7 @@ void finish(MotionState state,const char *reason=nullptr) {
     portENTER_CRITICAL(&jobMux);
     status.finishedMs=now;status.elapsedMs=now-status.startedMs;status.state=state;status.reason=reason;
     status.chassisDone=join.chassisDone;status.armStarted=join.armStarted;status.armReady=join.armReady;
+    materialPaused=resumeMaterial=false;
     const auto result=status;
     portEXIT_CRITICAL(&jobMux);
     Serial.printf("{EVT,MOTION,RESULT,%lu,%lu,%s,%lu}\n",static_cast<unsigned long>(job.id),
@@ -182,8 +187,38 @@ bool beginArm(const MotionRequest &request) {
 bool tickArm() {
     arm.tick();publishArmEstimate();if(arm.active())return false;
     if(arm.failure()){
+        const auto &request=job.request;
+        const auto kind=request.kind;
+        const bool materialTransfer=kind==MotionKind::PLACE_ROUND||kind==MotionKind::RETRIEVE_ROUND
+            ||kind==MotionKind::DISC_GRAB;
+        const char *error=arm.failure();
+        if(request.automatic&&materialTransfer&&currentState==job.state&&!cancelled()) {
+            stopHardware();
+            hardware.stopRingVision();
+            if(armSpanOpen){span("ARM_PROGRAM",false);armSpanOpen=false;}
+            materialFirstStep=0;
+            unsigned completed=0;
+            for(size_t i=0;i<arm.stepIndex();++i)if(program.steps[i].kind==motion::StepKind::COMMIT) {
+                ++completed;
+                materialFirstStep=i+1;
+            }
+            const bool disc=kind==MotionKind::DISC_GRAB;
+            const unsigned cargo=disc?request.cargo:CargoForGrabIndex(completed);
+            const unsigned work=disc?request.position:request.positions[completed];
+            portENTER_CRITICAL(&jobMux);
+            materialPaused=true;
+            const uint32_t token=++materialCheckToken;
+            status.phase="MATERIAL_CHECK";
+            status.reason=error;
+            portEXIT_CRITICAL(&jobMux);
+            Serial.printf("{EVT,MOTION,MATERIAL_CHECK,%lu,%lu,%s,%u,%u,%s,%s}\n",
+                static_cast<unsigned long>(job.id),static_cast<unsigned long>(token),disc?"DISC_GRAB":kind==MotionKind::RETRIEVE_ROUND?"RETRIEVE":"PLACE",
+                cargo,work,program.steps[arm.stepIndex()].name,error);
+            updateDisplay("DISPLAY","DEBUG","CHECK MATERIAL");
+            return false;
+        }
         portENTER_CRITICAL(&jobMux);status.phase="ARM_FAILED";portEXIT_CRITICAL(&jobMux);
-        stopHardware();finish(MotionState::FAILED,arm.failure());return false;
+        stopHardware();finish(MotionState::FAILED,error);return false;
     }
     if(!join.armReady){join.armReady=true;span("ARM_PROGRAM",false);armSpanOpen=false;flag("ARM_READY");}
     return true;
@@ -251,6 +286,10 @@ void finishScan() {
  */
 void scanAtNode() {
     const bool received=pollTaskCode();
+    if(stage==SCAN_WAIT_CODE) {
+        if(received)finishScan();
+        return;
+    }
     if(stage==SCAN_WAIT) {
         if(received){finishScan();return;}
         if(millis()-scanArrivedAt<1000)return;
@@ -262,7 +301,13 @@ void scanAtNode() {
     if(scanTurn&&millis()-scanTurnAt<travelMs)return;
     if(received&&scanTurn%2==0){finishScan();return;}
     constexpr uint8_t stepsPerRound=4,maxRounds=5;
-    if(scanTurn==stepsPerRound*maxRounds){finish(MotionState::FAILED,"SCAN_TIMEOUT");return;}
+    if(scanTurn==stepsPerRound*maxRounds) {
+        stage=SCAN_WAIT_CODE;
+        phase("SCAN_WAIT_CODE");
+        Serial.println("{EVT,TASK,SCAN_TIMEOUT,WAIT_CODE}");
+        updateDisplay("DISPLAY","DEBUG","NO QR - WAIT CODE");
+        return;
+    }
 
     constexpr float offsets[stepsPerRound]={20,0,-20,0};
     motion::Step tray;
@@ -293,19 +338,30 @@ bool discReturnArrived() {
 /**
  * @brief 消费已接收的正式路径，或结束超过回传期限的作业。
  */
+void sendRouteRequest(const MotionRequest &request) {
+    Serial.println("{EVT,NAV,ROUTE_WAITING}");
+    Serial.printf("{EVT,NAV,ROUTE_REQUEST,%u,%u}\n",request.startNode,request.endNode);
+}
+
 bool takeRequestedPath(MotionRequest &request) {
     portENTER_CRITICAL(&nodePathMux);
     const auto state=nodePathState;
     const bool timedOut=state==NodePathState::WAITING
         && millis()-nodePathRequestedAt>=ROUTE_REPLY_TIMEOUT_MS;
-    if(timedOut)nodePathState=NodePathState::FAILED;
+    const bool retry=timedOut&&pathRetries<ROUTE_REPLY_MAX_RETRIES;
+    if(retry) {
+        ++pathRetries;
+        nodePathRequestedAt=millis();
+    } else if(timedOut)nodePathState=NodePathState::FAILED;
     if(state==NodePathState::RECEIVED) {
         request.pathCount=nodePathLen;
         memcpy(request.path,nodePathBuffer,nodePathLen);
         nodePathState=NodePathState::RUNNING;
     }
     portEXIT_CRITICAL(&nodePathMux);
-    if(timedOut) {
+    if(retry) {
+        sendRouteRequest(request);
+    } else if(timedOut) {
         Serial.println("{EVT,NAV,ROUTE_FAILED,TIMEOUT}");
         finish(MotionState::FAILED,"PATH_TIMEOUT");
     } else if(state==NodePathState::FAILED) {
@@ -325,7 +381,8 @@ void navigationTick() {
         nodePathRequestedAt=millis();
         nodePathState=NodePathState::WAITING;nodePathLen=0;
         portEXIT_CRITICAL(&nodePathMux);
-        Serial.println("{EVT,NAV,ROUTE_WAITING}");Serial.printf("{EVT,NAV,ROUTE_REQUEST,%u,%u}\n",r.startNode,r.endNode);
+        pathRetries=0;
+        sendRouteRequest(r);
         phase("PATH_WAIT");stage=1;return;
     }
     if(stage==1) {
@@ -344,8 +401,15 @@ void navigationTick() {
             }
             phase("DISC_Y_OFFSET");
             if(const char *error=ReadDiscYOffset(discBefore,discBeforeHeading,startYOffset,cancelled)) {
-                finish(MotionState::FAILED,error);
-                return;
+                if(!discMeasuredYOffsetValid||cancelled()) {
+                    finish(MotionState::FAILED,error);
+                    return;
+                }
+                startYOffset=discMeasuredYOffset;
+                Serial.printf("{EVT,NAV,DISC_Y_OFFSET,CACHED,%.2f}\n",startYOffset);
+            } else {
+                discMeasuredYOffset=startYOffset;
+                discMeasuredYOffsetValid=true;
             }
             Serial.printf("[Route] Disc start Y offset=%.1f mm, next node=%u\n",startYOffset,r.path[1]);
         }
@@ -421,14 +485,33 @@ void task(void *) {
             portENTER_CRITICAL(&jobMux);stopPending=false;portEXIT_CRITICAL(&jobMux);
             stopHardware();finish(MotionState::CANCELLED,taskMotionAborted?"ABORTED":"STOPPED");continue;
         }
+        if(materialPaused) {
+            portENTER_CRITICAL(&jobMux);
+            const bool authorized=resumeMaterial;
+            if(authorized) {
+                materialPaused=resumeMaterial=false;
+                status.phase="ARM_PREPARE";
+                status.reason=nullptr;
+            }
+            portEXIT_CRITICAL(&jobMux);
+            if(!authorized) {
+                ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
+                continue;
+            }
+            discMeasuredYOffsetValid=false;
+            updateDisplay("DISPLAY","DEBUG","RESUME MATERIAL");
+            arm.begin(program,hardware,materialFirstStep);
+            span("ARM_PROGRAM",true);armSpanOpen=true;
+        }
         TurretMotorPoll();
         const auto kind=job.request.kind;
         const bool navigation=kind==MotionKind::NAVIGATE||kind==MotionKind::NODE_PATH||kind==MotionKind::SCAN_TASK;
         if(navigation)navigationTick();
         else if(kind==MotionKind::DISC_RECORD_POSITION) {
             phase("DISC_RECORD_POSITION");
+            discMeasuredYOffsetValid=false;
             const char *error=RecordDiscEncoderPositions(discBefore,cancelled);
-            discBeforeHeading=currentPose.theta;
+            if(!error)discBeforeHeading=currentPose.theta;
             finish(error?MotionState::FAILED:MotionState::DONE,error);
         }
         else if(kind==MotionKind::TURRET_TRIAL) {
@@ -467,10 +550,15 @@ void task(void *) {
             if(stage==0) {
                 if(job.request.force&&kind==MotionKind::DISC_GRAB&&cargoPlatforms[job.request.cargo-1].material!=MATERIAL_NONE)
                     Serial.printf("{EVT,VISION,FORCE_GRAB,WARN,OCCUPIED,%u,%u}\n",cargoPlatforms[job.request.cargo-1].material,job.request.cargo);
+                if(kind==MotionKind::DISC_GRAB&&job.request.automatic&&job.progress==0) {
+                    const char *error=ReadDiscYOffset(discBefore,discBeforeHeading,discMeasuredYOffset,cancelled);
+                    discMeasuredYOffsetValid=!error;
+                    if(error)Serial.printf("{EVT,NAV,DISC_Y_OFFSET,ERR,%s}\n",error);
+                }
                 if(beginArm(job.request))stage=1;
             } else if(tickArm()&&running)finish(MotionState::DONE);
         }
-        if(!running)continue;
+        if(!running||materialPaused)continue;
         if(kind!=MotionKind::NAVIGATE&&kind!=MotionKind::NODE_PATH)publishBaseEstimate();
         if(join.armStarted&&!join.armReady){portENTER_CRITICAL(&jobMux);status.phase=arm.phase();portEXIT_CRITICAL(&jobMux);}
         TickVisualAlignment();
@@ -509,14 +597,33 @@ uint32_t CurrentMotionId(){return job.id;}
  * @return 非零作业编号；0 表示未提交。提交成功不等于动作完成。
  */
 uint32_t SubmitMotion(const MotionRequest &request,bool launch) {
+    return SubmitMotion(request,launch,nullptr);
+}
+uint32_t SubmitMotion(const MotionRequest &request,bool launch,MotionSubmitError *error) {
+    if(error)*error=MotionSubmitError::NONE;
     Job queued;queued.request=request;queued.state=currentState;queued.progress=roundProgress;
     portENTER_CRITICAL(&jobMux);
-    if(!worker||ota||taskMotionAborted||status.state==MotionState::RUNNING||status.state==MotionState::QUEUED){portEXIT_CRITICAL(&jobMux);return 0;}
+    if(!worker||ota||taskMotionAborted) {
+        portEXIT_CRITICAL(&jobMux);
+        if(error)*error=MotionSubmitError::UNAVAILABLE;
+        return 0;
+    }
+    if(status.state==MotionState::RUNNING||status.state==MotionState::QUEUED) {
+        portEXIT_CRITICAL(&jobMux);
+        if(error)*error=MotionSubmitError::BUSY;
+        return 0;
+    }
     queued.id=++nextId;queued.generation=launchGate.generation;status=MotionStatus{};status.id=queued.id;
     status.submittedMs=millis();status.state=MotionState::QUEUED;status.phase="QUEUED";
     launchGate.prepare(queued.id,launch);
     portEXIT_CRITICAL(&jobMux);
-    if(xQueueSend(queue,&queued,0)!=pdTRUE)return 0;
+    if(xQueueSend(queue,&queued,0)!=pdTRUE) {
+        portENTER_CRITICAL(&jobMux);
+        status.state=MotionState::FAILED;status.reason="QUEUE";
+        portEXIT_CRITICAL(&jobMux);
+        if(error)*error=MotionSubmitError::QUEUE;
+        return 0;
+    }
     WakeMotionExecutor();return queued.id;
 }
 /**
@@ -524,6 +631,16 @@ uint32_t SubmitMotion(const MotionRequest &request,bool launch) {
  * @param id SubmitMotion 返回的作业编号。
  */
 void LaunchMotion(uint32_t id){portENTER_CRITICAL(&jobMux);if(status.id==id&&status.state==MotionState::QUEUED)launchGate.release(id);portEXIT_CRITICAL(&jobMux);WakeMotionExecutor();}
+bool ResumeMaterialMotion(uint32_t id,uint32_t token) {
+    portENTER_CRITICAL(&jobMux);
+    const bool accepted=materialPaused&&!resumeMaterial&&status.id==id&&token==materialCheckToken
+        &&status.state==MotionState::RUNNING
+        &&!ota&&!taskMotionAborted&&!launchGate.cancelled(job.generation);
+    if(accepted)resumeMaterial=true;
+    portEXIT_CRITICAL(&jobMux);
+    if(accepted)WakeMotionExecutor();
+    return accepted;
+}
 /**
  * @brief 读取指定作业的状态快照，可查询当前作业及最近保留的终态。
  * @param id 提交动作时取得的作业编号。

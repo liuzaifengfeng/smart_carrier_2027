@@ -303,6 +303,39 @@ void scanTick() {
         assert(car.crossed&&!car.zeroWhileMoving&&car.fastRpm>100);
     }
 }
+struct ResidualRecoverySim : Sim {
+    uint16_t initialSpeed=0,retrySpeed=0;
+    const char *read(uint8_t id,Motor &motor)override {
+        if(id==1)return Sim::read(id,motor);
+        const bool active=residualActive,test=residualTest;
+        residualActive=residualTest=false;
+        const char *error=Sim::read(id,motor);
+        residualActive=active;
+        residualTest=test;
+        return error;
+    }
+    const char *target(uint8_t id,bool positive,uint16_t speed,uint8_t acceleration,uint32_t count)override {
+        if(syncs) {
+            assert(pending[id-1]==(positive?double(count):-double(count)));
+            pending[id-1]=0; // 驱动在同步前重新装载同一个绝对目标。
+            retrySpeed=speed;
+        } else initialSpeed=speed;
+        return Sim::target(id,positive,speed,acceleration,count);
+    }
+};
+void residualRecovery() {
+    Config cfg;cfg.policy=2;cfg.count=2;cfg.startHeading=cfg.endHeading=0;
+    Node nodes[]={{{310,1200},0},{{720,1200},0}};
+    Route path;assert(!path.build(nodes,cfg));
+    Settings settings;settings.speedMmS=200;settings.recoverSmallResidual=true;
+    for(bool persistent:{false,true}) {
+        ResidualRecoverySim car;car.residualTest=true;car.persistentResidual=persistent;
+        car.residualEncoderUnits=-5001;
+        Result result;const char *error=run(path,settings,car,result);
+        assert(car.syncs==2&&car.updates==8&&car.retrySpeed<car.initialSpeed);
+        assert(persistent?(error&&strcmp(error,"MOTOR_RESIDUAL_TIMEOUT")==0):!error);
+    }
+}
 void representativePolling() {
     Config cfg;cfg.policy=2;cfg.count=2;cfg.startHeading=cfg.endHeading=0;
     Node nodes[]={{{310,1200},0},{{1200,1200},0}};
@@ -394,4 +427,4 @@ void discReturnArrival() {
     error=RetryEmmFeedback(3,readsState);
     assert(!strcmp(error,"MOTOR_COMMAND_ERROR")&&requests==1);
 }
-int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"stable"))stableFrames();else if(!strcmp(argv[1],"hold"))middleHold();else if(!strcmp(argv[1],"middle"))middleProfile();else if(!strcmp(argv[1],"representative"))representativePolling();else if(!strcmp(argv[1],"disc-return"))discReturnArrival();else if(!strcmp(argv[1],"scan-start-offset"))scanStartOffset();else nodeTick();}
+int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"stable"))stableFrames();else if(!strcmp(argv[1],"hold"))middleHold();else if(!strcmp(argv[1],"middle"))middleProfile();else if(!strcmp(argv[1],"residual-recovery"))residualRecovery();else if(!strcmp(argv[1],"representative"))representativePolling();else if(!strcmp(argv[1],"disc-return"))discReturnArrival();else if(!strcmp(argv[1],"scan-start-offset"))scanStartOffset();else nodeTick();}

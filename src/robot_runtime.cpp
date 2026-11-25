@@ -159,7 +159,9 @@ void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic, VisionSt
         ResetDiscAlignmentPid();
         ResetAlignmentWait();
         // 手动停止仍取消业务等待；重复启动已在上方保护自动状态。
-        autoAlignmentState = automatic ? AutoAlignmentState::WAITING : AutoAlignmentState::IDLE;
+        const bool explicitStop=!enable&&acknowledge&&autoAlignmentState==AutoAlignmentState::WAITING;
+        autoAlignmentState=explicitStop?AutoAlignmentState::FAILED
+            :automatic?AutoAlignmentState::WAITING:AutoAlignmentState::IDLE;
         autoAlignmentStartedMs = millis();
         alignmentEnabled = enable;
         updateVisionLight();
@@ -260,9 +262,12 @@ void TickVisualAlignment() {
     };
     if(autoAlignmentState==AutoAlignmentState::WAITING&&millis()-autoAlignmentStartedMs>=AUTO_ALIGN_TIMEOUT_MS) {
         OmniMove(0,0,0,0);ResetDiscAlignmentPid();ResetAlignmentWait();
-        traceVision(alignmentOwner,false,false);alignmentEnabled=false;autoAlignmentState=AutoAlignmentState::DONE;
+        const bool fresh=hasFeedback&&millis()-lastFeedbackMs<=ALIGN_FEEDBACK_TIMEOUT_MS;
+        const bool acceptable=fresh&&WithinAlignmentTimeoutTolerance(mode,lastAngleError,lastVisualX,lastVisualY);
+        traceVision(alignmentOwner,false,false);alignmentEnabled=false;
+        autoAlignmentState=acceptable?AutoAlignmentState::DONE:AutoAlignmentState::FAILED;
         updateVisionLight();
-        reportResult("TIMEOUT_CONTINUE");
+        reportResult(acceptable?"TIMEOUT_CONTINUE":!hasFeedback?"TIMEOUT_NO_FRAME":!fresh?"TIMEOUT_STALE":"TIMEOUT_ERROR");
     }
     if(!alignmentEnabled){alignedReported=false;lastFeedbackMs=0;xSemaphoreGive(xAlignmentMotionMutex);return;}
     VisualAlignmentFrame_t alignment;

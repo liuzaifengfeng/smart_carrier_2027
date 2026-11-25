@@ -7,27 +7,48 @@ from test_servo_multiturn_interval import function_source
 class MotorBusReplyTests(unittest.TestCase):
     def test_actual_reply(self):
         source = (ROOT / 'src/node_position_hardware.cpp').read_text(encoding='utf-8')
-        reply = function_source(source, 'const char *reply(') + '\n' + function_source(source, 'const char *readEncoderSnapshot(') + '\n' + function_source(source, 'const char *readPositionPid(') + '\n' + function_source(source, 'const char *writePositionPid(')
+        reply = '\n'.join(function_source(source, name) for name in (
+            'const char *reply(', 'const char *query(', 'const char *readEncoderSnapshot(',
+            'const char *readPositionPid(', 'const char *writePositionPid(', 'const char *target('))
+        reply += '\ntemplate<class Send>\n' + function_source(source, 'const char *exchange(')
+        reply = reply.replace(')override {', ') {')
         harness = r'''
 #include "Arduino.h"
 #include "emm_feedback.h"
 #include <assert.h>
 #include <vector>
+#include <deque>
+#include <stdlib.h>
+#include <math.h>
 NativeSerial Serial;
 uint32_t timeMs=0;
 uint32_t millis(){return timeMs;}
 void vTaskDelay(uint32_t ms){timeMs+=ms;}
 struct Port {
     std::vector<uint8_t> input,pending,sent;size_t index=0;
+    std::deque<std::vector<uint8_t>> scripted;
+    std::vector<uint8_t> requests;
     int available(){return index<input.size();}
     int read(){return input[index++];}
-    void write(const uint8_t *data,size_t n){sent.assign(data,data+n);input=pending;index=0;}
+    void write(const uint8_t *data,size_t n){
+        sent.assign(data,data+n);requests.push_back(data[1]);index=0;
+        if(scripted.empty())input=pending;
+        else {input=scripted.front();scripted.pop_front();}
+    }
     void flush(){}
 } Serial1;
 struct MotorBusGuard {};
+namespace node_position {constexpr float PULSES_PER_REV=3200;}
+void Emm_V5_Pos_Control(uint8_t id,uint8_t,uint16_t,uint8_t,uint32_t,bool absolute,bool synchronized) {
+    assert(absolute&&synchronized);
+    const uint8_t cmd[]={id,0xFD};
+    Serial1.write(cmd,sizeof(cmd));
+}
 struct Hardware {
     void drain(){while(Serial1.available())Serial1.read();}
     bool stopped=false;
+    const uint8_t feedbackAttempts=1;
+    const uint32_t feedbackTimeoutMs=25;
     bool cancelled(){return stopped;}
     ACTUAL
 };
@@ -73,6 +94,16 @@ int main(){
     assert(Serial.text.find("RX=07 4A 02")!=std::string::npos);
     Serial1.pending={7,0x4A,2,0x6B};
     assert(!h.writePositionPid(7,gains,true));assert(Serial1.sent[3]==1);
+    Serial1={};
+    Serial1.scripted={{},{7,0x33,0,0,1,0,0,0x6B},{7,0x36,0,0,0,0,0,0x6B},
+        {7,0x35,0,0,0,0x6B},{7,0x3A,1,0x6B},{7,0xFD,2,0x6B}};
+    assert(!h.target(7,true,30,20,3200));
+    assert(Serial1.requests==std::vector<uint8_t>({0xFD,0x33,0x36,0x35,0x3A,0xFD}));
+    Serial1={};
+    Serial1.scripted={{},{7,0x33,0,0,1,0,0,0x6B},{7,0x36,0,0,1,0,0,0x6B},
+        {7,0x35,0,0,0,0x6B},{7,0x3A,1,0x6B}};
+    assert(!h.target(7,true,30,20,3200));
+    assert(Serial1.requests==std::vector<uint8_t>({0xFD,0x33,0x36,0x35,0x3A}));
     h.stopped=true;
     assert(!strcmp(h.reply(7,0x36,out),"STOPPED"));
 }

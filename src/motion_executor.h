@@ -13,11 +13,13 @@ bool MotionExecutorInit();
  * @return 非零作业编号；0 表示未提交。提交成功不等于动作完成。
  */
 uint32_t SubmitMotion(const MotionRequest &request,bool launch=true);
+uint32_t SubmitMotion(const MotionRequest &request,bool launch,MotionSubmitError *error);
 /**
  * @brief 放行已入队的指定作业，并唤醒运动任务；用于保证串口 ACK 先于动作执行。
  * @param id SubmitMotion 返回的作业编号。
  */
 void LaunchMotion(uint32_t id);
+bool ResumeMaterialMotion(uint32_t id,uint32_t token);
 /**
  * @brief 读取指定作业的状态快照，可查询当前作业及最近保留的终态。
  * @param id 提交动作时取得的作业编号。

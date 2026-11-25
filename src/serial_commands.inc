@@ -137,7 +137,7 @@ static bool serialKnownAction(const SerialFrame &frame) {
     static const char *const names[][2] = {
         {"SYS", "HELLO"}, {"SYS", "RELEASE"}, {"SYS", "READY"},
         {"SYS", "START"}, {"SYS", "HELP"}, {"SYS", "REBOOT"}, {"SYS", "BEEP"}, {"SYS", "PANEL_GET"},
-        {"MOTION", "STATUS"},
+        {"MOTION", "STATUS"}, {"MOTION", "RESUME_MATERIAL"},
         {"EMM", "AXIS_TRIAL"},
         {"TRAY", "ROTATE"}, {"TRAY", "ZERO"},
         {"TASK", "SET"},
@@ -511,6 +511,7 @@ static void serialDispatch(const SerialFrame &frame) {
     }
     if(MotionExecutorActive()&&!frame.is("IMU","GET",0)&&!frame.is("IMU","HEADING",0)
         &&!frame.is("POSE","GET",0)&&!frame.starts("CFG","GET")&&!frame.is("MOTION","STATUS",1)
+        &&!frame.is("MOTION","RESUME_MATERIAL",2)
         &&!frame.is("NAV","TRIAL_STATUS",1)&&!frame.is("NAV","TRIAL_STOP",1)&&!frame.is("NAV","STOP",0)
         &&!frame.starts("NAV","ROUTE")&&!frame.is("NAV","START_ZONE",1)
         &&!frame.is("SYS","HELLO",0)&&!frame.is("SYS","HELP",0)&&!frame.is("SYS","START",0)&&!frame.is("SYS","READY",0)
@@ -615,6 +616,14 @@ static void serialDispatch(const SerialFrame &frame) {
         if(!id||!result.id){serialError(frame,"ID");return;}
         Serial.printf("{RSP,MOTION,STATUS,OK,%lu,%s,%s,%lu}\n",static_cast<unsigned long>(id),
             MotionStateName(result.state),result.phase,static_cast<unsigned long>(result.elapsedMs));
+    } else if(frame.is("MOTION","RESUME_MATERIAL",2)) {
+        uint32_t id=0,token=0;
+        if(!serialUInt(frame.fields[3],id,UINT32_MAX)||!id||!serialUInt(frame.fields[4],token,UINT32_MAX)) {
+            serialError(frame,"RANGE");return;
+        }
+        if(!ResumeMaterialMotion(id,token)){serialError(frame,"NOT_WAITING");return;}
+        Serial.printf("{RSP,MOTION,RESUME_MATERIAL,ACK,%lu,%lu}\n",
+            static_cast<unsigned long>(id),static_cast<unsigned long>(token));
     } else if(frame.is("NAV","STOP",0)) {
         CancelMotion();
         Serial.println("{RSP,NAV,STOP,ACK}");

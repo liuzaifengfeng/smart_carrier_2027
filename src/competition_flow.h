@@ -59,6 +59,12 @@ struct CompetitionIO {
      * @brief 提交一个非阻塞运动请求；返回作业编号，后续用 status 查询完成结果。
      */
     virtual uint32_t submit(const MotionRequest &request)=0;
+    virtual uint32_t submit(const MotionRequest &request,MotionSubmitError &error) {
+        const auto id=submit(request);
+        error=id?MotionSubmitError::NONE:MotionSubmitError::UNAVAILABLE;
+        return id;
+    }
+    virtual bool motionBusy(){return false;}
     /**
      * @brief 提交起始区扫码准备姿态作业；返回作业编号，不在主流程等待物理动作。
      */
@@ -129,6 +135,8 @@ class CompetitionFlow {
     uint8_t homeZone=0;
     int preparedProgress=0;
     uint32_t due=0;
+    bool waitingForSubmit=false,alignmentRestarted=false,observationRetried=false,discSnapshotRetried=false;
+    float alignmentHeading=NAN;
     /**
      * @brief 把对外主状态映射到内部第一个阶段；失败或完成状态映射到 INACTIVE。
      */
@@ -156,6 +164,7 @@ class CompetitionFlow {
         observed=state;
         phase=firstPhase(state); // 从新主状态对应的第一个阶段开始。
         ticket.clear();
+        waitingForSubmit=false;
     }
     // 同一个动作反复检查只提交一次：0=执行中，1=完成，-1=失败或已取消。
     /**
@@ -165,15 +174,38 @@ class CompetitionFlow {
      * @return 0 执行中，1 完成，-1 提交失败、执行失败或已取消。
      */
     int motion(const MotionRequest &r,RobotState failure=STATE_TRANSFER_FAILED) {
-        if(!ticket.submitOnce(r,[&](const MotionRequest &value){return io.submit(value);})) {io.fail(failure);return -1;}
+        if(!ticket.id) {
+            if(waitingForSubmit&&io.motionBusy())return 0;
+            MotionSubmitError error;
+            ticket.id=io.submit(r,error);
+            if(!ticket.id) {
+                if(error==MotionSubmitError::BUSY&&!waitingForSubmit) {
+                    waitingForSubmit=true;
+                    return 0;
+                }
+                waitingForSubmit=false;
+                io.fail(failure);
+                return -1;
+            }
+            waitingForSubmit=false;
+        }
         const auto s=io.status(ticket.id); // 查询同一作业的执行结果，不重复提交动作。
         if(io.aborted()||io.state()!=observed)return -1;
         if(!s.complete())return 0;
         ticket.clear();
         if(s.state!=MotionState::DONE){
+            if(s.state==MotionState::FAILED&&r.kind==MotionKind::DISC_RECORD_POSITION&&!discSnapshotRetried) {
+                discSnapshotRetried=true;
+                return 0;
+            }
+            if(s.state==MotionState::FAILED&&r.kind==MotionKind::ARM_POSE&&r.observation==ArmObservation::LOOK3&&!observationRetried) {
+                observationRetried=true;
+                return 0;
+            }
             if(r.kind==MotionKind::NAVIGATE&&(!strcmp(s.phase,"ARM_PREPARE")||!strcmp(s.phase,"ARM_FAILED")))failure=STATE_TRANSFER_FAILED;
             io.fail(failure);return -1;
         }
+        observationRetried=discSnapshotRetried=false;
         return 1;
     }
     /**
@@ -197,9 +229,19 @@ class CompetitionFlow {
      * @brief 检查一次视觉对齐结果；结束时关闭视觉，失败时转入 ALIGN_FAILED。
      * @return true 对齐 DONE；false 仍在等待或已经失败。
      */
+    void beginAlignment(VisionStartMode mode,float heading=NAN) {
+        alignmentRestarted=false;
+        alignmentHeading=heading;
+        io.visionStart(mode,heading);
+    }
     bool aligned(VisionStartMode mode) {
         const auto result=io.visionStatus();if(result==AutoAlignmentState::WAITING)return false;
         io.visionStop(mode); // 对齐已结束，关闭该模式的视觉控制。
+        if(result==AutoAlignmentState::IDLE&&!alignmentRestarted) {
+            alignmentRestarted=true;
+            io.visionStart(mode,alignmentHeading);
+            return false;
+        }
         if(result!=AutoAlignmentState::DONE){io.fail(STATE_ALIGN_FAILED);return false;}
         return true;
     }
@@ -220,6 +262,7 @@ public:
             observed=current;
             phase=firstPhase(current);
             ticket.clear();
+            waitingForSubmit=observationRetried=discSnapshotRetried=false;
         }
         if(io.aborted())return;
         const bool secondRound=current==STATE_GRAB_ROUND2 ||
@@ -272,7 +315,7 @@ public:
             request.startNode=homeZone==1?map.home1:map.home2;
             request.endNode=map.scan;
             request.automatic=true;
-            io.display("READ TASK");
+            if(!ticket.id)io.display("READ TASK");
             if(motion(request,STATE_SCAN_FAILED)==1) { // 扫码作业完成后再发布任务；失败按扫码错误处理。
                 io.taskReady(); // 发布任务码显示。
                 next(STATE_GRAB_ROUND1); // 开始第一轮圆盘取料。
@@ -294,7 +337,7 @@ public:
             MotionRequest request;
             request.kind=MotionKind::DISC_RECORD_POSITION;
             if(motion(request,STATE_ROUTE_FAILED)==1) {
-                io.visionStart(VisionStartMode::DISC);
+                beginAlignment(VisionStartMode::DISC);
                 phase=Phase::DISC_ALIGN;
             }
             break;
@@ -337,7 +380,7 @@ public:
             auto request=path(map.disc,map.coarse,ArmObservation::LOOK,CargoForGrabIndex(0));
             request.discDeparture=true;
             if(motion(request,STATE_ROUTE_FAILED)==1) {
-                io.visionStart(VisionStartMode::WORK_AREA,map.coarseHeading);
+                beginAlignment(VisionStartMode::WORK_AREA,map.coarseHeading);
                 phase=Phase::COARSE_ALIGN;
             }
             break;
@@ -347,11 +390,11 @@ public:
             break;
         case Phase::COARSE_PLACE: {
             MotionRequest request;
-            request.kind=MotionKind::PLACE_ROUND;
+            request.kind=MotionKind::PLACE_ROUND;request.automatic=true;
             io.task(request,secondRound); // 将本轮三件物料的颜色和位置填入动作请求。
             request.layer=1;
             request.ringCorrection=true;
-            io.display(secondRound?"PLACE C2":"PLACE C1");
+            if(!ticket.id)io.display(secondRound?"PLACE C2":"PLACE C1");
             if(motion(request)==1) { // 提交并等待三件物料放入粗加工区。
                 io.clearProgress();
                 next(secondRound?STATE_STACK_TEMP2:STATE_PLACE_TEMP1); // 转入取回及暂存流程，当前车体仍在粗加工区。
@@ -369,9 +412,9 @@ public:
         case Phase::COARSE_RETRIEVE: {
             if(static_cast<int32_t>(io.now()-due)<0)return;
             MotionRequest request;
-            request.kind=MotionKind::RETRIEVE_ROUND;
+            request.kind=MotionKind::RETRIEVE_ROUND;request.automatic=true;
             io.task(request,secondRound); // 将本轮三件物料的颜色和位置填入动作请求。
-            io.display(secondRound?"RETRIEVE C2":"RETRIEVE C1");
+            if(!ticket.id)io.display(secondRound?"RETRIEVE C2":"RETRIEVE C1");
             if(motion(request)==1) { // 提交并等待三件物料从粗加工区取回载物台。
                 io.clearProgress();
                 phase=Phase::TEMP_NAVIGATE;
@@ -383,7 +426,7 @@ public:
         case Phase::TEMP_NAVIGATE:
             io.display(secondRound?"GO TEMP2":"GO TEMP1");
             if(motion(path(map.coarse,map.temp,ArmObservation::LOOK,CargoForGrabIndex(0)),STATE_ROUTE_FAILED)==1) { // 三件取回后去暂存区，途中提前展开 LOOK。
-                io.visionStart(tempVision,map.tempHeading);
+                beginAlignment(tempVision,map.tempHeading);
                 phase=Phase::TEMP_ALIGN;
             }
             break;
@@ -392,7 +435,7 @@ public:
             break;
         case Phase::TEMP_PLACE: {
             MotionRequest request;
-            request.kind=MotionKind::PLACE_ROUND;
+            request.kind=MotionKind::PLACE_ROUND;request.automatic=true;
             io.task(request,secondRound); // 将本轮三件物料的颜色和位置填入动作请求。
             if(secondRound) {
                 MotionRequest firstRound;
@@ -404,7 +447,7 @@ public:
             }
             request.layer=secondRound?2:1;
             request.ringCorrection=!secondRound;
-            io.display(secondRound?"STACK T2":"PLACE T1");
+            if(!ticket.id)io.display(secondRound?"STACK T2":"PLACE T1");
             if(motion(request)==1) { // 提交并等待本轮暂存放料或第二层叠放。
                 io.clearProgress();
                 next(secondRound?STATE_RETURN_HOME:STATE_GRAB_ROUND2); // 第一轮继续取料，第二轮完成后返家。
@@ -429,7 +472,7 @@ public:
             request.zone=homeZone;
             request.armPrepared=true; // LOOK4 已随导航完成；保留原朝向修正。
             if(motion(request)==1) { // 执行原返家朝向修正，复用已完成的 LOOK4。
-                io.visionStart(VisionStartMode::CORNER); // 朝向准备完成，开启角点对齐。
+                beginAlignment(VisionStartMode::CORNER); // 朝向准备完成，开启角点对齐。
                 phase=Phase::HOME_ALIGN;
             }
             break;

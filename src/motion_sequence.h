@@ -83,8 +83,8 @@ public:
     /**
      * @brief 绑定动作程序及硬件接口并重置序列进度；首次发令由 tick 执行。
      */
-    void begin(const Program &steps,SequenceIO &hardware) {
-        *this=Sequence{};program=&steps;io=&hardware;finished=false;due=hardware.now();
+    void begin(const Program &steps,SequenceIO &hardware,size_t firstStep=0) {
+        *this=Sequence{};program=&steps;io=&hardware;index=firstStep;finished=false;due=hardware.now();
     }
     /**
      * @brief 判断机械臂步骤序列是否仍在执行。

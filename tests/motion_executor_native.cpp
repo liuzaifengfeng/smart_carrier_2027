@@ -31,6 +31,9 @@ void sequence() {
     // 停止或 OTA 取消后，即使时钟继续推进也不接续 COMMIT。
     io=SequenceIO{};arm.begin(p,io);arm.tick();io.stop=true;arm.tick();io.stop=false;io.time=20000;
     for(int i=0;i<20;++i)arm.tick();assert(!io.commits&&!arm.active()&&arm.failure());
+    p.append(move);p.append(commit);
+    io=SequenceIO{};arm.begin(p,io,2);arm.tick();io.time=1000;arm.tick();arm.tick();arm.tick();
+    assert(!arm.active()&&io.issued==2&&io.commits==1);
 }
 void join() {
     motion::Join j;int starts=0;
@@ -97,6 +100,14 @@ struct Runtime : CompetitionIO {
     }
     AutoAlignmentState visionStatus()override{return alignment;}
     void visionStop(VisionStartMode)override{}
+    bool transientBusy=false;
+    int busyAttempts=0;
+    uint32_t submit(const MotionRequest &r,MotionSubmitError &error)override {
+        if(transientBusy) {++busyAttempts;error=MotionSubmitError::BUSY;return 0;}
+        error=MotionSubmitError::NONE;
+        return submit(r);
+    }
+    bool motionBusy()override{return transientBusy;}
     void materialStart()override{assert(!pending);assert(requests.back().observation==ArmObservation::LOOK3);material=true;++materialStarts;}
     void materialStop()override{material=false;}
     void taskReady()override{taskPublished=true;}
@@ -124,7 +135,8 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
     for(int tick=0;tick<1500&&!r.finished;++tick) {
         r.time+=10;
         if(r.pending&&++delay>=3) {
-            const bool reject=!failureInjected&&r.requests.back().kind==failed;
+            const bool reject=r.requests.back().kind==failed
+                &&(!failureInjected||failed==MotionKind::DISC_RECORD_POSITION);
             if(reject)failureInjected=true;
             if(cancel&&!failureInjected&&r.requests.back().kind==MotionKind::PLACE_ROUND){r.current=STATE_TIMEOUT_FAILED;r.abort=true;failureInjected=true;}
             r.complete(!reject);delay=0;
@@ -212,12 +224,38 @@ void failedStartupDoesNotStart() {
         assert(r.current==STATE_TRANSFER_FAILED&&r.starts==0&&!r.runPermission);
     }
 }
+void recoverableStages() {
+    Runtime r;
+    r.current=STATE_GRAB_ROUND1;
+    CompetitionFlow flow(r,CompetitionMap{});
+    r.transientBusy=true;
+    for(int i=0;i<6;++i)flow.tick();
+    assert(r.requests.empty()&&r.busyAttempts==1);
+    r.transientBusy=false;
+    flow.tick();
+    assert(r.requests.size()==1&&r.requests.back().kind==MotionKind::NAVIGATE);
+    r.complete();flow.tick();flow.tick();
+    r.complete(false);flow.tick();flow.tick();
+    assert(r.requests.size()==3&&r.requests.back().kind==MotionKind::DISC_RECORD_POSITION);
+    r.complete();flow.tick();
+    assert(r.vision.size()==1);
+    r.alignment=AutoAlignmentState::IDLE;
+    flow.tick();
+    assert(r.vision.size()==2&&r.alignment==AutoAlignmentState::WAITING);
+    r.alignment=AutoAlignmentState::DONE;flow.tick();r.time+=10;flow.tick();
+    assert(r.requests.back().observation==ArmObservation::LOOK3);
+    r.complete(false);flow.tick();flow.tick();
+    assert(r.requests.size()==5&&r.requests.back().observation==ArmObservation::LOOK3&&!r.material);
+    r.complete();flow.tick();
+    assert(r.material&&r.materialStarts==1);
+}
 int main(int argc,char **argv) {
     assert(argc==2);
     if(!strcmp(argv[1],"sequence"))sequence();
     else if(!strcmp(argv[1],"join"))join();
     else if(!strcmp(argv[1],"launch"))launch();
     else if(!strcmp(argv[1],"polling"))polling();
+    else if(!strcmp(argv[1],"recovery"))recoverableStages();
     else if(!strcmp(argv[1],"startup")){calibrationWait();failedStartupDoesNotStart();}
     else if(!strcmp(argv[1],"rounds")){fullFlow(1);fullFlow(2);}
     else if(!strcmp(argv[1],"failures")) {

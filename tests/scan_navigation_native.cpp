@@ -7,9 +7,9 @@
 #include "motion_types.h"
 #include "task_code.h"
 
-constexpr uint8_t SCAN_WAIT=4,SCAN_SWEEP=5;
+constexpr uint8_t SCAN_WAIT=4,SCAN_SWEEP=5,SCAN_WAIT_CODE=6;
 
-uint8_t stage,scanTurn;
+uint8_t stage,scanTurn,pathRetries;
 uint32_t scanArrivedAt,scanTurnAt,now,trayTravelMs;
 float scanTrayAngle;
 bool taskReceived;
@@ -37,6 +37,7 @@ struct {
 
 uint32_t millis(){return now;}
 void phase(const char *){}
+void updateDisplay(const char *, const char *, const char *){}
 void finish(MotionState result,const char *reason=nullptr){state=result;failure=reason;}
 void startTray(float angle){assert(angle==0);}
 
@@ -50,7 +51,7 @@ uint32_t nodePathRequestedAt;
 #include "scan_navigation_actual.inc"
 
 void reset(float angle=0){
-    stage=SCAN_WAIT;scanTurn=0;now=scanArrivedAt=100;scanTrayAngle=angle;
+    stage=SCAN_WAIT;scanTurn=pathRetries=0;now=scanArrivedAt=100;scanTrayAngle=angle;
     taskReceived=false;state=MotionState::RUNNING;failure=nullptr;trayAngles.clear();scannerFrames.clear();
 }
 void completeTurn(){now=scanTurnAt+trayTravelMs;scanAtNode();}
@@ -72,15 +73,24 @@ int main(){
     assert(state==MotionState::RUNNING);
     completeTurn();
     assert((trayAngles==std::vector<float>{20,0,-20,0,20,0,-20,0,20,0,-20,0,20,0,-20,0,20,0,-20,0}));
-    assert(state==MotionState::FAILED&&strcmp(failure,"SCAN_TIMEOUT")==0);
+    assert(state==MotionState::RUNNING&&stage==SCAN_WAIT_CODE);
+    scannerFrames={"invalid"};scanAtNode();assert(state==MotionState::RUNNING);
+    scannerFrames={"412+123+124+123"};scanAtNode();assert(state==MotionState::DONE);
 
     reset();Serial.text.clear();
     MotionRequest route;
     nodePathRequestedAt=now;
     nodePathState=NodePathState::WAITING;
-    now+=2999;
+    now+=1999;
     assert(!takeRequestedPath(route)&&state==MotionState::RUNNING&&Serial.text.empty());
     ++now;
+    for(uint8_t retry=1;retry<=10;++retry) {
+        Serial.text.clear();
+        assert(!takeRequestedPath(route)&&state==MotionState::RUNNING&&pathRetries==retry);
+        assert(Serial.text=="{EVT,NAV,ROUTE_WAITING}\n{EVT,NAV,ROUTE_REQUEST,0,0}\n");
+        now+=2000;
+    }
+    Serial.text.clear();
     assert(!takeRequestedPath(route)&&state==MotionState::FAILED&&strcmp(failure,"PATH_TIMEOUT")==0);
     assert(nodePathState==NodePathState::FAILED&&Serial.text=="{EVT,NAV,ROUTE_FAILED,TIMEOUT}\n");
 

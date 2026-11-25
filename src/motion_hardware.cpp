@@ -6,6 +6,9 @@
 
 using namespace motion;
 namespace {
+bool readServoAngle(uint8_t id,float &angle,uint32_t timeoutMs=50) {
+    return Servo_QueryAngleMTurn(id,angle,timeoutMs)||Servo_QueryAngleMTurn(id,angle,timeoutMs);
+}
 const char *readExtension(float &length) {
     int64_t encoder=0;
     if(const char *error=ReadMotorEncoderPosition(6,encoder))return error;
@@ -198,7 +201,7 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
     if(s.kind==StepKind::POSITION){TickPositionMove();done=!PositionMoveActive();return nullptr;}
     if(s.kind==StepKind::TRAY_ROTATE||s.kind==StepKind::TRAY_READY) {
         float angle=0;
-        if(!Servo_QueryAngleMTurn(SERVO_ID_CARGO_TRAY,angle))return "SERVO_READ";
+        if(!readServoAngle(SERVO_ID_CARGO_TRAY,angle))return "SERVO_READ";
         done=fabsf(angle-s.turret)<=s.trayArrivalToleranceDeg;
         if(done)trayMoving=false;
         return nullptr;
@@ -250,7 +253,7 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
         if(fabsf(measured-currentArm.turret_angle)>5)return nullptr;
     }
     if(s.pawl!=-1) {
-        float measured=0;if(!Servo_QueryAngleMTurn(1,measured,100))return "EXECUTION";
+        float measured=0;if(!readServoAngle(1,measured,100))return "EXECUTION";
         if(fabsf(continuous::turn(measured,s.pawl))>5)return nullptr;
     }
     done=true;return nullptr;

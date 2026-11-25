@@ -183,7 +183,7 @@ void observation(Program &p,ArmObservation pose,uint8_t zone) {
         arm(p,"LOOK2_LIFT",170,0,-1,-1,200,liftWait);rotateArm(p,"LOOK2_TURN",-1,0,90,80,200);break;
     case ArmObservation::LOOK3: {
         arm(p,"LOOK3_LIFT",170,40,-1,-1,300,liftWait);rotateArm(p,"LOOK3_TURN",-1,-1,90,80,300);
-        Step s;s.kind=StepKind::TURRET_READY;s.name="LOOK3_MEASURED_READY";s.turret=90;s.waitMs=1500;p.append(s);break;
+        Step s;s.kind=StepKind::TURRET_READY;s.name="LOOK3_MEASURED_READY";s.turret=90;s.waitMs=3000;p.append(s);break;
     }
     case ArmObservation::LOOK4:
         arm(p,"LOOK4_LIFT",170,120,-1,-1,200,liftWait);rotateArm(p,"LOOK4_TURN",-1,-1,90,80,200);

@@ -37,6 +37,11 @@ class PositionTests(unittest.TestCase):
         sources = ["tests/node_position_tick_native.cpp", "src/node_position_control.cpp", "src/continuous_route.cpp", "src/hybrid_route.cpp", "src/scan_motion_control.cpp"]
         run_native(build_native("node-tick", sources), "node")
 
+    def test_small_residual_recovery_is_slow_and_runs_once(self):
+        from native_support import build_native, run_native
+        sources = ["tests/node_position_tick_native.cpp", "src/node_position_control.cpp", "src/continuous_route.cpp", "src/hybrid_route.cpp", "src/scan_motion_control.cpp"]
+        run_native(build_native("node-tick", sources), "residual-recovery")
+
     def test_representative_speed_polling_and_full_arrival_comparison(self):
         from native_support import build_native, run_native
         sources = ["tests/node_position_tick_native.cpp", "src/node_position_control.cpp", "src/continuous_route.cpp", "src/hybrid_route.cpp", "src/scan_motion_control.cpp"]

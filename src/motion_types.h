@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include "position_move_timing.h"
 
+enum class MotionSubmitError : uint8_t { NONE, BUSY, UNAVAILABLE, QUEUE };
+
 enum class MotionState : uint8_t { QUEUED, RUNNING, DONE, FAILED, CANCELLED };
 enum class MotionKind : uint8_t {
     NAVIGATE, NODE_PATH, ARM_POSE, DISC_GRAB, LOAD_ROUND, HELD_DISC, PLACE_ROUND, RETRIEVE_ROUND,

@@ -278,6 +278,7 @@ bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float fi
     formalSettings.middleSpeedMmS=NODE_PATH_MIDDLE_SPEED_MM_S;
     formalSettings.middleAccelMmS2=node_position::motionAccelerationFor(middleAccelLevel,Y_PULSE);
     formalSettings.outerStraightVelocity=true;
+    formalSettings.recoverSmallResidual=true;
     formalSettings.turnDegS=NODE_PATH_TURN_DEG_S;
     formalSettings.turnAccelDegS2=NODE_PATH_TURN_ACCEL_DEG_S2;
     formalSettings.headingDeadbandDeg=NODE_PATH_HEADING_DEADBAND_DEG;

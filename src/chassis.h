@@ -34,6 +34,8 @@ extern RobotPose currentPose;   // 主控维护的"理想位姿"
 /**
  * @brief 按节点编号读取当前地图X/Y坐标(mm)，成功时写入x和y并返回true。
  */
+bool WithinAlignmentTimeoutTolerance(VisionStartMode mode,float angle,float x,float y);
+
 bool ChassisGetNodePosition(uint8_t node,float &x,float &y);
 extern ArmPose currentArm;     // 升降/伸缩为最近下发的绝对目标，非驱动器实测位置。
 

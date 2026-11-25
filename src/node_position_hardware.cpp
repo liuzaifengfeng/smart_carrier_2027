@@ -57,14 +57,15 @@ class Hardware : public node_position::IO {
     }
     void drain(){for(int i=0;i<512&&Serial1.available();++i)Serial1.read();}
     template<class Send>
-    const char *exchange(uint8_t id,uint8_t fn,EmmReply &out,Send send,bool retryUnassignedError=false) {
-        return RetryEmmFeedback(feedbackAttempts,[&]() -> const char * {
+    const char *exchange(uint8_t id,uint8_t fn,EmmReply &out,Send send,bool readOnly=false) {
+        const uint8_t attempts=readOnly&&feedbackAttempts<2?2:feedbackAttempts;
+        return RetryEmmFeedback(attempts,[&]() -> const char * {
             if(cancelled())return "STOPPED";
             drain();
             send();
             Serial1.flush();
             return reply(id,fn,out);
-        },retryUnassignedError);
+        },readOnly);
     }
     const char *query(uint8_t id,uint8_t fn,EmmReply &out) {
         return exchange(id,fn,out,[&] {
@@ -111,9 +112,7 @@ public:
     /** @brief 单独发送0x35转速查询，一次请求/应答，不附带状态和位置读取。 */
     const char *readSpeed(uint8_t id,int16_t &rpm)override {
         MotorBusGuard transaction;
-        if(cancelled())return "STOPPED";
-        drain();uint8_t cmd[]={id,0x35,0x6B};Serial1.write(cmd,3);Serial1.flush();
-        EmmReply out;const char *error=reply(id,0x35,out);
+        EmmReply out;const char *error=query(id,0x35,out);
         if(!error)rpm=EmmFeedbackParser::rpm(out);return error;
     }
     const char *readPosition(uint8_t id,int64_t &position)override {
@@ -130,9 +129,10 @@ public:
     }
     const char *readEncoderSnapshot(uint8_t id,uint16_t &encoder,int64_t &position,int16_t &rpm,uint8_t &flags) {
         MotorBusGuard transaction;
-        if(cancelled())return "STOPPED";
-        drain();uint8_t cmd[]={id,0x43,0x7A,0x6B};Serial1.write(cmd,sizeof(cmd));Serial1.flush();
-        EmmReply out;const char *error=reply(id,0x43,out);
+        EmmReply out;const char *error=exchange(id,0x43,out,[&] {
+            const uint8_t cmd[]={id,0x43,0x7A,0x6B};
+            Serial1.write(cmd,sizeof(cmd));
+        },true);
         if(!error){encoder=EmmFeedbackParser::snapshotEncoder(out);position=EmmFeedbackParser::snapshotPosition(out);rpm=EmmFeedbackParser::snapshotRpm(out);flags=out.data[29];}
         else Serial.printf("[MotorBus] encoder snapshot TX=%02X 43 7A 6B error=%s\n",id,error);
         return error;
@@ -200,11 +200,30 @@ public:
     }
     const char *target(uint8_t id,bool positive,uint16_t rpm,uint8_t acceleration,uint32_t pulses)override {
         MotorBusGuard transaction;
-        // 同步触发之前，重发同一个绝对目标只会重新装载指令。
-        EmmReply out;
-        return exchange(id,0xFD,out,[&] {
+        const auto send=[&]() -> const char * {
+            if(cancelled())return "STOPPED";
+            drain();
             Emm_V5_Pos_Control(id,positive?1:0,rpm,acceleration,pulses,true,true);
-        });
+            Serial1.flush();
+            EmmReply out;
+            return reply(id,0xFD,out);
+        };
+        const char *error=send();
+        if(!error||strcmp(error,"MOTOR_FEEDBACK_TIMEOUT")!=0)return error;
+
+        EmmReply feedback;
+        if(const char *readError=query(id,0x33,feedback))return readError;
+        const int64_t targetPosition=EmmFeedbackParser::position(feedback);
+        if(const char *readError=query(id,0x36,feedback))return readError;
+        const int64_t position=EmmFeedbackParser::position(feedback);
+        if(const char *readError=query(id,0x35,feedback))return readError;
+        if(abs(EmmFeedbackParser::rpm(feedback))>3)return error;
+        if(const char *readError=query(id,0x3A,feedback))return readError;
+        if(!(feedback.data[2]&1))return "MOTOR_DISABLED";
+        const int64_t desired=llround(double(pulses)*65536/node_position::PULSES_PER_REV)*(positive?1:-1);
+        if(llabs(targetPosition-desired)<=1&&llabs(position-desired)<=1)return nullptr;
+        // 仍在同步触发前，补发同一个绝对目标，装载完成后由调用方统一触发。
+        return send();
     }
     const char *sync()override {
         if(cancelled())return "STOPPED";
@@ -374,10 +393,12 @@ const char *RunPositionNodeRoute(const continuous::Route &route,const node_posit
  * @return nullptr 表示四轮读取成功；位置单位为65536/圈。
  */
 static const char *readChassisEncoderPositions(Hardware &io,int64_t (&positions)[4]) {
+    int64_t snapshot[4];
     for(uint8_t id=1;id<=4;++id) {
-        const char *error=io.readPosition(id,positions[id-1]);
+        const char *error=io.readPosition(id,snapshot[id-1]);
         if(error)return error;
     }
+    memcpy(positions,snapshot,sizeof(snapshot));
     return nullptr;
 }
 bool ReadChassisEncoderPositions(int64_t (&positions)[4]) {

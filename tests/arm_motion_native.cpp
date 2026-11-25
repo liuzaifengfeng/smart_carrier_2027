@@ -270,7 +270,7 @@ void poses() {
         if(pose==ArmObservation::START)assert(p.steps[0].liftArrival&&p.steps[0].high==160&&p.steps[0].waitMs==0&&p.steps[1].waitMs==0&&p.steps[2].waitMs==500);
         if(pose==ArmObservation::LOOK)assert(p.steps[0].waitMs==1500&&p.steps[1].waitMs==0&&p.steps[2].waitMs==0);
         if(pose==ArmObservation::LOOK2)assert(p.steps[0].waitMs==1500&&p.count==2);
-        if(pose==ArmObservation::LOOK3)assert(p.steps[p.count-1].kind==motion::StepKind::TURRET_READY&&p.steps[p.count-1].waitMs==1500);
+        if(pose==ArmObservation::LOOK3)assert(p.steps[p.count-1].kind==motion::StepKind::TURRET_READY&&p.steps[p.count-1].waitMs==3000);
     }
     const float heights[]={0,85,170};const uint32_t waits[]={1500,750,0};
     for(auto pose:{ArmObservation::LOOK,ArmObservation::LOOK2,ArmObservation::LOOK3,ArmObservation::LOOK4}) {
