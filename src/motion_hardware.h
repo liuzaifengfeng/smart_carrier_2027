@@ -1,6 +1,7 @@
 #pragma once
 #include "motion_sequence.h"
 #include "ring_correction.h"
+#include "turret_motor.h"
 
 class MotionHardware : public motion::SequenceIO {
     uint32_t job=0,turretStarted=0;
@@ -16,6 +17,10 @@ class MotionHardware : public motion::SequenceIO {
     ring::Settings ringSettings;
     ring::Deadzone ringDeadzone;
     ring::Pid ringX,ringY;
+    struct {
+        uint32_t id=0,sentAtMs=0;
+        TurretMotorPosition position{};
+    } lastRingXCommand;
     const char *correctRing(const motion::Step &step,bool &done);
 public:
     /**

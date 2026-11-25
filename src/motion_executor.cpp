@@ -247,26 +247,27 @@ void finishScan() {
     finish(MotionState::DONE);
 }
 /**
- * @brief 节点到达后等待有效任务码，必要时让料盘围绕扫码角摆动三轮。
+ * @brief 节点到达后等待有效任务码，必要时让料盘围绕扫码角最多摆动五轮。
  */
 void scanAtNode() {
     const bool received=pollTaskCode();
     if(stage==SCAN_WAIT) {
         if(received){finishScan();return;}
-        if(millis()-scanArrivedAt<3000)return;
+        if(millis()-scanArrivedAt<1000)return;
         stage=SCAN_SWEEP;
         phase("SCAN_SWEEP");
     }
-    // 每段给舵机 250 ms 完成 8° 行程，保持原摆动期间的扫码时长。
+    // 每段摆动留出 250 ms，期间持续监听扫码。
     constexpr uint32_t travelMs=250;
     if(scanTurn&&millis()-scanTurnAt<travelMs)return;
     if(received&&scanTurn%2==0){finishScan();return;}
-    if(scanTurn==12){finish(MotionState::FAILED,"SCAN_TIMEOUT");return;}
+    constexpr uint8_t stepsPerRound=4,maxRounds=5;
+    if(scanTurn==stepsPerRound*maxRounds){finish(MotionState::FAILED,"SCAN_TIMEOUT");return;}
 
-    constexpr float offsets[]={8,0,-8,0};
+    constexpr float offsets[stepsPerRound]={20,0,-20,0};
     motion::Step tray;
     tray.kind=motion::StepKind::TRAY_ROTATE;
-    tray.turret=scanTrayAngle+offsets[scanTurn%4];
+    tray.turret=scanTrayAngle+offsets[scanTurn%stepsPerRound];
     tray.waitMs=travelMs;
     hardware.issue(tray);
     scanTurnAt=millis();

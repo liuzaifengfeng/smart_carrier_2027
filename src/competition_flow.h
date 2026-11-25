@@ -33,7 +33,7 @@ struct CompetitionIO {
      * @brief 读取当前选择的起始区号；主流程在启动准备时锁定返家区号。
      */
     virtual uint8_t zone()=0;
-    /** @brief 开始机械臂初始化后的静置3秒及采集3秒航向标定，不阻塞主流程。 */
+    /** @brief 开始机械臂初始化后的静置500ms及采集3秒航向标定，不阻塞主流程。 */
     virtual void beginHeadingCalibration()=0;
     /** @brief 查询标定窗口是否结束；成功时由运行层闪灯两次。 */
     virtual bool headingCalibrationDone()=0;

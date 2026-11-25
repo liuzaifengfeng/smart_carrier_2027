@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <math.h>
 #include <stdint.h>
 #include "h30_motion.h"
@@ -59,26 +60,103 @@ private:
 };
 #undef H30_HEADING_CONSTEXPR
 
-/** @brief 等待结束后，在固定3秒窗口内对每个新Yaw求圆周平均，不再筛选静止或离群样本。 */
+/** @brief 在固定3秒窗口内筛选近静止样本，保留圆周中位数附近的航向求圆周平均。 */
 class H30HeadingAverage {
-    uint32_t started_=0,count_=0;
-    double sine_=0,cosine_=0;
-    uint16_t sequence_=0;
-    bool seen_=false;
-public:
-    void begin(uint32_t now,uint32_t settleMs=0){*this=H30HeadingAverage{};started_=now+settleMs;}
-    void add(const H30Attitude &sample) {
-        const uint32_t now=sample.receivedAtMs;
-        const int32_t elapsed=static_cast<int32_t>(now-started_);
-        if(elapsed<0||elapsed>=3000)return;
-        if(seen_&&sample.sequence==sequence_)return;
-        seen_=true;sequence_=sample.sequence;
-        if(!isfinite(sample.yaw))return;
-        const double radians=sample.yaw*0.017453292519943295;
-        sine_+=sin(radians);cosine_+=cos(radians);++count_;
+    // 460800 baud、8N1、每个完整惯性帧至少49字节，3秒约2822帧，再留接收缓冲余量。
+    static constexpr uint32_t sampleCapacity = 3072;
+    static constexpr float maxYawDeviation = 5.0f;
+    static constexpr float maxGyro = 5.0f; // deg/s
+    static constexpr float minAccel = 7.8f, maxAccel = 11.8f; // m/s²，含重力
+    static constexpr double radiansPerDegree = 0.017453292519943295;
+
+    float yaws_[sampleCapacity];
+    uint32_t started_ = 0, sampleCount_ = 0;
+    uint16_t sequence_ = 0;
+    bool seen_ = false;
+
+    static bool nearStill(const H30Attitude &sample) {
+        if ((sample.fields & 7) != 7) return false;
+        float gyroSquared = 0, accelSquared = 0;
+        for (int axis = 0; axis < 3; ++axis) {
+            gyroSquared += sample.gyro[axis] * sample.gyro[axis];
+            accelSquared += sample.accel[axis] * sample.accel[axis];
+        }
+        return gyroSquared <= maxGyro * maxGyro
+            && accelSquared >= minAccel * minAccel && accelSquared <= maxAccel * maxAccel;
     }
-    bool collecting(uint32_t now)const{return static_cast<int32_t>(now-started_)>=0;}
-    bool elapsed(uint32_t now)const{return static_cast<int32_t>(now-started_)>=3000;}
-    uint32_t count()const{return count_;}
-    float yaw()const{return atan2(sine_,cosine_)*57.29577951308232;}
+
+public:
+    struct Result {
+        uint32_t count;
+        float yaw;
+    };
+
+    void begin(uint32_t now, uint32_t settleMs = 0) {
+        started_ = now + settleMs;
+        seen_ = false;
+        sampleCount_ = 0;
+    }
+
+    void add(const H30Attitude &sample) {
+        if (!collecting(sample.receivedAtMs) || elapsed(sample.receivedAtMs)) return;
+        if (seen_ && sample.sequence == sequence_) return;
+        seen_ = true;
+        sequence_ = sample.sequence;
+        if (!nearStill(sample) || !isfinite(sample.yaw)) return;
+
+        float yaw = fmodf(sample.yaw, 360.0f);
+        if (yaw < 0) yaw += 360.0f;
+        if (sampleCount_ < sampleCapacity) yaws_[sampleCount_++] = yaw;
+    }
+
+    bool collecting(uint32_t now) const { return static_cast<int32_t>(now - started_) >= 0; }
+    bool elapsed(uint32_t now) const { return static_cast<int32_t>(now - started_) >= 3000; }
+
+    Result result() {
+        if (!sampleCount_) return {0, 0};
+
+        std::sort(yaws_, yaws_ + sampleCount_);
+        const float median = circularMedian();
+        uint32_t count = 0;
+        double sine = 0, cosine = 0;
+        for (uint32_t i = 0; i < sampleCount_; ++i) {
+            const float yaw = yaws_[i];
+            const float delta = fabsf(yaw - median);
+            if (fminf(delta, 360.0f - delta) > maxYawDeviation) continue;
+            const double radians = yaw * radiansPerDegree;
+            sine += sin(radians);
+            cosine += cos(radians);
+            ++count;
+        }
+        return {count, static_cast<float>(atan2(sine, cosine) / radiansPerDegree)};
+    }
+
+private:
+    // 圆周绝对角差之和的最小值可以在样本角度中取得。
+    float circularMedian() const {
+        double total = 0;
+        for (uint32_t i = 0; i < sampleCount_; ++i) total += yaws_[i];
+
+        double prefix = 0, leftSum = 0, rightSum = total;
+        uint32_t left = 0, right = 0;
+        double bestCost = INFINITY;
+        float median = yaws_[0];
+        for (uint32_t i = 0; i < sampleCount_; ++i) {
+            const double yaw = yaws_[i];
+            while (left < sampleCount_ && yaws_[left] < yaw - 180.0) leftSum += yaws_[left++];
+            while (right < sampleCount_ && yaws_[right] <= yaw + 180.0) rightSum -= yaws_[right++];
+
+            // 先求直线绝对角差，再将超出180°的距离 d 折回 360°-d。
+            const double linearCost = (2.0 * i - sampleCount_) * yaw + total - 2.0 * prefix;
+            const double leftCorrection = 2.0 * ((yaw - 180.0) * left - leftSum);
+            const double rightCorrection = 2.0 * (rightSum - (yaw + 180.0) * (sampleCount_ - right));
+            const double cost = linearCost - leftCorrection - rightCorrection;
+            if (cost < bestCost) {
+                bestCost = cost;
+                median = yaws_[i];
+            }
+            prefix += yaw;
+        }
+        return median;
+    }
 };

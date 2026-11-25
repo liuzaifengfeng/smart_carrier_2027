@@ -2,9 +2,7 @@
 
 **2027 中国大学生工程实践与创新能力大赛 · 智能搬运赛项 · 主控框架**
 
-> 由原「超市机器人」项目删减移植而来。保留底层驱动，移除旧的定位/雷达/货架逻辑。
-
-统一运动任务、非阻塞两轮流程、异步串口及计时使用说明见 [统一运动执行](Document/motion_executor.md)。提前展开与反馈完成默认关闭，三分钟目标仍待实车验收。
+统一运动任务、非阻塞两轮流程、异步串口及计时使用说明见 [统一运动执行](Document/motion_executor.md)。提前展开与反馈完成默认关闭。
 
 ## 代码约定
 
@@ -51,8 +49,8 @@ robot_chassis:
 |---|---|---|---|
 | 7x 张大头电机 | Serial1 TX=GPIO16、RX=GPIO15 | — | 经由双向串行总线控制，直连24V供电 |
 | 12V 舵机控制板 | Serial2 TX=GPIO18、RX=GPIO17 | — | 控制1号夹爪舵机并反馈数据 |
-| 二维码扫描 | ✅ UART TTL | — | scan_module |
-| USB 摄像头 ×2 | — | ✅ USB | 前向/俯视视觉 |
+| 二维码扫描模块 | SoftwareSerial RX=GPIO4 | — | 单向接收，9600 bps |
+| USB 摄像头 | — | ✅ USB | 前向/俯视视觉 |
 | 雷达模块 | — | ✅ UART | 定位/避障(由 jetson 处理) |
 | jetson_nano | ✅ Type-C UART | — | 双向通信 |
 
@@ -67,12 +65,20 @@ H30 惯导已接入 ESP32-S3 原生 USB Host，上位机连接栏提供三轴姿
 
 ```
 src/
-├── main.cpp        # 主控：新赛制状态机 + 机载电脑通信 + 任务码解析
-├── chassis.h/.cpp  # 底盘运动原语（movepose / GotoPose，麦克纳姆轮）
-├── Emm_V5.h/.cpp   # 电机驱动协议（原样保留，底层驱动）
-├── turret_motor.h/.cpp # 转盘张大头驱动，与底盘共用Serial1
-├── servo.h/.cpp    # UART 总线舵机驱动（Fashion Star 协议，HA8-U25H-M）
-└── ota_service.*   # WiFi + OTA 无线烧录（原样保留）
+├── main.cpp                         # 程序入口与各硬件/业务模块初始化
+├── robot_runtime.* / robot_state.h   # FreeRTOS 主任务、赛事状态机与串口命令
+├── competition_flow.h / task_code.h # 任务码解析与新赛制业务流程
+├── motion_* / arm_motion.*           # 统一运动队列、动作序列与机械臂规划
+├── chassis.* / node_position_*       # 底盘原语与节点脉冲位置导航
+├── continuous_* / field_geometry.*   # 独立试跑路径与场地几何
+├── vision_alignment.h / ring_correction.h # 视觉对齐与圆环位置修正
+├── scanner.* / scan_motion_control.* # 任务码扫描与扫码行程控制
+├── material_transfer.* / disc_*      # 物料判定、抓取、放置与码垛
+├── h30_* / start_panel.h             # H30 USB 惯导与启动面板
+├── Emm_V5.* / motor_bus.*            # EMM V5 电机协议与 Serial1 总线事务锁
+├── turret_motor.* / servo.*          # 转盘电机与 Fashion Star 总线舵机驱动
+├── runtime_parameters.*              # 运行时参数注册、读写与持久化
+└── ota_service.*                     # WiFi + OTA 无线烧录与恢复通道
 ```
 
 ## 新赛制业务流程（状态机）

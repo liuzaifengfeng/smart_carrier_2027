@@ -59,17 +59,19 @@ int main(){
     reset();scannerFrames={"412+1\"3+124+123"};assert(!pollTaskCode());
     scannerFrames={"412+1\"3+124+123","412+123+124+123"};assert(pollTaskCode());
     scanAtNode();assert(state==MotionState::DONE&&trayAngles.empty());
-    reset();now+=2999;scanAtNode();assert(state==MotionState::RUNNING&&trayAngles.empty());
+    reset();now+=999;scanAtNode();assert(state==MotionState::RUNNING&&trayAngles.empty());
     taskReceived=true;scanAtNode();assert(state==MotionState::DONE&&trayAngles.empty());
 
-    reset(270);now+=3000;scanAtNode();assert(trayAngles==std::vector<float>{278});
+    reset(270);now+=1000;scanAtNode();assert(trayAngles==std::vector<float>{290});
     taskReceived=true;now+=249;scanAtNode();assert(state==MotionState::RUNNING&&trayAngles.size()==1);
-    completeTurn();assert((trayAngles==std::vector<float>{278,270})&&state==MotionState::RUNNING);
+    completeTurn();assert((trayAngles==std::vector<float>{290,270})&&state==MotionState::RUNNING);
     completeTurn();assert(state==MotionState::DONE);
 
-    reset();now+=3000;scanAtNode();
-    for(size_t i=0;i<12;++i)completeTurn();
-    assert((trayAngles==std::vector<float>{8,0,-8,0,8,0,-8,0,8,0,-8,0}));
+    reset();now+=1000;scanAtNode();
+    for(size_t i=0;i<19;++i)completeTurn();
+    assert(state==MotionState::RUNNING);
+    completeTurn();
+    assert((trayAngles==std::vector<float>{20,0,-20,0,20,0,-20,0,20,0,-20,0,20,0,-20,0,20,0,-20,0}));
     assert(state==MotionState::FAILED&&strcmp(failure,"SCAN_TIMEOUT")==0);
 
     reset();Serial.text.clear();

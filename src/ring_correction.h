@@ -10,6 +10,8 @@ constexpr float MAX_TURRET_CORRECTION_DEG = 10.0f;
 constexpr float MAX_EXTENSION_CORRECTION_MM = 20.0f;
 constexpr uint8_t TURRET_CORRECTION_ACCELERATION = 160;
 constexpr uint16_t TURRET_CORRECTION_RPM = 10;
+constexpr float RING_X_FINE_PX = 3.0f;
+constexpr uint32_t RING_X_FINE_SEND_MS = 120;
 
 inline uint32_t &requiredStableFrames() {
     static uint32_t value = 2;

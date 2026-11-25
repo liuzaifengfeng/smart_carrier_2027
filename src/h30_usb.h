@@ -46,7 +46,7 @@ const char *H30UsbGetHeadingSnapshot(float &heading,uint32_t &sampleMs,uint32_t 
  */
 const char *H30UsbGetMotionSnapshot(H30Attitude &sample,float &heading,uint32_t &referenceVersion);
 
-/** @brief 初始化后静置3秒，再连续采集3秒新Yaw求圆周平均；不阻塞、不做静止筛选。 */
+/** @brief 初始化后静置500ms，再采集3秒近静止Yaw，剔除离群值后求圆周平均；采集不阻塞。 */
 void H30UsbBeginHeadingAverage();
 /** @brief 启停区确定后，将先前的Yaw平均值绑定到地图航向。 */
 void H30UsbBindHeadingAverage(float mapHeading);

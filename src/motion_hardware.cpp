@@ -29,6 +29,7 @@ void MotionHardware::stopTray() {
 }
 
 void MotionHardware::stopRingVision() {
+    lastRingXCommand={};
     if(!ringVisionActive)return;
     ring::input().close();
     ringVisionActive=false;
@@ -85,6 +86,7 @@ const char *MotionHardware::issue(const Step &s) {
         ringMaxLength=fminf(170.0f,length+ring::MAX_EXTENSION_CORRECTION_MM);
         ringX=ring::Pid{};
         ringY=ring::Pid{};
+        lastRingXCommand={};
         ringHasLastFrame=false;
         ringSettings=ring::input().settings();
         ringDeadzone=ring::configuredDeadzone();
@@ -163,8 +165,28 @@ const char *MotionHardware::correctRing(const Step &s,bool &done) {
     if(!ReadArmTurretAngle(turret))return "MOTOR_READ";
     const float angle=turret-ringX.update(frame.x,dt,ringSettings.turret);
     const float targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,angle));
-    return MoveArmPlanned(-1,targetLength,targetTurret,-1,s.speed,
-        ring::TURRET_CORRECTION_ACCELERATION,false,ring::TURRET_CORRECTION_RPM)?nullptr:"EXECUTION";
+    // 保留原规划发令前的实测范围检查和 Y 轴先下发的顺序。
+    if(!ReadArmTurretAngle(turret)||!MoveArm(-1,targetLength,-1,-1,s.speed,TURRET_ACCELERATION_SLOW))
+        return "EXECUTION";
+    const auto position=TurretMotorQuantizePosition(targetTurret);
+    if(lastRingXCommand.id&&TurretMotorCommandCancelled(lastRingXCommand.id))lastRingXCommand={};
+    if(fabsf(frame.x)<=ring::RING_X_FINE_PX&&lastRingXCommand.id) {
+        const auto &previous=lastRingXCommand.position;
+        const bool samePulse=position.pulses==previous.pulses&&
+            (!position.pulses||position.direction==previous.direction);
+        if(now()-lastRingXCommand.sentAtMs<ring::RING_X_FINE_SEND_MS||samePulse)return nullptr;
+    }
+    uint32_t commandId=0;
+    if(!TurretMotorMoveQuantized(targetTurret,position,ring::TURRET_CORRECTION_ACCELERATION,
+                                ring::TURRET_CORRECTION_RPM,commandId)) {
+        lastRingXCommand={};
+        return "EXECUTION";
+    }
+    currentArm.turret_angle=targetTurret;
+    lastRingXCommand.id=commandId;
+    lastRingXCommand.sentAtMs=now();
+    lastRingXCommand.position=position;
+    return taskMotionAborted?"EXECUTION":nullptr;
 }
 /**
  * @brief 检查位置移动、转台或机械臂实测到位条件，并通过 done 返回本次结果。

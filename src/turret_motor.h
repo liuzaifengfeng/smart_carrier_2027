@@ -19,6 +19,11 @@ struct TurretMotorState {float angle=0;int16_t rpm=0;uint8_t flags=0;uint16_t en
 bool TurretMotorReadState(TurretMotorState &state);
 bool TurretMotorReadAngle(float &angle);
 bool TurretMotorMove(float angle, uint8_t acceleration, uint16_t rpm=TURRET_MOTOR_POSITION_RPM);
+struct TurretMotorPosition { uint8_t direction; uint32_t pulses; };
+TurretMotorPosition TurretMotorQuantizePosition(float angle);
+bool TurretMotorMoveQuantized(float angle,const TurretMotorPosition &position,uint8_t acceleration,
+                             uint16_t rpm,uint32_t &commandId);
+bool TurretMotorCommandCancelled(uint32_t commandId);
 void TurretMotorPoll();
 bool TurretMotorTracking();
 void TurretMotorCancelTrace();
