@@ -2,6 +2,7 @@
 import { shallowRef, ref } from 'vue'
 import { captureRecentLogs, CloudError, cloudRequest, type LogSnapshot } from '../cloudRuns'
 import type { ConsoleLogEntry } from '../useController'
+import { playLogUploadCue } from '../logUploadCue'
 
 const props = defineProps<{ logs: ConsoleLogEntry[]; device: string }>()
 const dialog = ref<HTMLDialogElement>()
@@ -27,6 +28,7 @@ function open() {
 
 async function upload() {
   if (!snapshot.value || busy.value) return
+  playLogUploadCue()
   busy.value = true
   error.value = ''
   needsLogin.value = false

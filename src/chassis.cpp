@@ -29,11 +29,11 @@ struct NodePosition {
 // 从底向上、从左到右：0~4、9~5、10~14、19~15、20~24。
 // 沿用项目 X 向右、Y 向上；中心间距 480 mm。
 NodePosition NODE_POSITIONS[FIELD_NODE_COUNT] = {
-    {305.0f, 240.0f}, {720.0f, 240.0f}, {1180.0f, 250.0f}, {1680.0f, 240.0f}, {2075.0f, 240.0f},
+    {305.0f, 240.0f}, {720.0f, 240.0f}, {1180.0f, 240.0f}, {1680.0f, 240.0f}, {2075.0f, 240.0f},
     {2075.0f, 720.0f}, {1680.0f, 720.0f}, {1180.0f, 720.0f}, {720.0f, 720.0f}, {305.0f, 720.0f},
     {305.0f, 1200.0f}, {720.0f, 1200.0f}, {1180.0f, 1200.0f}, {1680.0f, 1200.0f}, {2075.0f, 1200.0f},
     {2075.0f, 1680.0f}, {1680.0f, 1680.0f}, {1180.0f, 1680.0f}, {720.0f, 1680.0f}, {305.0f, 1680.0f},
-    {305.0f, 2030.0f}, {720.0f, 2020.0f}, {1180.0f, 2030.0f}, {1680.0f, 2030.0f}, {2075.0f, 2030.0f},
+    {305.0f, 2030.0f}, {720.0f, 2030.0f}, {1180.0f, 2030.0f}, {1680.0f, 2030.0f}, {2075.0f, 2030.0f},
 };
 
 constexpr uint32_t MOTOR_COMMAND_GAP_MS = 5;           // 连续发送两条电机命令的间隔
@@ -288,6 +288,7 @@ static bool MoveArmInternal(float high, float length, float turret_angle, float 
 
     if (taskMotionAborted) return false;
     if (pawl_angle != -1) {
+        pawl_angle = LimitArmClawAngle(pawl_angle);
         float measuredAngle = 0.0f;
         if ((!Servo_QueryAngleMTurn(1, measuredAngle, 100)&&!Servo_QueryAngleMTurn(1, measuredAngle, 100))
                 || !isfinite(measuredAngle)) {

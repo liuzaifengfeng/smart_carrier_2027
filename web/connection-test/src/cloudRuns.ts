@@ -1,10 +1,13 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import type { ConsoleLogEntry, Controller } from './useController'
+import { playLogUploadCue } from './logUploadCue'
 
 export interface PendingRun {
   id: string
   captured_at: string
-  frames: string[]
+  frames?: string[]
+  logs?: ConsoleLogEntry[]
+  end_reason?: 'RESULT' | 'FAILED' | 'SILENT' | 'DISCONNECTED' | 'RESTARTED'
 }
 
 export interface LogSnapshot {
@@ -24,13 +27,17 @@ export function captureRecentLogs(logs: ConsoleLogEntry[], device: string) {
   return { id: crypto.randomUUID(), captured_at: new Date(now).toISOString(), device, logs: recent }
 }
 
-export type Phase = [name: string, start: number, end: number, duration: number]
+export type Phase = [name: string, start: number, end: number | null, duration: number | null]
 export type Interval = [kind: string, name: string, job: string, start: number, end: number]
 
 export interface RunOutline {
   id: string
   captured_at: string
-  total_ms: number
+  total_ms: number | null
+  observed_ms?: number
+  timeline_ms?: number
+  status?: string
+  reason?: string
   phases: Phase[]
   missing: string[]
   note?: string
@@ -42,6 +49,7 @@ export interface RunDetail extends RunOutline {
   job_sum_ms: number
   job_wall_ms: number
   frames: string[]
+  logs?: ConsoleLogEntry[]
 }
 
 export class CloudError extends Error {
@@ -56,17 +64,13 @@ const eventFields: Record<string, number> = {
 }
 
 export async function prepareRunUpload(run: PendingRun): Promise<PendingRun> {
-  const frames = run.frames.filter(line => {
+  if (run.logs) return run
+  const frames = (run.frames ?? []).filter(line => {
     if (!/^\{EVT,MOTION,[^{}\r\n]+\}$/.test(line)) return false
     const fields = line.slice(1, -1).split(',')
     return fields.length === eventFields[fields[2]!] &&
       /^\d+$/.test(fields[3]!) && /^\d+$/.test(fields[4]!)
   })
-  if (frames[0] !== run.frames[0] || frames.at(-1) !== run.frames.at(-1) ||
-      !frames[0]?.startsWith('{EVT,MOTION,RUN_START,0,') ||
-      !frames.at(-1)?.startsWith('{EVT,MOTION,RUN_RESULT,0,')) {
-    throw new Error('正式运行起止记录不完整')
-  }
   // 同一份有效帧在手工补录、自动上传和重传时使用相同的归档编号。
   const hash = new Uint8Array(await crypto.subtle.digest('SHA-256',
     new TextEncoder().encode(JSON.stringify(frames))))
@@ -113,25 +117,43 @@ async function queueOperation<T>(mode: IDBTransactionMode, operation: (store: ID
 }
 
 export function createRunCapture(finished: (run: PendingRun) => void) {
-  let active: PendingRun | undefined
-  const reset = () => { active = undefined }
+  let active: (PendingRun & { logs: ConsoleLogEntry[] }) | undefined
+  let silence: ReturnType<typeof setTimeout> | undefined
+  let allowFormalStart = true
+  function finish(reason: NonNullable<PendingRun['end_reason']>) {
+    if (!active) return
+    clearTimeout(silence)
+    const completed = active
+    active = undefined
+    allowFormalStart = false
+    finished({ ...completed, end_reason: reason })
+  }
 
-  function frame(fields: string[]) {
-    const [kind, category, action, job, , result] = fields
-    if (kind !== 'EVT' || category !== 'MOTION') return
-    if (!['RUN_START', 'RUN_RESULT', 'PHASE', 'FLAG', 'SPAN', 'STEP', 'RESULT', 'ERROR'].includes(action!)) return
-    if (action === 'RUN_START' && job === '0') {
-      active = { id: crypto.randomUUID(), captured_at: new Date().toISOString(), frames: [] }
+  function log(entry: ConsoleLogEntry) {
+    if (entry.direction !== 'RX') return
+    const release = entry.text.includes('{RSP,SYS,RELEASE,OK}')
+    const start = entry.text.includes('{RSP,SYS,START,OK}') ||
+      /^\[StartPanel\] button=PRESS\b.*\bstart=REQUESTED$/.test(entry.text)
+    const formalStart = entry.text.includes('{EVT,MOTION,RUN_START,0,')
+    if (release && active) finish('RESTARTED')
+    if (!active && (release || start || (allowFormalStart && formalStart))) {
+      active = { id: crypto.randomUUID(), captured_at: entry.time, logs: [] }
     }
     if (!active) return
-    active.frames.push('{' + fields.join(',') + '}')
-    if (action === 'RUN_RESULT' && job === '0') {
-      const completed = active
-      reset()
-      if (result === 'DONE') finished(completed)
+    active.logs.push(entry)
+    if (/\{EVT,MOTION,RUN_RESULT,0,/.test(entry.text)) finish('RESULT')
+    else if (/\{EVT,MOTION,PHASE,0,\d+,[A-Z_]+_FAILED\}/.test(entry.text)) finish('FAILED')
+    else {
+      clearTimeout(silence)
+      silence = setTimeout(() => finish('SILENT'), 30_000)
     }
   }
-  return { frame, reset }
+
+  function disconnect() {
+    finish('DISCONNECTED')
+    allowFormalStart = true
+  }
+  return { log, disconnect }
 }
 
 export function useCloudCapture(controller: Controller) {
@@ -169,13 +191,14 @@ export function useCloudCapture(controller: Controller) {
   }
 
   const capture = createRunCapture(run => {
-    status.value = '正在保存完赛日志'
+    playLogUploadCue()
+    status.value = '正在保存运行日志'
     void queueOperation('readwrite', store => store.put(run))
       .then(upload)
-      .catch(() => { status.value = '完赛日志写入本机失败' })
+      .catch(() => { status.value = '运行日志写入本机失败' })
   })
-  const unsubscribe = controller.onFrame(capture.frame)
-  const unsubscribeDisconnect = controller.onDisconnect(capture.reset)
+  const unsubscribe = controller.onLog(capture.log)
+  const unsubscribeDisconnect = controller.onDisconnect(capture.disconnect)
   const channel = new BroadcastChannel('carrier-cloud-auth')
   channel.onmessage = () => { void upload() }
   onMounted(() => {
@@ -185,8 +208,13 @@ export function useCloudCapture(controller: Controller) {
   onUnmounted(() => {
     unsubscribe()
     unsubscribeDisconnect()
+    capture.disconnect()
     channel.close()
     window.removeEventListener('online', upload)
   })
-  return { status, pending, upload }
+  function retryUpload() {
+    playLogUploadCue()
+    void upload()
+  }
+  return { status, pending, retryUpload }
 }

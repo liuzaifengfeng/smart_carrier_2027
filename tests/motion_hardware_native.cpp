@@ -319,16 +319,16 @@ void ringCorrection() {
     frame.y=0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==5&&issuedLength==-1);
-    assert(fabsf(issuedTurret-85.860f)<0.001f);
+    assert(fabsf(issuedTurret-85.0f)<0.001f);
     frame.x=-4;
     frame.y=-0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==6&&issuedLength==-1);
-    assert(fabsf(issuedTurret-86.140f)<0.001f);
+    assert(fabsf(issuedTurret-87.0f)<0.001f);
     frame.y=4;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==7);
-    assert(fabsf(issuedTurret-86.140f)<0.001f&&fabsf(issuedLength-71.62f)<0.002f);
+    assert(fabsf(issuedTurret-87.0f)<0.001f&&fabsf(issuedLength-71.62f)<0.002f);
     frame.x=0.5f;
     frame.y=-0.5f;
     assert(ring::withinDeadzone(frame,ring::configuredDeadzone()));
@@ -436,7 +436,7 @@ void ringFineTurret() {
     turretMeasured=90.0f;
     customPosition=llround(-20.0*LENGTH_PULSE*65536/3200);
     ring::Settings settings;
-    settings.turret={0.1f,0.02f,0};
+    settings.turret={1.0f,0.02f,0};
     ring::input().settings(settings);
     assert(!hardware.issue(hover)&&!hardware.issue(correct));
     uint32_t token=1;
@@ -453,7 +453,7 @@ void ringFineTurret() {
     assert(!feed(0,1)&&turretCommands==1);
     assert(!feed(119,3,4)&&turretCommands==1&&issuedLength>20); // X等待期间Y仍发令。
     assert(!feed(1,2)&&turretCommands==2); // 满120 ms才使用新帧。
-    assert(fabsf(issuedTurret-(90.0f-0.2f-0.02f*(3*0.119f+2*0.001f)))<0.001f);
+    assert(fabsf(issuedTurret-(90.0f-2.0f-0.02f*(3*0.119f+2*0.001f)))<0.001f);
     assert(!feed(120,2)&&turretCommands==2); // 目标角改变，但量化脉冲相同。
     assert(!feed(1,4)&&!feed(1,4)&&turretCommands==4); // 大误差照常逐帧发令。
     assert(!feed(1,3)&&turretCommands==4); // 从大误差发出的上一条也计入间隔。
@@ -480,10 +480,10 @@ void ringFineTurret() {
     ++token;
     assert(!feed(0,0.5f,2)&&turretCommands==9); // X 在死区内，Y 可以继续。
     assert(!feed(0,1)&&turretCommands==10);
-    assert(issuedTurretPosition.pulses==1&&issuedTurretPosition.direction!=TURRET_MOTOR_POSITIVE_DIR);
-    assert(fabsf(issuedTurret+0.1125f)<0.001f);
+    assert(issuedTurretPosition.pulses==9&&issuedTurretPosition.direction!=TURRET_MOTOR_POSITIVE_DIR);
+    assert(fabsf(issuedTurret+1.0f)<0.001f);
     assert(!feed(120,-1)&&turretCommands==11);
-    assert(issuedTurretPosition.pulses==1&&issuedTurretPosition.direction==TURRET_MOTOR_POSITIVE_DIR);
+    assert(issuedTurretPosition.pulses==9&&issuedTurretPosition.direction==TURRET_MOTOR_POSITIVE_DIR);
     turretMeasured=9.9f;
     assert(!feed(120,-1)&&turretCommands==11); // 下一脉冲超出本轮纠偏范围。
     hardware.stopRingVision();

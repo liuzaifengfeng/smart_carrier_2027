@@ -22,6 +22,7 @@ export function useController() {
   let writes = Promise.resolve()
   let session = 0
   const listeners = new Set<(fields: string[]) => void>()
+  const logListeners = new Set<(entry: ConsoleLogEntry) => void>()
   const disconnectListeners = new Set<() => void>()
   const lastFrame = ref<string[]>([])
   function onFrame(callback: (fields: string[]) => void) {
@@ -30,7 +31,9 @@ export function useController() {
   }
 
   function log(direction: string, text: string) {
-    logs.value.push({ time: new Date().toISOString(), direction, text })
+    const entry = { time: new Date().toISOString(), direction, text }
+    logs.value.push(entry)
+    for (const listener of logListeners) listener(entry)
   }
   function failure(reason: unknown) {
     error.value = String(reason)
@@ -130,6 +133,10 @@ export function useController() {
   return { connected, ready, busy, error, device, logs, snapshots, handshake,
     canControl: computed(() => connected.value && ready.value && !busy.value),
     connect, disconnect, hello, send, exportLogs, onFrame, lastFrame,
+    onLog(callback: (entry: ConsoleLogEntry) => void) {
+      logListeners.add(callback)
+      return () => logListeners.delete(callback)
+    },
     onDisconnect(callback: () => void) {
       disconnectListeners.add(callback)
       return () => disconnectListeners.delete(callback)

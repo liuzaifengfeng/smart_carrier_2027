@@ -8,6 +8,12 @@
 #include "vision_alignment.h"
 
 constexpr float ARM_HEIGHT_LIMIT_MM = 175.0f; // Maximum arm height (mm).
+constexpr float ARM_CLAW_MAX_DEG = 91.0f;
+constexpr float LimitArmClawAngle(float angle) {
+    // 负向等效角（如 -240° = 120°）也必须服从张爪上限。
+    return angle > ARM_CLAW_MAX_DEG || (angle < -180.0f && angle + 360.0f > ARM_CLAW_MAX_DEG)
+        ? ARM_CLAW_MAX_DEG : angle;
+}
 // 总任务超时后锁止 MoveArm 的后续发令，上电/重新进入 Release 才清除。
 extern volatile bool taskMotionAborted;
 // 转盘真实多圈角度边界，由线缆可运动范围决定。

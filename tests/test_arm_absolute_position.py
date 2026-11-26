@@ -18,10 +18,13 @@ class ArmAbsolutePositionTests(unittest.TestCase):
         move = re.sub(r"(?:static )?bool (ReadArmTurretAngle|MoveArmInternal|MoveArm|MoveArmPlanned)\(",
                       r"constexpr bool \1(", source[start:end])
         header = (ROOT / "src/chassis.h").read_text(encoding="utf-8")
-        names = ("ARM_HEIGHT_LIMIT_MM", "TURRET_CABLE_MIN_DEG", "TURRET_CABLE_MAX_DEG")
+        names = ("ARM_HEIGHT_LIMIT_MM", "ARM_CLAW_MAX_DEG", "TURRET_CABLE_MIN_DEG", "TURRET_CABLE_MAX_DEG")
         limits = "\n".join(re.search(r"constexpr float " + name + r"\s*=[^;]+;",
                                       header).group() for name in names)
-        move = move.replace("uint8_t turretAcceleration, bool slowLower)", "uint8_t turretAcceleration=191, bool slowLower=false)")
+        limits += "\n" + re.search(r"constexpr float LimitArmClawAngle\([^}]+\}", header).group()
+        move = move.replace(
+            "uint8_t turretAcceleration, bool slowLower, uint8_t lengthAcceleration, uint8_t slowLowerAcceleration)",
+            "uint8_t turretAcceleration=191, bool slowLower=false, uint8_t lengthAcceleration=240, uint8_t slowLowerAcceleration=248)")
         harness = r'''
 #include <stdint.h>
 #include <float.h>
@@ -32,6 +35,8 @@ constexpr float roundf(float v) { return v < 0 ? int(v - 0.5f) : int(v + 0.5f); 
 constexpr int pdMS_TO_TICKS(int v) { return v; }
 constexpr void vTaskDelay(int) {}
 LIMITS
+constexpr uint16_t TURRET_MOTOR_POSITION_RPM=83;
+constexpr uint8_t ARM_EXTENSION_ACCELERATION=240, ARM_SLOW_LOWER_ACCELERATION=248;
 struct Log {
     constexpr void println(const char*) {}
     template<class... A> constexpr void printf(const char*, A...) {}
@@ -46,7 +51,7 @@ struct Run {
     Command commands[8];
     int count=0;
     constexpr bool TurretMotorReadAngle(float& angle) { angle=0; return true; }
-    constexpr bool TurretMotorMove(float, uint16_t) { return true; }
+    constexpr bool TurretMotorMove(float, uint16_t, uint16_t) { return true; }
     constexpr bool Servo_QueryAngleMTurn(int, float& angle, int) { angle=0; return true; }
     constexpr void Servo_SetAngleMTurn(int, float, float, int) {}
     constexpr void Servo_SetAngleMTurnByInterval(int, float, uint32_t,

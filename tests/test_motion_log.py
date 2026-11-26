@@ -2,11 +2,16 @@
 
 import unittest
 
-from scripts.summarize_motion_log import parse_events, render, summarize, union_ms
+from scripts.summarize_motion_log import analyze_archive, parse_events, render, snapshot_sections, summarize, union_ms
 
 
 def report(*frames):
     return summarize(parse_events(frames))
+
+
+def entries(*lines):
+    return [dict(direction="RX", time=f"2026-01-01T00:00:{index:02d}Z", text=line)
+            for index, line in enumerate(lines)]
 
 
 class MotionLogTests(unittest.TestCase):
@@ -108,6 +113,36 @@ class MotionLogTests(unittest.TestCase):
         for frames in cases:
             with self.subTest(frames=frames), self.assertRaises(ValueError):
                 report(*frames)
+
+    def test_archive_keeps_pre_start_logs_and_a_terminal_failure(self):
+        logs = entries("{RSP,SYS,RELEASE,OK}", "{EVT,MOTION,PHASE,0,100,WAIT_START}",
+                       "{EVT,MOTION,RUN_START,0,500}", "{EVT,MOTION,PHASE,0,510,READ_TASK}",
+                       "{EVT,MOTION,ERROR,1,730,PATH_TIMEOUT}", "{EVT,MOTION,PHASE,0,750,SCAN_FAILED}")
+        archived = analyze_archive(logs=logs)
+        self.assertEqual((archived["status"], archived["reason"], archived["total_ms"]),
+                         ("FAILED", "SCAN_FAILED", None))
+        self.assertEqual((archived["observed_ms"], archived["timeline_ms"]), (5000, 650))
+        self.assertEqual(archived["phases"], [("WAIT_START", 0, 410, 410), ("READ_TASK", 410, 650, 240)])
+        self.assertEqual(archived["logs"], logs)
+
+    def test_silent_archive_without_task_frames_still_reports_observed_duration(self):
+        archived = analyze_archive(logs=entries("{RSP,SYS,RELEASE,OK}", "waiting for panel"),
+                                   end_reason="SILENT")
+        self.assertEqual((archived["status"], archived["total_ms"], archived["observed_ms"]),
+                         ("SILENT", None, 1000))
+        self.assertEqual(archived["intervals"], [])
+
+    def test_snapshot_can_include_a_partial_run_followed_by_a_complete_run(self):
+        logs = entries("{EVT,MOTION,PHASE,0,400,READ_TASK}",
+                       "{EVT,MOTION,SPAN,12,450,SCAN_SEARCH,BEGIN}",
+                       "{EVT,MOTION,SPAN,12,600,SCAN_SEARCH,END}",
+                       "{EVT,MOTION,PHASE,0,750,SCAN_FAILED}", "{RSP,SYS,RELEASE,OK}",
+                       "{EVT,MOTION,RUN_START,0,100}", "{EVT,MOTION,RUN_RESULT,0,900,DONE,800}")
+        partial, done = [analyze_archive(logs=section) for section in snapshot_sections(logs)]
+        self.assertEqual(partial["components"], [("SCAN_SEARCH", 1, 150, 150)])
+        self.assertEqual(partial["status"], "FAILED")
+        self.assertIsNone(partial["total_ms"])
+        self.assertEqual((done["status"], done["total_ms"]), ("DONE", 800))
 
 
 if __name__ == "__main__":

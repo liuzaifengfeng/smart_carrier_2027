@@ -129,11 +129,11 @@ void initialize() {
     RegisterRuntimeFloat("搬运/安全高度(mm)", materialTransferLayout.approachHeight, 0, ARM_HEIGHT_LIMIT_MM);
     RegisterRuntimeFloat("搬运/二层高度增量(mm)", materialTransferLayout.secondLayerOffset, 0, ARM_HEIGHT_LIMIT_MM);
     registerArmSpeed("搬运/速度", materialTransferLayout.moveSpeed);
-    RegisterRuntimeFloat("搬运/夹爪张开(deg)", materialTransferLayout.clawOpenAngle, -360, 360);
-    RegisterRuntimeFloat("搬运/夹爪夹紧(deg)", materialTransferLayout.clawClosedAngle, -360, 360);
+    RegisterRuntimeFloat("搬运/夹爪张开(deg)", materialTransferLayout.clawOpenAngle, -360, ARM_CLAW_MAX_DEG);
+    RegisterRuntimeFloat("搬运/夹爪夹紧(deg)", materialTransferLayout.clawClosedAngle, -360, ARM_CLAW_MAX_DEG);
     RegisterRuntimeUInt("搬运/等待时间(ms)", materialTransferLayout.motionWaitMs, 1, 60000);
     registerPose("搬运/圆盘预抓", materialMotionSteps.discApproach);
-    RegisterRuntimeFloat("搬运/圆盘预抓/张爪(deg)", materialMotionSteps.discOpenAngle, -360, 360);
+    RegisterRuntimeFloat("搬运/圆盘预抓/张爪(deg)", materialMotionSteps.discOpenAngle, -360, ARM_CLAW_MAX_DEG);
     RegisterRuntimeFloat("搬运/圆盘提起/高度(mm)", materialMotionSteps.discLiftHeight, 0, ARM_HEIGHT_LIMIT_MM);
     registerArmSpeed("搬运/速度/圆盘预抓", materialMotionSteps.discApproachSpeed);
     registerArmSpeed("搬运/速度/圆盘夹紧", materialMotionSteps.discGripSpeed);
@@ -171,7 +171,7 @@ void initialize() {
     // 追加独立中间道路参数，保留已有上位机参数编号。
     RegisterRuntimeFloat("底盘/节点导航中间路段速度(mm/s)",NODE_PATH_MIDDLE_SPEED_MM_S,10,5000);
     RegisterRuntimeUInt("底盘/节点导航中间路段加速度档位(EMM V5)",NODE_PATH_MIDDLE_ACCEL_LEVEL,1,255);
-    RegisterRuntimeFloat("搬运/载物台/夹爪张开(deg)", materialTransferLayout.cargoClawOpenAngle, -360, 360);
+    RegisterRuntimeFloat("搬运/载物台/夹爪张开(deg)", materialTransferLayout.cargoClawOpenAngle, -360, ARM_CLAW_MAX_DEG);
     // CFG 以 float 暂存参数，2^24 是可逐个精确表示的整数上界。
     RegisterRuntimeUInt("圆环纠偏/连续达标帧数",ring::requiredStableFrames(),1,16777216);
     RegisterRuntimeFloat("圆环纠偏/X死区(px)",ring::configuredDeadzone().x,FLT_MIN,FLT_MAX);

@@ -24,19 +24,28 @@ export const activityName = (name: string) => spanLabels[name] ?? name
   .replace(/^VISION_FIRST_FRAME_/, '等待视觉首帧 · ')
   .replace(/^STEP_/, '')
 export const seconds = (value: number) => (value / 1000).toFixed(3) + ' s'
-export const duration = (value: number | undefined) => value === undefined ? '缺数据' : seconds(value)
-export const delta = (a: number | undefined, b: number | undefined) =>
-  a === undefined || b === undefined ? '缺数据' : (b > a ? '+' : '') + seconds(b - a)
+export const duration = (value: number | null | undefined) => value == null ? '缺数据' : seconds(value)
+export const delta = (a: number | null | undefined, b: number | null | undefined) =>
+  a == null || b == null ? '缺数据' : (b > a ? '+' : '') + seconds(b - a)
 export const date = (value: string) => new Date(value).toLocaleString('zh-CN', { hour12: false })
+const runStatuses: Record<string, string> = {
+  DONE: '正常完成', FAILED: '报错停车', CANCELLED: '已取消', SILENT: '30 秒无日志',
+  DISCONNECTED: '连接中断', RESTARTED: '收到新的 Release', INCOMPLETE: '片段',
+}
+export const runStatus = (run: Pick<RunDetail, 'status' | 'reason'>) =>
+  run.reason ? phaseName(run.reason) : runStatuses[run.status ?? 'DONE'] ?? run.status
+export const runTiming = (run: Pick<RunDetail, 'total_ms' | 'observed_ms'>) =>
+  run.total_ms === null ? '已记录 ' + duration(run.observed_ms) : seconds(run.total_ms)
 
 export function phaseActivities(run: RunDetail, phase: string) {
   const row = run.phases.find(([name]) => name === phase)
   const groups = new Map<string, [number, number][]>()
   if (!row) return new Map<string, { sum: number; coverage: number }>()
+  const phaseEnd = row[2] ?? run.timeline_ms ?? run.total_ms ?? row[1]
   for (const [kind, name, , start, end] of run.intervals) {
     if (kind === 'RESULT') continue
     const begin = Math.max(start, row[1])
-    const finish = Math.min(end, row[2])
+    const finish = Math.min(end, phaseEnd)
     if (finish <= begin) continue
     const group = groups.get(name) ?? []
     group.push([begin, finish])

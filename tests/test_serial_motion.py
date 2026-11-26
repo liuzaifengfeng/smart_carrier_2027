@@ -37,6 +37,9 @@ class SerialMotionTests(unittest.TestCase):
     def test_manual_initialization_and_transfers_only_submit(self):
         run_native(self.binary, "maintenance")
 
+    def test_manual_claw_commands_enforce_the_opening_limit(self):
+        run_native(self.binary, "claw-limit")
+
     def test_linear_axis_zero_updates_only_measured_axis_and_recovers_after_failure(self):
         run_native(self.binary, "linear-zero")
 

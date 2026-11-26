@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useController } from './useController'
 import { useCloudCapture } from './cloudRuns'
+import { enableLogUploadCue } from './logUploadCue'
 import { usePwa } from './pwa'
 import { useParameters } from './parameters'
 import { frame } from './commands'
@@ -20,7 +21,7 @@ import RingVisionPanel from './components/RingVisionPanel.vue'
 import UploadLogSnapshot from './components/UploadLogSnapshot.vue'
 import './desktop.css'
 const controller = useController()
-const { status: archiveStatus, pending, upload } = useCloudCapture(controller)
+const { status: archiveStatus, pending, retryUpload } = useCloudCapture(controller)
 const model = useParameters(controller)
 const { connected, busy, error, device, logs, snapshots, handshake, canControl, connect, disconnect, hello, send, exportLogs } = controller
 const { installPrompt, offlineStatus, waiting, updating, install, update } = usePwa()
@@ -88,7 +89,7 @@ function pickTarget(x: number, y: number) {
 }
 </script>
 <template>
-  <main class="desktop">
+  <main class="desktop" @click.capture="enableLogUploadCue" @keydown.capture="enableLogUploadCue">
     <h1>智能搬运车调试上位机</h1>
     <fieldset class="connection"><legend>USB 串口连接</legend>
       <div class="actions">
@@ -113,7 +114,7 @@ function pickTarget(x: number, y: number) {
       <div class="connection-status">
         <span role="status">云端归档 · {{ archiveStatus }}{{ pending ? `（待传 ${pending} 场）` : '' }}</span>
         <span><a href="./runs.html" target="_blank" rel="noopener">查看云端运行日志</a>
-          <button v-if="pending" @click="upload">重试上传</button>
+          <button v-if="pending" @click="retryUpload">重试上传</button>
         </span>
         <UploadLogSnapshot :logs="logs" :device="device" />
         <span>任务码 {{ display.TASK_CODE ?? '尚未收到' }}</span>

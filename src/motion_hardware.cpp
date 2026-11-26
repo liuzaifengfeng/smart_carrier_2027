@@ -169,33 +169,23 @@ const char *MotionHardware::correctRing(const Step &s,bool &done) {
     float turret=0;
     if(!ReadArmTurretAngle(turret))return "MOTOR_READ";
     const float correction=-ringX.update(frame.x,dt,ringSettings.turret);
-    float targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,turret+correction));
     // 保留原规划发令前的实测范围检查和 Y 轴先下发的顺序。
     if(!ReadArmTurretAngle(turret)||!MoveArm(-1,targetLength,-1,-1,s.speed,TURRET_ACCELERATION_SLOW))
         return "EXECUTION";
-    auto position=TurretMotorQuantizePosition(targetTurret);
+    if(correction==0)return nullptr;
+    // 单脉冲虽能编码，但实车在小角度目标下可保持静止并回报已到位。
+    const float step=copysignf(fmaxf(fabsf(correction),ring::MIN_TURRET_CORRECTION_DEG),correction);
+    const float targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,turret+step));
+    const auto position=TurretMotorQuantizePosition(targetTurret);
     const auto current=TurretMotorQuantizePosition(turret);
-    const auto signedPulses=[](const TurretMotorPosition &p) -> int64_t {
-        return p.direction==TURRET_MOTOR_POSITIVE_DIR?int64_t(p.pulses):-int64_t(p.pulses);
+    const auto samePulse=[](const TurretMotorPosition &a,const TurretMotorPosition &b) {
+        return a.pulses==b.pulses&&(!a.pulses||a.direction==b.direction);
     };
-    if(signedPulses(position)==signedPulses(current)) {
-        if(correction==0)return nullptr;
-        const bool positive=correction>0;
-        const int64_t next=signedPulses(current)+(positive?1:-1);
-        const float limit=positive?ringMaxTurret:ringMinTurret;
-        const int64_t limitPulses=signedPulses(TurretMotorQuantizePosition(limit));
-        if(positive?next>limitPulses:next<limitPulses)return nullptr;
-        position={static_cast<uint8_t>(next<0?1-TURRET_MOTOR_POSITIVE_DIR:TURRET_MOTOR_POSITIVE_DIR),
-                  static_cast<uint32_t>(next<0?-next:next)};
-        targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,turret+copysignf(turretPulseDegrees,correction)));
-    }
+    if(samePulse(position,current))return nullptr;
     if(lastRingXCommand.id&&TurretMotorCommandCancelled(lastRingXCommand.id))lastRingXCommand={};
     if(fabsf(frame.x)<=ring::RING_X_FINE_PX&&lastRingXCommand.id) {
-        const auto &previous=lastRingXCommand.position;
-        const bool samePulse=position.pulses==previous.pulses&&
-            (!position.pulses||position.direction==previous.direction);
         if(now()-lastRingXCommand.sentAtMs<ring::RING_X_FINE_SEND_MS||
-           (samePulse&&TurretMotorCommandActive(lastRingXCommand.id)))return nullptr;
+           (samePulse(position,lastRingXCommand.position)&&TurretMotorCommandActive(lastRingXCommand.id)))return nullptr;
     }
     uint32_t commandId=0;
     if(!TurretMotorMoveQuantized(targetTurret,position,ring::TURRET_CORRECTION_ACCELERATION,

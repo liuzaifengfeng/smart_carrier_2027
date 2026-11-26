@@ -15,7 +15,7 @@ namespace {
  * @param hold 反馈完成后的夹持或释放保持时间(ms)。
  */
 void arm(Program &p,const char *name,float h,float l,float t,float claw,float speed,uint32_t wait=0,bool planned=false,uint32_t hold=0) {
-    Step s;s.kind=StepKind::ARM;s.name=name;s.high=h;s.length=l;s.turret=t;s.pawl=claw;s.speed=speed;s.waitMs=wait;s.planned=planned;s.holdMs=hold;s.turretAcceleration=TURRET_ACCELERATION_FAST;p.append(s);
+    Step s;s.kind=StepKind::ARM;s.name=name;s.high=h;s.length=l;s.turret=t;s.pawl=LimitArmClawAngle(claw);s.speed=speed;s.waitMs=wait;s.planned=planned;s.holdMs=hold;s.turretAcceleration=TURRET_ACCELERATION_FAST;p.append(s);
 }
 /** @brief 追加转台到位检查步骤，忽略旧旋转延时；其他轴仍只发令。 */
 void rotateArm(Program &p,const char *name,float h,float l,float t,float claw,float speed,bool planned=false) {

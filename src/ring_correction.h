@@ -7,6 +7,7 @@
 namespace ring {
 constexpr float HOVER_MM = 10.0f;
 constexpr float MAX_TURRET_CORRECTION_DEG = 10.0f;
+constexpr float MIN_TURRET_CORRECTION_DEG = 1.0f;
 constexpr float MAX_EXTENSION_CORRECTION_MM = 20.0f;
 constexpr uint8_t TURRET_CORRECTION_ACCELERATION = 160;
 constexpr uint16_t TURRET_CORRECTION_RPM = 10;

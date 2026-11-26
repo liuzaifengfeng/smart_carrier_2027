@@ -459,6 +459,20 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"axis-trial"))axisTrial();
     else if(!strcmp(argv[1],"startup"))startup();else if(!strcmp(argv[1],"zones"))zones();
     else if(!strcmp(argv[1],"linear-zero"))linearZero();
+    else if(!strcmp(argv[1],"claw-limit")){
+        dispatch("{CMD,ARM,MOVE2,-1,91.1,80}");
+        assert(!active&&Serial.text=="{RSP,ARM,MOVE2,ERR,RANGE}\n");
+        Serial.text.clear();
+        dispatch("{CMD,ARM,MOVE2,-1,-240,80}");
+        assert(active&&captured.pawl==91&&Serial.text=="{RSP,ARM,MOVE2,ACK,-1.000,91.000,80.000}\n");
+        finish();
+        Serial.text.clear();
+        dispatch("{CMD,ARM,SERVO,1,92}");
+        assert(!active&&Serial.text=="{RSP,ARM,SERVO,ERR,RANGE}\n");
+        Serial.text.clear();
+        dispatch("{CMD,ARM,SERVO,1,91}");
+        assert(active&&captured.cargo==1&&captured.turret==91);
+    }
     else if(!strcmp(argv[1],"battery")){
         active=true;
         dispatch("{CMD,BAT,GET}");

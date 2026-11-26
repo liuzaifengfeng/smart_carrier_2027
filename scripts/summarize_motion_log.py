@@ -12,6 +12,7 @@ SPAN 记录路径、观察及视觉分项；STEP 记录机械臂进入/退出。
 
 import argparse
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 import re
 
@@ -52,19 +53,23 @@ def union_ms(intervals):
     return total
 
 
-def summarize(events):
+def summarize(events, *, observation_start=None, terminal_time=None, strict=True):
     starts = [e for e in events if e.kind == "RUN_START" and e.job == "0"]
     results = [e for e in events if e.kind == "RUN_RESULT" and e.job == "0"]
     if len(starts) > 1 or len(results) > 1:
         raise ValueError("请按单次比赛拆分日志，不要合并多次开机或多场比赛")
     start = starts[0].time if starts else None
-    end = results[0].time if results else None
+    end = results[0].time if results else terminal_time
     status, total = "INCOMPLETE", None
-    if start is not None and end is not None:
-        total = int(results[0].fields[1])
-        if total < 0 or end - start != total:
+    if start is not None and results:
+        elapsed = results[0].fields[1]
+        if elapsed.isdecimal() and end - start == int(elapsed):
+            total = int(elapsed)
+            status = results[0].fields[0]
+        elif strict:
             raise ValueError("比赛总耗时与设备起止时间不一致")
-        status = results[0].fields[0]
+    if observation_start is not None:
+        start = observation_start
 
     phases = [e for e in events if e.kind == "PHASE" and e.job == "0"]
     rows = []
@@ -82,9 +87,12 @@ def summarize(events):
     intervals = []
     for event in events:
         if event.kind == "RESULT" and event.job != "0":
-            duration = int(event.fields[1])
-            if duration < 0 or duration > event.time:
-                raise ValueError("作业耗时无效；日志需来自同一次开机且 millis 未回绕")
+            elapsed = event.fields[1]
+            if not elapsed.isdecimal() or int(elapsed) > event.time:
+                if strict:
+                    raise ValueError("作业耗时无效；日志需来自同一次开机且 millis 未回绕")
+                continue
+            duration = int(elapsed)
             begin = event.time - duration
             finish = event.time
             if start is not None:
@@ -126,6 +134,125 @@ def summarize(events):
                 job_sum_ms=serial, job_wall_ms=wall, job_overlap_ms=serial - wall,
                 components=component_rows, unfinished=unfinished, unmatched_ends=unmatched_ends,
                 intervals=intervals)
+
+
+MAIN_PHASES = (
+    "READ_TASK", "GRAB_ROUND1", "PLACE_COARSE1", "PLACE_TEMP1",
+    "GRAB_ROUND2", "PLACE_COARSE2", "STACK_TEMP2", "RETURN_HOME",
+)
+MOTION_FRAME = re.compile(r"\{EVT,MOTION,[^{}\r\n]+\}")
+START_SIGNAL = re.compile(r"\{RSP,SYS,(?:RELEASE|START),OK\}|^\[StartPanel\] button=PRESS\b.*\bstart=REQUESTED$")
+FAILED_PHASE = re.compile(r"\{EVT,MOTION,PHASE,0,\d+,[A-Z_]+_FAILED\}")
+
+
+def archive_logs(logs):
+    """Validate the wire representation shared by snapshots and automatic capture."""
+    if not isinstance(logs, list) or not logs or any(
+        not isinstance(entry, dict) or
+        not all(isinstance(entry.get(field), str) for field in ("time", "direction", "text"))
+        for entry in logs
+    ):
+        raise ValueError("请提供带时间、方向和正文的日志")
+    return logs
+
+
+def snapshot_sections(logs):
+    """Keep separate task timings when a 60-second snapshot includes multiple runs."""
+    section = []
+    release_seen = formal_seen = ended = False
+    for log in logs:
+        line = log["text"] if log["direction"] == "RX" else ""
+        release = "{RSP,SYS,RELEASE,OK}" in line
+        start = "{EVT,MOTION,RUN_START,0," in line
+        result = "{EVT,MOTION,RUN_RESULT,0," in line
+        if ((release and (release_seen or formal_seen or ended))
+                or (START_SIGNAL.search(line) and ended)
+                or (start and (formal_seen or ended)) or (result and ended and not formal_seen)):
+            yield section
+            section = []
+            release_seen = formal_seen = ended = False
+        section.append(log)
+        release_seen |= release
+        formal_seen |= start
+        ended |= result or bool(FAILED_PHASE.search(line))
+        if result:
+            formal_seen = False
+    if section:
+        yield section
+
+
+def analyze_archive(frames=(), logs=(), end_reason=None):
+    """Analyze the observed portion without estimating missing formal boundaries."""
+    if logs:
+        frames = [frame for log in logs if log["direction"] == "RX"
+                  for frame in MOTION_FRAME.findall(log["text"])]
+    events, valid_frames = [], []
+    for frame in frames:
+        if not isinstance(frame, str) or not MOTION_FRAME.fullmatch(frame):
+            continue
+        try:
+            parsed = parse_events([frame])
+        except ValueError:
+            continue
+        if parsed:
+            events.extend(parsed)
+            valid_frames.append(frame)
+
+    events.sort(key=lambda event: event.time)
+    start = events[0].time if events else 0
+    failure = next((event for event in reversed(events) if event.job == "0" and
+                    event.kind == "PHASE" and event.fields[0].endswith("_FAILED")), None)
+    result = next((event for event in reversed(events)
+                   if event.job == "0" and event.kind == "RUN_RESULT"), None)
+    terminal = failure or next((event for event in reversed(events)
+                               if event.job == "0" and event.kind == "PHASE" and event.fields[0] == "DONE"), None)
+    report = summarize(events, observation_start=start, terminal_time=terminal.time if terminal else None,
+                       strict=False)
+    total = report["total_ms"]
+    phases = [(name, begin - start, None if end is None else end - start, duration)
+              for name, begin, end, duration in report["phases"]
+              if name != "DONE" and not name.endswith("_FAILED")]
+    if events and events[0].kind == "RUN_START" and phases and phases[0][0] == "READ_TASK":
+        name, begin, end, duration = phases[0]
+        phases[0] = (name, 0, end, duration + begin if duration is not None else None)
+    status = (result.fields[0] if result else "FAILED" if failure or end_reason == "FAILED" else "DONE" if terminal else
+              end_reason if end_reason in ("SILENT", "DISCONNECTED", "RESTARTED") else "INCOMPLETE")
+    reason = failure.fields[0] if failure else ""
+    end = result or terminal
+    timeline_ms = max(0, (end or events[-1]).time - start) if events else 0
+    observed_ms = timeline_ms
+    if logs:
+        try:
+            first, last = (datetime.fromisoformat(item["time"].replace("Z", "+00:00"))
+                           for item in (logs[0], logs[-1]))
+            observed_ms = max(0, round((last - first).total_seconds() * 1000))
+        except (ValueError, TypeError):
+            pass
+
+    missing = []
+    if total is None:
+        missing.append("正式起止事件缺失或时间不一致，正式耗时未知")
+    if not events:
+        missing.append("没有可计算阶段或作业耗时的任务事件")
+    if len(frames) > len(valid_frames):
+        missing.append(f"跳过 {len(frames) - len(valid_frames)} 条非计时或无效任务事件")
+    logged_phases = {name for name, *_ in phases}
+    if total is not None and status == "DONE":
+        missing.extend(f"缺少阶段 {name}" for name in MAIN_PHASES if name not in logged_phases)
+    if any(row[3] is None for row in phases):
+        missing.append("最后的业务阶段缺少结束事件")
+    if report["unfinished"]:
+        missing.append(f'{len(report["unfinished"])} 个动作区间缺少结束事件')
+    if report["unmatched_ends"]:
+        missing.append(f'{len(report["unmatched_ends"])} 个动作区间缺少开始事件')
+    return dict(
+        total_ms=total, observed_ms=observed_ms, timeline_ms=timeline_ms or observed_ms,
+        status=status, reason=reason, phases=phases, missing=missing,
+        intervals=[(kind, name, job, begin-start, end-start)
+                   for kind, name, job, begin, end in report["intervals"]],
+        components=report["components"], job_sum_ms=report["job_sum_ms"],
+        job_wall_ms=report["job_wall_ms"], frames=valid_frames, logs=logs,
+    )
 
 
 def render(report):

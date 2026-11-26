@@ -156,21 +156,21 @@
           "value": 50.0,
           "description": "常规抓取前和放置松手时的夹爪目标角度；旋转料盘有独立参数。",
           "minimum": -360.0,
-          "maximum": 360.0,
+          "maximum": 91.0,
           "integer": false
         },
         "搬运/载物台/夹爪张开(deg)": {
           "value": 30.0,
           "description": "旋转料盘取料前和装料后松爪的目标角度；不要填-1（表示不移动）。",
           "minimum": -360.0,
-          "maximum": 360.0,
+          "maximum": 91.0,
           "integer": false
         },
         "搬运/夹爪夹紧(deg)": {
           "value": -9.0,
           "description": "抓取夹紧和搬运持物时夹爪目标角度；不要填-1（表示不移动）。",
           "minimum": -360.0,
-          "maximum": 360.0,
+          "maximum": 91.0,
           "integer": false
         },
         "搬运/等待时间(ms)": {
@@ -205,7 +205,7 @@
           "value": 90.0,
           "description": "圆盘抓取第1步：夹爪张开目标角度。",
           "minimum": -360.0,
-          "maximum": 360.0,
+          "maximum": 91.0,
           "integer": false
         },
         "搬运/圆盘提起/高度(mm)": {

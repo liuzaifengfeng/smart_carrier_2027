@@ -133,6 +133,9 @@ static_assert(legacyClawPacket(), "ID 1 retains simple multiturn packet");
 
     def test_actual_move_arm_turret_routing(self):
         source = (ROOT / "src/chassis.cpp").read_text(encoding="utf-8")
+        header = (ROOT / "src/chassis.h").read_text(encoding="utf-8")
+        claw_limit = re.search(r"constexpr float ARM_CLAW_MAX_DEG\s*=[^;]+;", header).group()
+        claw_limit += "\n" + function_source(header, "constexpr float LimitArmClawAngle(")
         actual = "\n".join(function_source(source, signature) for signature in (
             "bool ReadArmTurretAngle(", "static bool MoveArmInternal(",
             "bool MoveArm(", "bool MoveArmPlanned("))
@@ -154,18 +157,20 @@ constexpr float TURRET_CABLE_MIN_DEG=-150,TURRET_CABLE_MAX_DEG=360;
 constexpr uint16_t TURRET_MOTOR_POSITION_RPM=83;
 constexpr uint8_t ARM_EXTENSION_ACCELERATION=240;
 constexpr uint8_t ARM_SLOW_LOWER_ACCELERATION=248;
+CLAW_LIMIT
 struct Log {constexpr void println(const char*){} template<class... A> constexpr void printf(const char*,A...) {}};
 struct Pose {float high=0,length=0,turret_angle=0,pawl_angle=0;};
 struct Run {
     bool taskMotionAborted=false,queryOk=true;
     float measured=0,HEIGHT_PULSE=80,LENGTH_PULSE=30;
+    float measuredClaw=0, clawTarget=0;
     int commands=0,queries=0; float angle=0; uint16_t ramp=0, liftRpm=0;
     uint8_t extensionRamp=0,liftRamp=0;
     Log Serial; Pose currentArm;
     constexpr bool TurretMotorReadAngle(float &v){++queries;v=measured;return queryOk;}
     constexpr bool TurretMotorMove(float v,uint16_t r,uint16_t){++commands;angle=v;ramp=r;return true;}
-    constexpr bool Servo_QueryAngleMTurn(int,float &v,int){v=0;return true;}
-    constexpr void Servo_SetAngleMTurn(int,float,uint32_t,uint16_t){++commands;}
+    constexpr bool Servo_QueryAngleMTurn(int,float &v,int){v=measuredClaw;return true;}
+    constexpr void Servo_SetAngleMTurn(int,float v,uint32_t,uint16_t){++commands;clawTarget=v;}
     constexpr void Emm_V5_Pos_Control(uint8_t id,uint8_t,uint16_t rpm,uint8_t accel,uint32_t,bool,bool){
         ++commands;if(id==6)extensionRamp=accel;
         if(id==5){liftRamp=accel;liftRpm=rpm;}
@@ -204,6 +209,13 @@ static_assert(winding(),"zero, 360 and negative targets remain distinct");
 static_assert(planned(),"planned signed absolute angles and per-action ramps reach motor");
 static_assert(feedback(),"read failures preserve output and do not latch future motion");
 static_assert(skip(),"sentinel and cancellation remain effective");
+constexpr bool clawLimit(){
+    Run r;r.measuredClaw=360;
+    if(!r.MoveArm(-1,-1,-1,130,200)||r.clawTarget!=451||r.currentArm.pawl_angle!=91)return false;
+    if(!r.MoveArmPlanned(-1,-1,0,-240,200)||r.clawTarget!=451)return false;
+    return r.MoveArm(-1,-1,-1,-9,200)&&r.clawTarget==351&&r.currentArm.pawl_angle==-9;
+}
+static_assert(clawLimit(),"direct and wrapped opening targets respect the claw limit");
 constexpr bool extension(){
     Run r;return r.MoveArm(-1,20,-1,-1,500,150,false,245)&&r.extensionRamp==245
         &&r.MoveArm(-1,20,-1,-1,500)&&r.extensionRamp==240;
@@ -214,7 +226,7 @@ constexpr bool finalLower(){
         &&r.MoveArm(0,-1,-1,-1,300,150,true,240,200)&&r.liftRamp==200&&r.liftRpm==2250;
 }
 static_assert(finalLower(),"final lowering uses level 200 without changing the speed limit");
-'''.replace("ACTUAL",actual)
+'''.replace("CLAW_LIMIT",claw_limit).replace("ACTUAL",actual)
         self.compile_assertions(harness)
 
 

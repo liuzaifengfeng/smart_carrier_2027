@@ -925,7 +925,7 @@ static void serialDispatch(const SerialFrame &frame) {
         if (!serialDebugMode) { serialError(frame, "MODE"); return; }
         const bool first = strcmp(frame.fields[2], "MOVE1") == 0;
         const float minimum[] = {first ? -1.0f : TURRET_CABLE_MIN_DEG, first ? -1.0f : -360.0f, 1.0f};
-        const float maximum[] = {first ? ARM_HEIGHT_LIMIT_MM : 360.0f, first ? 170.0f : 360.0f, FLT_MAX};
+        const float maximum[] = {first ? ARM_HEIGHT_LIMIT_MM : 360.0f, first ? 170.0f : ARM_CLAW_MAX_DEG, FLT_MAX};
         float values[3];
         if (!serialFloats(frame, values, minimum, maximum, 3)
                 || (first && ((values[0] < 0 && values[0] != -1)
@@ -933,7 +933,7 @@ static void serialDispatch(const SerialFrame &frame) {
             serialError(frame, "RANGE"); return;
         }
         MotionRequest r;r.kind=MotionKind::ARM_RAW;r.speed=values[2];
-        if(first){r.high=values[0];r.length=values[1];}else{r.turret=values[0];r.pawl=values[1];}
+        if(first){r.high=values[0];r.length=values[1];}else{r.turret=values[0];r.pawl=values[1]=LimitArmClawAngle(values[1]);}
         const uint32_t id=serialPrepareMotion(frame,r);if(!id)return;
         Serial.printf("{RSP,ARM,%s,ACK,%.3f,%.3f,%.3f}\n", frame.fields[2],
                       values[0], values[1], values[2]);
@@ -992,7 +992,7 @@ static void serialDispatch(const SerialFrame &frame) {
                 || id == SERVO_ID_BROADCAST
                 || !serialFloat(frame.fields[4], angle,
                                 id == 2 ? TURRET_CABLE_MIN_DEG : -135.0f,
-                                id == 2 ? TURRET_CABLE_MAX_DEG : 135.0f)) {
+                                id == 2 ? TURRET_CABLE_MAX_DEG : id == SERVO_ID_CLAW ? ARM_CLAW_MAX_DEG : 135.0f)) {
             serialError(frame, "RANGE"); return;
         }
         // ARM SERVO 保留旧逻辑轴 2；料盘旋转通过 TRAY ROTATE。

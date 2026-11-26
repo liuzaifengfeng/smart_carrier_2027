@@ -102,6 +102,7 @@ h2 { margin: 0; font-size: 1.2rem; }
 }
 .time-bar:hover, .time-bar:focus-visible { background: #173651; z-index: 1; }
 .time-bar.phase { border-inline: 1px solid #f8fafc; font-weight: 650; container-type: inline-size; }
+.time-bar.open-phase { border-inline-end: 2px dashed #fff; opacity: .72; }
 .time-bar.phase .bar-label { visibility: hidden; }
 @container (min-width: 6.5em) {
   .time-bar.phase .bar-label { visibility: visible; }
