@@ -6,13 +6,13 @@
 *** 外部协作：机载电脑负责视觉识别 + 下发指令
 ***          （颜色/位置识别、转盘物料定位）
 ***
-***       标有 [TODO] 的部分，需按实际机械/定位方案实现。
+***       标有 [TODO] 的部分，需按实际机械/定位方案实现。    
 **********************************************************/
 
 #include "robot_runtime.h"
 #include "h30_usb.h"
 #include "continuous_trial.h"
-#include "motion_executor.h"
+#include "motion_executor.h" 
 #include "competition_flow.h"
 #include "start_panel.h"
 
@@ -142,7 +142,7 @@ public:
     /**
      * @brief 请求开启指定视觉功能；工位对齐与单件物料识别使用不同模式。
      */
-    void visionStart(VisionStartMode mode,float headingOnAlignment)override{requestVisionStart(mode,headingOnAlignment);}
+    void visionStart(VisionStartMode mode,bool invertCornerXY)override{requestVisionStart(mode,invertCornerXY);}
     /**
      * @brief 读取当前自动视觉对齐的 WAITING、DONE 或 FAILED 状态。
      */
@@ -215,7 +215,6 @@ void Task_MainStateMachine(void *startPanel) {
     vTaskDelay(pdMS_TO_TICKS(1000));
     RuntimeCompetition runtime(startPanel!=nullptr);CompetitionMap map;
     map.scan=SCAN_AREA_NODE;map.disc=DISC_AREA_NODE;map.coarse=COARSE_AREA_NODE;map.temp=TEMP_AREA_NODE;
-    map.coarseHeading=COARSE_AREA_HEADING;map.tempHeading=TEMP_AREA_HEADING;
     map.home1=HOME_ZONE1_NODE;map.home2=HOME_ZONE2_NODE;map.homeHeading=HOME_ZONE_HEADING;
     CompetitionFlow flow(runtime,map);
     for(;;) {

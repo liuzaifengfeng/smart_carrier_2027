@@ -94,6 +94,8 @@ int main(){
     TurretMotorMove(360,TURRET_ACCELERATION_FAST);assert(direction==1&&targetPulses==3200);
     TurretMotorMove(0,TURRET_ACCELERATION_FAST);assert(targetPulses==0&&absolute);
     assert(TurretMotorMove(90,TURRET_ACCELERATION_FAST));
+    const uint32_t settlingId=trace.id;
+    assert(TurretMotorCommandActive(settlingId)&&!TurretMotorCommandActive(settlingId-1));
     const int commandsBeforeTrace=moves;
     snapshot(0,-17476);measuredRpm=-5;measuredFlags=1;clockMs+=50;
     TurretMotorPoll();assert(TurretMotorTracking()&&trace.overshoot>5.9f&&moves==commandsBeforeTrace);
@@ -101,6 +103,7 @@ int main(){
     TurretMotorPoll();assert(TurretMotorTracking()&&moves==commandsBeforeTrace);
     clockMs+=50;TurretMotorPoll();clockMs+=50;TurretMotorPoll();
     assert(!TurretMotorTracking()&&moves==commandsBeforeTrace);
+    assert(!TurretMotorCommandActive(settlingId));
     assert(Serial.text.find("SETTLED")!=std::string::npos);
     assert(Serial.text.find("{EVT,TURRET,SAMPLE,")==std::string::npos);
     // PID写入接口不可用不应阻断位置运动，也不自动覆盖手动参数。

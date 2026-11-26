@@ -103,8 +103,8 @@ bool WaitMotion(uint32_t id){return id&&result.state==MotionState::DONE;}
 void CancelMotion(){++cancels;gate.cancel();active=false;result.state=MotionState::CANCELLED;}
 void WakeMotionExecutor(){}
 void requestVisionStop(VisionStartMode mode){if(mode==VisionStartMode::DISC_MATERIAL)discMaterialActive=false;else alignmentEnabled=false;}
-void requestVisionStart(VisionStartMode mode){if(mode==VisionStartMode::DISC_MATERIAL)discMaterialActive=true;else alignmentEnabled=true;}
-void setAlignmentEnabled(bool enabled,bool=false,bool=false,VisionStartMode=VisionStartMode::NONE,bool=false){alignmentEnabled=enabled;}
+void requestVisionStart(VisionStartMode mode,bool=false){if(mode==VisionStartMode::DISC_MATERIAL)discMaterialActive=true;else alignmentEnabled=true;}
+void setAlignmentEnabled(bool enabled,bool=false,bool=false,VisionStartMode=VisionStartMode::NONE,bool=false,bool=false){alignmentEnabled=enabled;}
 void ResetDiscAlignmentPid(){}
 void ResetAlignmentWait(){}
 void traceVisionFirstFrame(VisionStartMode){}

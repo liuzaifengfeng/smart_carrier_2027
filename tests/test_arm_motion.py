@@ -30,6 +30,9 @@ class ArmMotionTests(unittest.TestCase):
     def test_three_disc_positions_keep_calibrated_targets_and_delays(self):
         run_native(self.binary, "discs")
 
+    def test_corner_observation_poses_for_both_zones(self):
+        run_native(self.binary, "corner")
+
     def test_observation_and_return_poses_keep_original_order(self):
         run_native(self.binary, "poses")
 

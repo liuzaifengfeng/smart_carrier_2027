@@ -132,6 +132,7 @@ bool TurretMotorSetZero(float &angle) {
 
 bool TurretMotorTracking(){return trace.active;}
 bool TurretMotorCommandCancelled(uint32_t commandId){return commandId==lastCancelledTrace;}
+bool TurretMotorCommandActive(uint32_t commandId){return trace.active&&trace.id==commandId;}
 void TurretMotorCancelTrace(){
     if(!trace.active)return;
     lastCancelledTrace=trace.id;

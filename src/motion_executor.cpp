@@ -282,7 +282,7 @@ void finishScan() {
     finish(MotionState::DONE);
 }
 /**
- * @brief 节点到达后等待有效任务码，必要时让料盘围绕扫码角最多摆动五轮。
+ * @brief 节点到达后等待有效任务码，必要时让料盘围绕扫码角最多摆动十轮。
  */
 void scanAtNode() {
     const bool received=pollTaskCode();
@@ -296,11 +296,11 @@ void scanAtNode() {
         stage=SCAN_SWEEP;
         phase("SCAN_SWEEP");
     }
-    // 每段摆动留出 250 ms，期间持续监听扫码。
-    constexpr uint32_t travelMs=250;
+    // 每段摆动留出 500 ms，期间持续监听扫码。
+    constexpr uint32_t travelMs=500;
     if(scanTurn&&millis()-scanTurnAt<travelMs)return;
     if(received&&scanTurn%2==0){finishScan();return;}
-    constexpr uint8_t stepsPerRound=4,maxRounds=5;
+    constexpr uint8_t stepsPerRound=4,maxRounds=10;
     if(scanTurn==stepsPerRound*maxRounds) {
         stage=SCAN_WAIT_CODE;
         phase("SCAN_WAIT_CODE");
@@ -309,7 +309,7 @@ void scanAtNode() {
         return;
     }
 
-    constexpr float offsets[stepsPerRound]={20,0,-20,0};
+    constexpr float offsets[stepsPerRound]={50,0,-50,0};
     motion::Step tray;
     tray.kind=motion::StepKind::TRAY_ROTATE;
     tray.turret=scanTrayAngle+offsets[scanTurn%stepsPerRound];

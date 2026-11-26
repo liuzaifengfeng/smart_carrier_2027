@@ -186,8 +186,11 @@ void observation(Program &p,ArmObservation pose,uint8_t zone) {
         Step s;s.kind=StepKind::TURRET_READY;s.name="LOOK3_MEASURED_READY";s.turret=90;s.waitMs=3000;p.append(s);break;
     }
     case ArmObservation::LOOK4:
-        arm(p,"LOOK4_LIFT",170,120,-1,-1,200,liftWait);rotateArm(p,"LOOK4_TURN",-1,-1,90,80,200);
-        rotateArm(p,"LOOK4_READY",-1,-1,zone==1?45:135,90,200);break;
+        arm(p,"LOOK4_LIFT",170,-1,-1,-1,200,liftWait);
+        rotateArm(p,"LOOK4_READY",-1,zone==1?150:0,zone==1?270:90,80,200);
+        p.steps[p.count-1].lengthArrival=true;
+        p.steps[p.count-1].allowStoppedLengthArrival=zone==2;
+        break;
     default: break;
     }
 }
@@ -271,7 +274,7 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
         position(p,0,0,r.zone==1?-45:45,200);
         break;
     case MotionKind::HOME_OBSERVE:
-        position(p,0,0,NodeRouteTurn(currentPose.theta,180),80);
+        position(p,0,0,NodeRouteTurn(currentPose.theta,HOME_ZONE_HEADING),80);
         if(!r.armPrepared)observation(p,ArmObservation::LOOK4,r.zone);
         break;
     case MotionKind::HOME_RETURN: {

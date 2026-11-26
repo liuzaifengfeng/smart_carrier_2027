@@ -724,7 +724,7 @@
           "integer": false
         },
         "圆环纠偏/超时(ms)": {
-          "value": 3000,
+          "value": 2000,
           "description": "设为 0 时跳过圆环视觉，预放到位后直接下放。设为正数时从 RING_READY 开始计时，超时即下放。",
           "minimum": 0,
           "maximum": 16777216,

@@ -19,6 +19,7 @@
 #include "led_pwm.h"
 #include "disc_material_decision.h"
 #include "task_code.h"
+#include "node_route_heading.h"
 
 #define LED_PIN 48
 constexpr uint8_t BOOT0_PIN = 0; // 板载BOOT按键，低电平按下。
@@ -53,7 +54,6 @@ constexpr uint8_t TEMP_AREA_NODE = 22;
 // 启停区附近的地图节点；最终归位由 CORNER 视觉对齐。
 constexpr uint8_t HOME_ZONE1_NODE = 4;
 constexpr uint8_t HOME_ZONE2_NODE = 0;
-constexpr float HOME_ZONE_HEADING = 180.0f;
 constexpr float StartZoneHeading(uint8_t zone) { return zone==1?180.0f:0.0f; }
 constexpr float DISC_AREA_HEADING = 90.0f;
 constexpr float COARSE_AREA_HEADING = 270.0f;
@@ -117,8 +117,8 @@ AutoAlignmentState getAutoAlignmentState();
  * @param owner 拥有该次对齐的视觉模式。
  * @param onlyOwner 是否仅允许匹配拥有者关闭。
  */
-void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false, VisionStartMode owner = VisionStartMode::NONE, bool onlyOwner = false,
-    float headingOnAlignment = NAN);
+void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false, VisionStartMode owner = VisionStartMode::NONE,
+    bool onlyOwner = false, bool invertCornerXY = false);
 /**
  * @brief 按起始区提交扫码准备姿态，正式模式复用已完成标志避免重复动作。
  * @param fromCommand true 表示串口显式请求。
@@ -137,7 +137,7 @@ bool updateDisplay(const char *commandType, const char *displayType, const char 
 /**
  * @brief 发送开启指定视觉模式的请求，并按模式设置对齐或物料识别状态。
  */
-void requestVisionStart(VisionStartMode mode,float headingOnAlignment=NAN);
+void requestVisionStart(VisionStartMode mode,bool invertCornerXY=false);
 /**
  * @brief 发送停止指定视觉模式的请求，并结束对应本地控制状态。
  */

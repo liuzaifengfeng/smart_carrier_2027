@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { firmwareFieldMap } from '../fieldMapDefaults'
 
 const props = defineProps<{ pose: number[]; target: number[]; nodes: number[][];
   preview?: number[][]; route?: number[]; routeActive?: boolean }>()
@@ -7,21 +8,51 @@ const emit = defineEmits<{ target: [x: number, y: number] }>()
 const canvas = ref<HTMLCanvasElement>()
 const width = 760
 const height = 647
+const pixelRatio = window.devicePixelRatio
 const left = 132
 const top = 86
 const side = 487
 const bottom = top + side
-const scale = side / 2400
+const { fieldSize, bodyWidth } = firmwareFieldMap
+const scale = side / fieldSize
+const center = fieldSize / 2
 const x = (mm: number) => left + mm * scale
 const y = (mm: number) => bottom - mm * scale
 const radians = (degrees: number) => degrees * Math.PI / 180
 const font = '"Microsoft YaHei UI", "Microsoft YaHei", sans-serif'
 let pointer: [number, number] | undefined
+const corridorLayer = document.createElement('canvas')
+corridorLayer.width = Math.round(width * pixelRatio)
+corridorLayer.height = Math.round(height * pixelRatio)
+const corridorContext = corridorLayer.getContext('2d')!
+corridorContext.scale(pixelRatio, pixelRatio)
+
+function addPolyline(path: Path2D, points: number[][]) {
+  for (const [index, point] of points.entries()) {
+    const px = x(point[1]!), py = y(point[2]!)
+    if (index === 0) path.moveTo(px, py)
+    else path.lineTo(px, py)
+  }
+}
+
+const roadNetwork = computed(() => {
+  const nodes = new Map(props.nodes.map(node => [node[0], node]))
+  const nodeAtGrid = (row: number, column: number) => nodes.get(row * 5 + (row % 2 === 0 ? column : 4 - column))!
+  const indices = [0, 1, 2, 3, 4]
+  const path = new Path2D()
+  // The outer loop and the middle cross are the field roads.
+  for (const lane of [0, 2, 4]) {
+    addPolyline(path, indices.map(column => nodeAtGrid(lane, column)))
+    addPolyline(path, indices.map(row => nodeAtGrid(row, lane)))
+  }
+  return path
+})
 
 function draw() {
   const context = canvas.value?.getContext('2d')
   if (!context) return
   const ctx = context
+  ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
   const line = (ax: number, ay: number, bx: number, by: number, color: string, weight = 1) => {
     ctx.strokeStyle = color; ctx.lineWidth = weight
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke()
@@ -48,28 +79,50 @@ function draw() {
     ctx.fillStyle = fill; ctx.fillRect(...box)
     if (outline) { ctx.strokeStyle = outline; ctx.lineWidth = 1; ctx.strokeRect(...box) }
   }
+  const corridor = (path: Path2D, centerColor: string, edgeColor: string, fillColor: string,
+    lineWidth: number, dash: number[] = []) => {
+    // Draw the outline on its own layer so clearing its interior preserves the field underneath.
+    const layer = corridorContext
+    const bandWidth = bodyWidth * scale
+    layer.clearRect(0, 0, width, height)
+    layer.lineJoin = 'round'
+    layer.lineCap = 'round'
+    layer.lineWidth = bandWidth
+    layer.strokeStyle = edgeColor
+    layer.stroke(path)
+    layer.globalCompositeOperation = 'destination-out'
+    layer.lineWidth = bandWidth - 2.5
+    layer.strokeStyle = '#000'
+    layer.stroke(path)
+    layer.globalCompositeOperation = 'destination-over'
+    layer.lineWidth = bandWidth
+    layer.strokeStyle = fillColor
+    layer.stroke(path)
+    layer.globalCompositeOperation = 'source-over'
+    ctx.drawImage(corridorLayer, 0, 0, width, height)
+
+    ctx.save()
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = centerColor
+    ctx.lineWidth = lineWidth
+    ctx.setLineDash(dash)
+    ctx.stroke(path)
+    ctx.restore()
+  }
 
   ctx.fillStyle = '#eef1f4'; ctx.fillRect(0, 0, width, height)
-  zone(0, 2400, 0, 2400, '#d8dadd')
+  zone(0, fieldSize, 0, fieldSize, '#d8dadd')
   for (const a of [550, 1400]) for (const b of [550, 1400]) zone(a, a + 450, b, b + 450, '#fffde2')
-  for (let mm = 480; mm < 2400; mm += 480) {
+  for (let mm = 480; mm < fieldSize; mm += 480) {
     line(x(mm), top, x(mm), bottom, '#aeb4ba')
-    line(left, y(mm), x(2400), y(mm), '#aeb4ba')
+    line(left, y(mm), x(fieldSize), y(mm), '#aeb4ba')
   }
-  ctx.setLineDash([8, 8])
-  line(x(1200), top, x(1200), bottom, '#747b82')
-  line(left, y(1200), x(2400), y(1200), '#747b82')
-  ctx.setLineDash([])
   ctx.strokeStyle = '#384047'; ctx.lineWidth = 2; ctx.strokeRect(left, top, side, side)
   zone(0, 300, 0, 300, '#1859d1')
   zone(2100, 2400, 0, 300, '#1859d1')
   zone(910, 1490, 2250, 2400, '#cfd2d5', '#707780')
   zone(0, 150, 910, 1490, '#cfd2d5', '#707780')
 
-  for (const [id, px, py] of props.nodes) {
-    circle(x(px!), y(py!), 105 * scale, '#aeb4ba', 2)
-    label(String(id), x(px!), y(py!), 22, '#9ca3aa', true)
-  }
   function ring(px: number, py: number) {
     circle(x(px), y(py), 38 * scale, '#111', 2, '#fff')
     circle(x(px), y(py), 38 * .42 * scale, '#60666d', 1)
@@ -77,12 +130,7 @@ function draw() {
   for (const mm of [1010, 1200, 1390]) { ring(mm, 2325); ring(75, mm) }
   circle(x(2400), y(1200), 150 * scale, '#60666d', 2, '#f4f4f4')
   line(x(1100), bottom, x(1300), bottom, '#1f252a', 6)
-  for (const [px, py, name] of [
-    [2250, 150, '启停区1'], [150, 150, '启停区2'], [2350, 1500, '原料区'],
-    [1200, 2180, '暂存区'], [210, 1100, '粗加工区'], [1200, 80, '二维码板'],
-  ] as const) label(name, x(px), y(py), 13, '#111', true)
-
-  for (let mm = 0; mm <= 2400; mm += 300) {
+  for (let mm = 0; mm <= fieldSize; mm += 300) {
     const major = mm % 600 === 0
     const tick = major ? 8 : 5
     line(x(mm), bottom, x(mm), bottom + tick, '#384047')
@@ -92,44 +140,40 @@ function draw() {
       label(String(mm), left - 12, y(mm), 10, '#343a40', false, 'right')
     }
   }
-  label('场地总尺寸：2400 × 2400 mm    小车：300 × 300 mm', left, top - 28, 13, '#343a40', true, 'left')
-  label('X 坐标 / mm（向右增大）', x(1200), bottom + 41, 12, '#343a40')
-  ctx.save(); ctx.translate(left - 54, y(1200)); ctx.rotate(-Math.PI / 2)
+  label(`场地 ${fieldSize} × ${fieldSize} mm    车宽 ${bodyWidth} mm`, left, top - 28, 13, '#343a40', true, 'left')
+  label('X 坐标 / mm（向右增大）', x(center), bottom + 41, 12, '#343a40')
+  ctx.save(); ctx.translate(left - 54, y(center)); ctx.rotate(-Math.PI / 2)
   label('Y 坐标 / mm（向上增大）', 0, 0, 12, '#343a40'); ctx.restore()
 
-  if (props.preview?.length) {
-    ctx.beginPath()
-    props.preview.forEach((point, i) => {
-      if (i) ctx.lineTo(x(point[1]!), y(point[2]!))
-      else ctx.moveTo(x(point[1]!), y(point[2]!))
-    })
-    ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2; ctx.stroke()
+  corridor(roadNetwork.value, '#677684', '#7e8e9c', '#aabacb57', 1, [4, 4])
+  if (props.preview && props.preview.length >= 2) {
+    const path = new Path2D()
+    addPolyline(path, props.preview)
+    corridor(path, '#2563eb', '#507bb6', '#2563eb26', 2)
   }
-
-  const route = props.route?.map(id => props.nodes.find(node => node[0] === id))
-  if (route?.length && route.every(point => point !== undefined)) {
-    const color = props.routeActive ? '#087e72' : '#537c76'
-    ctx.beginPath()
-    route.forEach((point, index) => {
-      const px = x(point![1]!), py = y(point![2]!)
-      if (index === 0) ctx.moveTo(px, py)
-      else ctx.lineTo(px, py)
-    })
-    ctx.strokeStyle = color; ctx.lineWidth = 4
-    if (!props.routeActive) ctx.setLineDash([7, 5])
-    ctx.stroke(); ctx.setLineDash([])
-    for (const point of route) {
-      const [id, px, py] = point!
-      circle(x(px!), y(py!), 11, color, 2, '#eef8f5')
-      label(String(id), x(px!), y(py!), 11, '#164b45', true)
-    }
+  const route = props.route?.map(id => props.nodes.find(node => node[0] === id)) ?? []
+  const routeColor = props.routeActive ? '#087e72' : '#537c76'
+  if (route.length >= 2 && route.every(point => point !== undefined)) {
+    const path = new Path2D()
+    addPolyline(path, route)
+    corridor(path, routeColor, '#418277', '#0c8e772c', 3, props.routeActive ? [] : [7, 5])
+  }
+  for (const [px, py, name] of [
+    [2250, 150, '启停区1'], [150, 150, '启停区2'], [2350, 1500, '原料区'],
+    [1200, 2180, '暂存区'], [210, 1100, '粗加工区'], [1200, 80, '二维码板'],
+  ] as const) label(name, x(px), y(py), 13, '#111', true)
+  for (const [id, px, py] of props.nodes) {
+    const onRoute = props.route?.includes(id!)
+    circle(x(px!), y(py!), 11, onRoute ? routeColor : '#727e86', onRoute ? 2 : 1.2,
+      onRoute ? '#eef8f5' : '#f4f6f7')
+    label(String(id), x(px!), y(py!), 11, onRoute ? '#164b45' : '#384047', true)
   }
 
   function robot(pose: number[], target = false) {
     const [px, py, heading, high = 0, length = 0, turret = 0, pawl = 0] = pose as [number, number, number, ...number[]]
     const color = target ? '#e67e22' : '#145a86'
     ctx.save(); ctx.translate(x(px), y(py)); ctx.rotate(-radians(heading))
-    const half = 150 * scale
+    const half = bodyWidth * scale / 2
     if (!target) {
       ctx.fillStyle = '#4f9dd9'; ctx.fillRect(-half, -half, half * 2, half * 2)
     }
@@ -182,7 +226,7 @@ function draw() {
     const [px, py] = pointer
     ctx.setLineDash([6, 4])
     line(x(px), top, x(px), bottom, '#d9342b')
-    line(left, y(py), x(2400), y(py), '#d9342b')
+    line(left, y(py), x(fieldSize), y(py), '#d9342b')
     ctx.setLineDash([])
     const node = nodeAt(px, py)
     const boxX = x(px) + (px > 1450 ? -192 : 10)
@@ -201,7 +245,7 @@ function position(event: MouseEvent): [number, number] | undefined {
   const rect = canvas.value!.getBoundingClientRect()
   const px = ((event.clientX - rect.left) / rect.width * width - left) / scale
   const py = (bottom - (event.clientY - rect.top) / rect.height * height) / scale
-  if (px >= 0 && px <= 2400 && py >= 0 && py <= 2400) return [px, py]
+  if (px >= 0 && px <= fieldSize && py >= 0 && py <= fieldSize) return [px, py]
 }
 function hover(event?: PointerEvent) {
   pointer = event?.pointerType === 'mouse' ? position(event) : undefined
@@ -219,7 +263,8 @@ watch(() => [props.pose, props.target, props.nodes, props.preview, props.route, 
 </script>
 
 <template>
-  <canvas ref="canvas" :width="width" :height="height" aria-label="2400 毫米场地图。点击选取目标，可在姿态页输入坐标"
+  <canvas ref="canvas" :width="Math.round(width * pixelRatio)" :height="Math.round(height * pixelRatio)"
+    :aria-label="`${fieldSize} 毫米场地图。点击选取目标，可在姿态页输入坐标`"
     @pointermove="hover" @pointerleave="hover()" @click="pick" />
 </template>
 

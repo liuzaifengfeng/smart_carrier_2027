@@ -263,6 +263,22 @@ void lidarPoses() {
         assert(p.steps[1].turret==(zone==1?-45:45)&&p.steps[1].speed==200);
     }
 }
+void cornerPoses() {
+    currentArm.high=85;
+    for(uint8_t zone:{1,2}) {
+        MotionRequest r;r.kind=MotionKind::ARM_POSE;r.observation=ArmObservation::LOOK4;r.zone=zone;
+        motion::Program p;assert(!BuildArmProgram(r,p)&&p.count==2);
+        const auto &lift=p.steps[0];
+        assert(lift.high==170&&lift.length==-1&&lift.turret==-1&&lift.pawl==-1&&lift.waitMs==750);
+        const auto &ready=p.steps[1];
+        assert(ready.high==-1&&ready.turret==(zone==1?270:90)&&ready.length==(zone==1?150:0)&&ready.pawl==80);
+        assert(ready.turretArrival&&ready.lengthArrival&&ready.allowStoppedLengthArrival==(zone==2));
+        currentPose.theta=180;
+        r.kind=MotionKind::HOME_OBSERVE;r.armPrepared=true;
+        assert(!BuildArmProgram(r,p)&&p.count==1);
+        assert(p.steps[0].kind==motion::StepKind::POSITION&&p.steps[0].turret==90);
+    }
+}
 void poses() {
     for(auto pose:{ArmObservation::START,ArmObservation::LOOK,ArmObservation::LOOK2,ArmObservation::LOOK3}) {
         MotionRequest r;r.kind=MotionKind::ARM_POSE;r.observation=pose;
@@ -284,7 +300,7 @@ void poses() {
     }
     currentArm.high=0;
     MotionRequest r;r.kind=MotionKind::HOME_OBSERVE;r.zone=2;motion::Program p;assert(!BuildArmProgram(r,p));
-    assert(p.steps[0].kind==motion::StepKind::POSITION&&p.steps[p.count-1].turret==135);
+    assert(p.steps[0].kind==motion::StepKind::POSITION&&p.steps[p.count-1].turret==90);
     r.armPrepared=true;assert(!BuildArmProgram(r,p));
     assert(p.count==1&&p.steps[0].kind==motion::StepKind::POSITION); // 已提前 LOOK4，只保留航向修正。
     r.kind=MotionKind::HOME_RETURN;r.zone=1;assert(!BuildArmProgram(r,p));
@@ -335,7 +351,7 @@ void registry() {
     assert(entries[248].name=="圆环纠偏/X死区(px)"&&entries[248].address==&ring::configuredDeadzone().x);
     assert(entries[249].name=="圆环纠偏/Y死区(px)"&&entries[249].address==&ring::configuredDeadzone().y);
     assert(entries[250].name=="圆环纠偏/超时(ms)"&&entries[250].address==&ring::configuredTimeoutMs());
-    assert(entries[250].minimum==0&&entries[250].integer&&ring::configuredTimeoutMs()==3000);
+    assert(entries[250].minimum==0&&entries[250].integer&&ring::configuredTimeoutMs()==2000);
 }
 int main(int argc,char **argv) {
     assert(argc==2);
@@ -391,6 +407,6 @@ int main(int argc,char **argv) {
     }
     if(!strcmp(argv[1],"forward"))forward();else if(!strcmp(argv[1],"reverse"))reverse();
     else if(!strcmp(argv[1],"rounds"))rounds();else if(!strcmp(argv[1],"discs"))discs();
-    else if(!strcmp(argv[1],"poses"))poses();else if(!strcmp(argv[1],"lidar"))lidarPoses();
+    else if(!strcmp(argv[1],"corner"))cornerPoses();else if(!strcmp(argv[1],"poses"))poses();else if(!strcmp(argv[1],"lidar"))lidarPoses();
     else if(!strcmp(argv[1],"registry"))registry();else assert(false);
 }

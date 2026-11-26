@@ -1,5 +1,7 @@
 #pragma once
 
+constexpr float HOME_ZONE_HEADING = 270.0f; // 两个启停区返家时的地图航向。
+
 // 输入航向已归一化到 [0,360)，只规划车身前后直行及原地转向。
 /**
  * @brief 计算节点航向规划使用的绝对值。

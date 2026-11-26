@@ -19,15 +19,8 @@ static bool alignmentEnabled=true,alignmentStopPending=false;
 static uint32_t alignmentGeneration=0,autoAlignmentStartedMs=1000;
 static AutoAlignmentState autoAlignmentState=AutoAlignmentState::WAITING;
 static VisionStartMode alignmentOwner=VisionStartMode::DISC;
-static float alignmentTargetHeading=NAN;
+static bool cornerXYInverted=false;
 static struct {float theta=0;} currentPose;
-static int headingCalibrations=0;
-static float calibratedHeading=0;
-static const char *calibrationError=nullptr;
-const char *H30UsbCalibrateHeading(float heading,bool keepReferenceOnFailure) {
-    assert(keepReferenceOnFailure);++headingCalibrations;calibratedHeading=heading;
-    return calibrationError;
-}
 static const char *visionNames[]={"DISC","DISC_MATERIAL","WORK_AREA","WORK_AREA_LOADED","CORNER"};
 #include "disc_alignment_timing_actual.inc"
 constexpr uint32_t ALIGN_FEEDBACK_TIMEOUT_MS=300,ALIGN_LOG_INTERVAL_MS=500;
@@ -48,10 +41,9 @@ bool AlignToVisionContinuous(VisionStartMode,float,float,float,float,uint16_t);
 #include "disc_tick_actual.inc"
 
 static void start(VisionStartMode mode=VisionStartMode::DISC){
-    ++alignmentGeneration;alignmentOwner=mode;alignmentEnabled=true;alignmentStopPending=false;
+    ++alignmentGeneration;alignmentOwner=mode;alignmentEnabled=true;alignmentStopPending=false;cornerXYInverted=false;
     autoAlignmentState=AutoAlignmentState::WAITING;autoAlignmentStartedMs=clockMs;
     imuHeading=90;imuError=nullptr;imuReads=0;queued=false;ResetDiscAlignmentPid();ResetAlignmentWait();
-    alignmentTargetHeading=NAN;headingCalibrations=0;calibrationError=nullptr;
 }
 static void feed(float visualAngle=0,float x=0,float y=0){
     clockMs+=50;pending={visualAngle,x,y,pending.sequence+1};queued=true;TickVisualAlignment();
@@ -99,6 +91,14 @@ int main(){
         feed();assert(autoAlignmentState==AutoAlignmentState::WAITING);
         feed();assert(autoAlignmentState==AutoAlignmentState::DONE);
     }
+    start(VisionStartMode::CORNER);
+    feed(10,40,-30);
+    assert(outputX>0&&outputY<0&&outputRotation<0);
+    start(VisionStartMode::CORNER);
+    cornerXYInverted=true;
+    feed(10,40,-30);
+    assert(outputX<0&&outputY>0&&outputRotation<0); // 仅视觉XY取反。
+
     // 5秒超时必须停车，只有新鲜且接近的误差可以继续。
     start();for(int i=0;i<10;++i)TickVisualAlignment();assert(imuReads==0);
     alignmentEnabled=false;feed(100);assert(imuReads==0);
@@ -128,22 +128,20 @@ int main(){
     assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::FAILED&&outputSpeed==0);
     assert(Serial.text.find("{EVT,VISION,ALIGN_RESULT,DISC,TIMEOUT_ERROR,1,NA,12.000,-34.000}")!=std::string::npos);
 
-    for(float idealHeading:{270.0f,180.0f}) {
-        start(VisionStartMode::WORK_AREA);alignmentTargetHeading=idealHeading;currentPose.theta=idealHeading+4;
-        feed(10);assert(headingCalibrations==0);
+    for(auto mode:{VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA_LOADED}) {
+        start(mode);
+        currentPose.theta=mode==VisionStartMode::WORK_AREA?274.0f:184.0f;
+        const float before=currentPose.theta;
+        Serial.text.clear();
         for(int i=0;i<6;++i)feed();
-        assert(headingCalibrations==1&&calibratedHeading==idealHeading&&currentPose.theta==idealHeading);
-        assert(autoAlignmentState==AutoAlignmentState::DONE);
+        assert(autoAlignmentState==AutoAlignmentState::DONE&&currentPose.theta==before);
+        assert(Serial.text.find("{EVT,IMU,REFERENCE,")==std::string::npos);
     }
     for(auto mode:{VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA_LOADED}) {
-        start(mode);alignmentTargetHeading=180;currentPose.theta=184;
+        start(mode);currentPose.theta=184;
         clockMs=autoAlignmentStartedMs+4900;feed(0,mode==VisionStartMode::WORK_AREA?1.25f:3.25f,0);
         clockMs=autoAlignmentStartedMs+5000;TickVisualAlignment();
         const auto expected=mode==VisionStartMode::WORK_AREA?AutoAlignmentState::DONE:AutoAlignmentState::FAILED;
-        assert(autoAlignmentState==expected&&headingCalibrations==0&&currentPose.theta==184);
+        assert(autoAlignmentState==expected&&currentPose.theta==184);
     }
-
-    start(VisionStartMode::WORK_AREA_LOADED);alignmentTargetHeading=180;calibrationError="STALE";
-    for(int i=0;i<6;++i)feed();
-    assert(autoAlignmentState==AutoAlignmentState::DONE&&headingCalibrations==1&&currentPose.theta==184);
 }

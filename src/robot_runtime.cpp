@@ -70,9 +70,9 @@ VisionStartMode alignmentOwner = VisionStartMode::NONE; // 受运动锁保护。
 volatile bool alignmentEnabled = false;
 bool alignmentStopPending=false;
 AutoAlignmentState autoAlignmentState = AutoAlignmentState::IDLE;
+static bool cornerXYInverted=false; // 与对齐模式共用运动锁。
 uint32_t autoAlignmentStartedMs = 0;
 uint32_t alignmentGeneration = 0; // 受运动锁保护，丢弃跨启停周期的已出队帧。
-static float alignmentTargetHeading=NAN; // 仅正式工位对齐提供，和视觉会话共用运动锁。
 
 namespace {
 /** @brief 对齐或圆盘识别任一开启时补光10%，全部关闭时关灯。 */
@@ -124,9 +124,10 @@ AutoAlignmentState getAutoAlignmentState() {
  * @param automatic 是否属于自动比赛对齐。
  * @param owner 拥有该次对齐的视觉模式。
  * @param onlyOwner 是否仅允许匹配拥有者关闭。
+ * @param invertCornerXY 正式返家启停区2时反转角点视觉XY输入。
  */
 void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic, VisionStartMode owner, bool onlyOwner,
-    float headingOnAlignment) {
+    bool invertCornerXY) {
     if (xAlignmentMotionMutex != NULL
             && xSemaphoreTake(xAlignmentMotionMutex, portMAX_DELAY) == pdTRUE) {
         // 结束旧定位功能不能停止随后开启的另一种定位或手动连续对齐。
@@ -153,7 +154,7 @@ void setAlignmentEnabled(bool enable, bool acknowledge, bool automatic, VisionSt
         alignmentStopPending=alignmentStopPending||alignmentEnabled||enable;
         alignmentEnabled = false;
         alignmentOwner = enable ? owner : VisionStartMode::NONE;
-        alignmentTargetHeading=enable?headingOnAlignment:NAN;
+        cornerXYInverted=enable&&owner==VisionStartMode::CORNER&&invertCornerXY;
         ++alignmentGeneration;
         if (xAlignmentQueue != NULL) xQueueReset(xAlignmentQueue);
         ResetDiscAlignmentPid();
@@ -291,27 +292,21 @@ void TickVisualAlignment() {
         if(!headingError&&discHeadingUnavailable)Serial.println("{EVT,VISION,DISC_HEADING,OK}");
         discHeadingUnavailable=headingError!=nullptr;
     }
+    const float visualX=cornerXYInverted?-alignment.visualX:alignment.visualX;
+    const float visualY=cornerXYInverted?-alignment.visualY:alignment.visualY;
     bool aligned=false;
     if(headingError) {
         // 不沿用旧角度或退回摄像头角度；零角差复位角度PID，X/Y仍使用当前视觉反馈。
-        AlignToVisionContinuous(mode,0.0f,alignment.visualX,alignment.visualY,dt,ALIGN_PID_MAX_SPEED_RPM);
+        AlignToVisionContinuous(mode,0.0f,visualX,visualY,dt,ALIGN_PID_MAX_SPEED_RPM);
         ResetAlignmentWait();
     } else {
-        aligned=WaitForAlignment(mode,angleError,alignment.visualX,alignment.visualY,dt,ALIGN_PID_MAX_SPEED_RPM);
+        aligned=WaitForAlignment(mode,angleError,visualX,visualY,dt,ALIGN_PID_MAX_SPEED_RPM);
     }
     hasFeedback=true;
     lastAngleError=headingError?NAN:angleError;
     lastVisualX=alignment.visualX;
     lastVisualY=alignment.visualY;
     if(aligned&&autoAlignmentState==AutoAlignmentState::WAITING) {
-        if(isfinite(alignmentTargetHeading)) {
-            if(const char *error=H30UsbCalibrateHeading(alignmentTargetHeading,true))
-                Serial.printf("{EVT,IMU,REFERENCE,ERR,%s}\n",error);
-            else {
-                currentPose.theta=alignmentTargetHeading;
-                Serial.printf("{EVT,IMU,REFERENCE,OK,%.3f}\n",alignmentTargetHeading);
-            }
-        }
         autoAlignmentState=AutoAlignmentState::DONE;
         reportResult("ALIGNED");
     }
@@ -357,7 +352,7 @@ bool updateDisplay(const char *commandType, const char *displayType, const char 
 
 // 主控请求机载电脑切换视觉功能；这些是单次请求，不代表视觉已启动或已对齐。
 // 顺序与 Document/serial_protocol.md 中的五种模式一致。
-static void requestVisionFunction(VisionStartMode mode, bool start,float headingOnAlignment=NAN) {
+static void requestVisionFunction(VisionStartMode mode, bool start,bool invertCornerXY=false) {
     if (mode == VisionStartMode::DISC_MATERIAL) {
         discMessageResumeRequested = false;
         discMaterialActive = start;
@@ -387,7 +382,7 @@ static void requestVisionFunction(VisionStartMode mode, bool start,float heading
     }
     // 自动流程和串口按钮共用入口：先开启底盘闭环，再请求相机反馈。
     if (VisionModeUsesAlignment(mode)) {
-        setAlignmentEnabled(start, false, start, mode, !start,headingOnAlignment);
+        setAlignmentEnabled(start, false, start, mode, !start,invertCornerXY);
     }
     if (name) Serial.printf("{EVT,VISION,%s,%s}\n", start ? "START_REQUEST" : "STOP_REQUEST", name);
 }
@@ -395,7 +390,7 @@ static void requestVisionFunction(VisionStartMode mode, bool start,float heading
 /**
  * @brief 发送开启指定视觉模式的请求，并按模式设置对齐或物料识别状态。
  */
-void requestVisionStart(VisionStartMode mode,float headingOnAlignment) { requestVisionFunction(mode,true,headingOnAlignment); }
+void requestVisionStart(VisionStartMode mode,bool invertCornerXY) { requestVisionFunction(mode,true,invertCornerXY); }
 
 // 定位功能同时结束其底盘闭环；事件不表示相机已经停止。
 /**

@@ -4,12 +4,12 @@
 #include "vision_alignment.h"
 #include "arm_motion.h"
 #include "disc_material_decision.h"
+#include "node_route_heading.h"
 #include <string.h>
 
 struct CompetitionMap {
     uint8_t scan=2,disc=14,coarse=10,temp=22,home1=4,home2=0;
-    float homeHeading=180;
-    float coarseHeading=270,tempHeading=180;
+    float homeHeading=HOME_ZONE_HEADING;
 };
 struct CompetitionIO {
     virtual ~CompetitionIO()=default;
@@ -76,7 +76,7 @@ struct CompetitionIO {
     /**
      * @brief 请求开启指定视觉功能；工位对齐与单件物料识别使用不同模式。
      */
-    virtual void visionStart(VisionStartMode mode,float headingOnAlignment=NAN)=0;
+    virtual void visionStart(VisionStartMode mode,bool invertCornerXY=false)=0;
     /**
      * @brief 读取当前自动视觉对齐的 WAITING、DONE 或 FAILED 状态。
      */
@@ -136,7 +136,6 @@ class CompetitionFlow {
     int preparedProgress=0;
     uint32_t due=0;
     bool waitingForSubmit=false,alignmentRestarted=false,observationRetried=false,discSnapshotRetried=false;
-    float alignmentHeading=NAN;
     /**
      * @brief 把对外主状态映射到内部第一个阶段；失败或完成状态映射到 INACTIVE。
      */
@@ -229,17 +228,16 @@ class CompetitionFlow {
      * @brief 检查一次视觉对齐结果；结束时关闭视觉，失败时转入 ALIGN_FAILED。
      * @return true 对齐 DONE；false 仍在等待或已经失败。
      */
-    void beginAlignment(VisionStartMode mode,float heading=NAN) {
+    void beginAlignment(VisionStartMode mode) {
         alignmentRestarted=false;
-        alignmentHeading=heading;
-        io.visionStart(mode,heading);
+        io.visionStart(mode,mode==VisionStartMode::CORNER&&homeZone==2);
     }
     bool aligned(VisionStartMode mode) {
         const auto result=io.visionStatus();if(result==AutoAlignmentState::WAITING)return false;
         io.visionStop(mode); // 对齐已结束，关闭该模式的视觉控制。
         if(result==AutoAlignmentState::IDLE&&!alignmentRestarted) {
             alignmentRestarted=true;
-            io.visionStart(mode,alignmentHeading);
+            io.visionStart(mode,mode==VisionStartMode::CORNER&&homeZone==2);
             return false;
         }
         if(result!=AutoAlignmentState::DONE){io.fail(STATE_ALIGN_FAILED);return false;}
@@ -380,7 +378,7 @@ public:
             auto request=path(map.disc,map.coarse,ArmObservation::LOOK,CargoForGrabIndex(0));
             request.discDeparture=true;
             if(motion(request,STATE_ROUTE_FAILED)==1) {
-                beginAlignment(VisionStartMode::WORK_AREA,map.coarseHeading);
+                beginAlignment(VisionStartMode::WORK_AREA);
                 phase=Phase::COARSE_ALIGN;
             }
             break;
@@ -426,7 +424,7 @@ public:
         case Phase::TEMP_NAVIGATE:
             io.display(secondRound?"GO TEMP2":"GO TEMP1");
             if(motion(path(map.coarse,map.temp,ArmObservation::LOOK,CargoForGrabIndex(0)),STATE_ROUTE_FAILED)==1) { // 三件取回后去暂存区，途中提前展开 LOOK。
-                beginAlignment(tempVision,map.tempHeading);
+                beginAlignment(tempVision);
                 phase=Phase::TEMP_ALIGN;
             }
             break;

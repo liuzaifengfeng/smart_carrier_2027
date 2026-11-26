@@ -19,7 +19,8 @@ struct Step {
     uint8_t placementPosition=0; // 非零：工位放料下降结束时回读角度和伸出长度并记录偏差。
     bool planned=false;
     bool turretArrival=false; // 独立转向步骤由转盘电机实测多圈角度决定完成。
-    bool lengthArrival=false; // 装盘转向时同时检查伸缩轴到位。
+    bool lengthArrival=false; // 转向时同时检查伸缩轴到位。
+    bool allowStoppedLengthArrival=false; // 允许用伸缩轴实测位置和近零转速替代到位标志。
     bool cargoPlaceTurn=false; // 持料转向料盘使用独立的加速度配置。
     bool workPlaceLiftArrival=false; // 工位放料后抬升：实测高度误差小于10mm即继续。
     bool liftArrival=false; // 初始化抬升实测到位后，才允许后续转盘动作。

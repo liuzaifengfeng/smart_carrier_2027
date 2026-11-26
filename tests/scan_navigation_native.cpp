@@ -30,7 +30,7 @@ MotionState state;
 std::vector<float> trayAngles;
 struct {
     void issue(const motion::Step &step){
-        assert(step.kind==motion::StepKind::TRAY_ROTATE&&step.waitMs==250);
+        assert(step.kind==motion::StepKind::TRAY_ROTATE&&step.waitMs==500);
         trayAngles.push_back(step.turret);trayTravelMs=step.waitMs;
     }
 } hardware;
@@ -63,16 +63,18 @@ int main(){
     reset();now+=999;scanAtNode();assert(state==MotionState::RUNNING&&trayAngles.empty());
     taskReceived=true;scanAtNode();assert(state==MotionState::DONE&&trayAngles.empty());
 
-    reset(270);now+=1000;scanAtNode();assert(trayAngles==std::vector<float>{290});
-    taskReceived=true;now+=249;scanAtNode();assert(state==MotionState::RUNNING&&trayAngles.size()==1);
-    completeTurn();assert((trayAngles==std::vector<float>{290,270})&&state==MotionState::RUNNING);
+    reset(270);now+=1000;scanAtNode();assert(trayAngles==std::vector<float>{320});
+    taskReceived=true;now+=499;scanAtNode();assert(state==MotionState::RUNNING&&trayAngles.size()==1);
+    completeTurn();assert((trayAngles==std::vector<float>{320,270})&&state==MotionState::RUNNING);
     completeTurn();assert(state==MotionState::DONE);
 
     reset();now+=1000;scanAtNode();
-    for(size_t i=0;i<19;++i)completeTurn();
-    assert(state==MotionState::RUNNING);
+    for(size_t i=0;i<39;++i)completeTurn();
+    assert(state==MotionState::RUNNING&&stage==SCAN_SWEEP&&trayAngles.size()==40);
     completeTurn();
-    assert((trayAngles==std::vector<float>{20,0,-20,0,20,0,-20,0,20,0,-20,0,20,0,-20,0,20,0,-20,0}));
+    const float expectedRound[]={50,0,-50,0};
+    assert(trayAngles.size()==40);
+    for(size_t i=0;i<trayAngles.size();++i)assert(trayAngles[i]==expectedRound[i%4]);
     assert(state==MotionState::RUNNING&&stage==SCAN_WAIT_CODE);
     scannerFrames={"invalid"};scanAtNode();assert(state==MotionState::RUNNING);
     scannerFrames={"412+123+124+123"};scanAtNode();assert(state==MotionState::DONE);

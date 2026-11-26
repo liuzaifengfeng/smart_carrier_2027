@@ -24,6 +24,7 @@ TurretMotorPosition TurretMotorQuantizePosition(float angle);
 bool TurretMotorMoveQuantized(float angle,const TurretMotorPosition &position,uint8_t acceleration,
                              uint16_t rpm,uint32_t &commandId);
 bool TurretMotorCommandCancelled(uint32_t commandId);
+bool TurretMotorCommandActive(uint32_t commandId);
 void TurretMotorPoll();
 bool TurretMotorTracking();
 void TurretMotorCancelTrace();

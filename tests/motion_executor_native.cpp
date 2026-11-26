@@ -85,17 +85,15 @@ struct Runtime : CompetitionIO {
     }
     uint32_t lidar(uint8_t zone)override{MotionRequest r;r.kind=MotionKind::LIDAR_POSE;r.zone=zone;return submit(r);}
     MotionStatus status(uint32_t id)override{return jobs.at(id);}
-    void visionStart(VisionStartMode mode,float headingOnAlignment)override{
+    void visionStart(VisionStartMode mode,bool invertCornerXY)override{
         assert(!pending&&jobs.at(nextId).state==MotionState::DONE);
         if(mode==VisionStartMode::DISC)
             assert(requests.back().kind==MotionKind::DISC_RECORD_POSITION);
         if(mode==VisionStartMode::WORK_AREA||mode==VisionStartMode::WORK_AREA_LOADED)
             assert(requests.back().kind==MotionKind::NAVIGATE&&jobs.at(nextId).chassisDone&&jobs.at(nextId).armReady);
-        if(mode==VisionStartMode::WORK_AREA||mode==VisionStartMode::WORK_AREA_LOADED)
-            assert(headingOnAlignment==(requests.back().endNode==10?270:180));
-        else assert(isnan(headingOnAlignment));
         if(mode==VisionStartMode::CORNER)
             assert(requests.back().kind==MotionKind::HOME_OBSERVE&&requests.back().armPrepared);
+        assert(invertCornerXY==(mode==VisionStartMode::CORNER&&requests.back().zone==2));
         vision.push_back(mode);alignment=AutoAlignmentState::WAITING;visionPolls=0;
     }
     AutoAlignmentState visionStatus()override{return alignment;}
@@ -165,7 +163,7 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
         if(request.kind==MotionKind::NAVIGATE){
             ++paths;
             if(request.endNode==0||request.endNode==4) {
-                assert(request.endNode==(zone==1?4:0)&&request.observation==ArmObservation::LOOK4&&request.cargo==0);
+                assert(request.endNode==(zone==1?4:0)&&request.observation==ArmObservation::LOOK4&&request.cargo==0&&request.theta==270);
                 assert(previous==MotionKind::ARM_POSE); // 路径前 START 仍独立执行。
             } else {
                 assert(request.observation==(request.endNode==14?ArmObservation::LOOK2:ArmObservation::LOOK));

@@ -6,6 +6,8 @@
 
 using namespace motion;
 namespace {
+constexpr float turretPulseDegrees=360.0f/(TURRET_MOTOR_GEAR_RATIO*TURRET_MOTOR_PULSES_PER_REV);
+
 bool readServoAngle(uint8_t id,float &angle,uint32_t timeoutMs=50) {
     return Servo_QueryAngleMTurn(id,angle,timeoutMs)||Servo_QueryAngleMTurn(id,angle,timeoutMs);
 }
@@ -81,7 +83,7 @@ const char *MotionHardware::issue(const Step &s) {
         if(const char *error=readExtension(length))return error;
         if(!ReadArmTurretAngle(turret))return "MOTOR_READ";
         // 转台四舍五入，伸缩脉冲向下取整。给脉冲换算留出向内的余量。
-        constexpr float halfTurretPulse=180.0f/(TURRET_MOTOR_GEAR_RATIO*TURRET_MOTOR_PULSES_PER_REV);
+        constexpr float halfTurretPulse=turretPulseDegrees*.5f;
         ringMinTurret=fmaxf(TURRET_CABLE_MIN_DEG,turret-ring::MAX_TURRET_CORRECTION_DEG)+halfTurretPulse;
         ringMaxTurret=fminf(TURRET_CABLE_MAX_DEG,turret+ring::MAX_TURRET_CORRECTION_DEG)-halfTurretPulse;
         const float minLength=length-ring::MAX_EXTENSION_CORRECTION_MM;
@@ -166,18 +168,34 @@ const char *MotionHardware::correctRing(const Step &s,bool &done) {
     }
     float turret=0;
     if(!ReadArmTurretAngle(turret))return "MOTOR_READ";
-    const float angle=turret-ringX.update(frame.x,dt,ringSettings.turret);
-    const float targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,angle));
+    const float correction=-ringX.update(frame.x,dt,ringSettings.turret);
+    float targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,turret+correction));
     // 保留原规划发令前的实测范围检查和 Y 轴先下发的顺序。
     if(!ReadArmTurretAngle(turret)||!MoveArm(-1,targetLength,-1,-1,s.speed,TURRET_ACCELERATION_SLOW))
         return "EXECUTION";
-    const auto position=TurretMotorQuantizePosition(targetTurret);
+    auto position=TurretMotorQuantizePosition(targetTurret);
+    const auto current=TurretMotorQuantizePosition(turret);
+    const auto signedPulses=[](const TurretMotorPosition &p) -> int64_t {
+        return p.direction==TURRET_MOTOR_POSITIVE_DIR?int64_t(p.pulses):-int64_t(p.pulses);
+    };
+    if(signedPulses(position)==signedPulses(current)) {
+        if(correction==0)return nullptr;
+        const bool positive=correction>0;
+        const int64_t next=signedPulses(current)+(positive?1:-1);
+        const float limit=positive?ringMaxTurret:ringMinTurret;
+        const int64_t limitPulses=signedPulses(TurretMotorQuantizePosition(limit));
+        if(positive?next>limitPulses:next<limitPulses)return nullptr;
+        position={static_cast<uint8_t>(next<0?1-TURRET_MOTOR_POSITIVE_DIR:TURRET_MOTOR_POSITIVE_DIR),
+                  static_cast<uint32_t>(next<0?-next:next)};
+        targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,turret+copysignf(turretPulseDegrees,correction)));
+    }
     if(lastRingXCommand.id&&TurretMotorCommandCancelled(lastRingXCommand.id))lastRingXCommand={};
     if(fabsf(frame.x)<=ring::RING_X_FINE_PX&&lastRingXCommand.id) {
         const auto &previous=lastRingXCommand.position;
         const bool samePulse=position.pulses==previous.pulses&&
             (!position.pulses||position.direction==previous.direction);
-        if(now()-lastRingXCommand.sentAtMs<ring::RING_X_FINE_SEND_MS||samePulse)return nullptr;
+        if(now()-lastRingXCommand.sentAtMs<ring::RING_X_FINE_SEND_MS||
+           (samePulse&&TurretMotorCommandActive(lastRingXCommand.id)))return nullptr;
     }
     uint32_t commandId=0;
     if(!TurretMotorMoveQuantized(targetTurret,position,ring::TURRET_CORRECTION_ACCELERATION,
@@ -234,7 +252,8 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
             node_position::Motor state;
             const char *error=ReadMotorFeedback(6,state);if(error)return error;
             const double length=fabs(static_cast<double>(state.position))*3200/65536/LENGTH_PULSE;
-            done=(state.flags&2)&&fabs(length-s.length)<=1.0;
+            const bool stoppedAtTarget=s.allowStoppedLengthArrival&&(state.flags&1)&&abs(state.rpm)<=3;
+            done=((state.flags&2)||stoppedAtTarget)&&fabs(length-s.length)<=1.0;
         }
         if(done)Serial.printf("{EVT,MOTION,TURRET_ARRIVED,%lu,%.3f,%.3f}\n",
             static_cast<unsigned long>(job),turretTarget,measured);

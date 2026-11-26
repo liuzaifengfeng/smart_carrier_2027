@@ -19,7 +19,7 @@ inline uint32_t &requiredStableFrames() {
 }
 
 inline uint32_t &configuredTimeoutMs() {
-    static uint32_t value = 3000;
+    static uint32_t value = 2000;
     return value;
 }
 
@@ -37,8 +37,8 @@ struct Gains {
 };
 
 struct Settings {
-    Gains turret{0.033f, 0.004f, 0}; // X 像素 → 转台角度修正（deg）
-    Gains extension{0.055f, 0.014f, 0}; // Y 像素 → 伸缩位移修正（mm）
+    Gains turret{0.035f, 0.026f, 0}; // X 像素 → 转台角度修正（deg）
+    Gains extension{0.030f, 0.025f, 0}; // Y 像素 → 伸缩位移修正（mm）
 };
 
 struct Frame {

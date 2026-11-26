@@ -18,6 +18,8 @@ uint16_t trayPower=0;
 bool trayHeld=false;
 uint8_t flags=3;
 bool motorAtTarget=true;
+float extensionFeedbackMm=20;
+int16_t extensionFeedbackRpm=0;
 bool customMotor=false;
 int64_t customPosition=0;
 const char *motorError=nullptr;
@@ -28,8 +30,9 @@ uint16_t issuedRamp=0;bool issuedSlowLower=false;
 uint8_t issuedLengthAcceleration=0;
 uint8_t issuedSlowLowerAcceleration=0;
 uint16_t issuedTurretRpm=0;
-uint32_t turretCommands=0,cancelledTurretCommand=0;
+uint32_t turretCommands=0,cancelledTurretCommand=0,activeTurretCommand=0;
 bool turretSendFails=false;
+TurretMotorPosition issuedTurretPosition{};
 uint32_t millis(){return clockMs;}
 volatile bool taskMotionAborted=false;
 uint32_t ARM_FEEDBACK_ENABLED=0,ARM_GRIP_HOLD_MS=0,ARM_RELEASE_HOLD_MS=0;
@@ -45,15 +48,18 @@ TurretMotorPosition TurretMotorQuantizePosition(float angle) {
     return {static_cast<uint8_t>(angle<0?0:1),
         static_cast<uint32_t>(lroundf(fabsf(angle)*TURRET_MOTOR_PULSES_PER_REV/360.0f))};
 }
-bool TurretMotorMoveQuantized(float angle,const TurretMotorPosition &,uint8_t ramp,uint16_t rpm,uint32_t &id) {
+bool TurretMotorMoveQuantized(float angle,const TurretMotorPosition &position,uint8_t ramp,uint16_t rpm,uint32_t &id) {
     if(turretSendFails)return false;
     id=++turretCommands;
+    activeTurretCommand=id;
+    issuedTurretPosition=position;
     issuedTurret=angle;
     issuedRamp=ramp;
     issuedTurretRpm=rpm;
     return true;
 }
 bool TurretMotorCommandCancelled(uint32_t id){return id==cancelledTurretCommand;}
+bool TurretMotorCommandActive(uint32_t id){return id==activeTurretCommand;}
 bool BeginPositionMove(float,float,float,float,uint8_t){++issued;return true;}
 void TickPositionMove(){}
 bool PositionMoveActive(){return false;}
@@ -75,7 +81,8 @@ bool Servo_QueryAngleMTurn(uint8_t id,float &angle,uint32_t){
 const char *ReadMotorFeedback(uint8_t id,node_position::Motor &state) {
     if(customMotor){assert(id==5);state.flags=flags;state.position=customPosition;return motorError;}
     state.flags=flags;
-    const float target=id==5?100:20,ppm=id==5?HEIGHT_PULSE:LENGTH_PULSE;
+    const float target=id==5?100:extensionFeedbackMm,ppm=id==5?HEIGHT_PULSE:LENGTH_PULSE;
+    if(id==6)state.rpm=extensionFeedbackRpm;
     state.position=llround((target+(motorAtTarget?0:10))*ppm*65536/3200);return nullptr;
 }
 int placementReads=0;
@@ -192,6 +199,18 @@ void turretArrival() {
     assert(!hardware.ready(s,done)&&done);
     servoAvailable=false;assert(hardware.ready(s,done));servoAvailable=true;
     stop=true;assert(hardware.ready(s,done));stop=false;
+
+    s.name="LOOK4_READY";s.turret=90;s.length=0;s.allowStoppedLengthArrival=true;
+    currentArm.turret_angle=turretMeasured=90;
+    flags=1;extensionFeedbackMm=0;extensionFeedbackRpm=0;
+    assert(!hardware.issue(s));
+    assert(!hardware.ready(s,done)&&done); // 已缩到0且停稳，但驱动未置到位标志。
+    extensionFeedbackRpm=8;
+    assert(!hardware.ready(s,done)&&!done);
+    extensionFeedbackRpm=0;extensionFeedbackMm=2;
+    assert(!hardware.ready(s,done)&&!done);
+    extensionFeedbackMm=0;flags=0;
+    assert(!hardware.ready(s,done)&&!done);
 }
 void feedback() {
     MotionHardware hardware;hardware.configure(1,cancelled);
@@ -291,25 +310,25 @@ void ringCorrection() {
     frame.y=-4;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==3&&issuedTurret==-1);
-    assert(fabsf(issuedLength-71.28f)<0.002f);
+    assert(fabsf(issuedLength-71.38f)<0.002f);
     frame.y=4;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==4&&issuedTurret==-1);
-    assert(fabsf(issuedLength-71.72f)<0.002f);
+    assert(fabsf(issuedLength-71.62f)<0.002f);
     frame.x=4;
     frame.y=0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==5&&issuedLength==-1);
-    assert(fabsf(issuedTurret-85.868f)<0.001f);
+    assert(fabsf(issuedTurret-85.860f)<0.001f);
     frame.x=-4;
     frame.y=-0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==6&&issuedLength==-1);
-    assert(fabsf(issuedTurret-86.132f)<0.001f);
+    assert(fabsf(issuedTurret-86.140f)<0.001f);
     frame.y=4;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==7);
-    assert(fabsf(issuedTurret-86.132f)<0.001f&&fabsf(issuedLength-71.72f)<0.002f);
+    assert(fabsf(issuedTurret-86.140f)<0.001f&&fabsf(issuedLength-71.62f)<0.002f);
     frame.x=0.5f;
     frame.y=-0.5f;
     assert(ring::withinDeadzone(frame,ring::configuredDeadzone()));
@@ -450,6 +469,23 @@ void ringFineTurret() {
     assert(!hardware.issue(hover)&&!hardware.issue(correct));
     ++token;
     assert(!feed(1,3)&&turretCommands==8); // 新令牌立即允许首条命令。
+    activeTurretCommand=0; // 转台已停稳，视觉误差仍在死区外。
+    assert(!feed(1,3)&&turretCommands==8); // 停稳后仍保留 120 ms 发令间隔。
+    assert(!feed(119,3)&&turretCommands==9); // 间隔已满，允许重发同一脉冲目标。
+    hardware.stopRingVision();
+
+    ring::input().settings(ring::Settings{});
+    turretMeasured=0;
+    assert(!hardware.issue(hover)&&!hardware.issue(correct));
+    ++token;
+    assert(!feed(0,0.5f,2)&&turretCommands==9); // X 在死区内，Y 可以继续。
+    assert(!feed(0,1)&&turretCommands==10);
+    assert(issuedTurretPosition.pulses==1&&issuedTurretPosition.direction!=TURRET_MOTOR_POSITIVE_DIR);
+    assert(fabsf(issuedTurret+0.1125f)<0.001f);
+    assert(!feed(120,-1)&&turretCommands==11);
+    assert(issuedTurretPosition.pulses==1&&issuedTurretPosition.direction==TURRET_MOTOR_POSITIVE_DIR);
+    turretMeasured=9.9f;
+    assert(!feed(120,-1)&&turretCommands==11); // 下一脉冲超出本轮纠偏范围。
     hardware.stopRingVision();
 }
 int main(int argc,char **argv) {

@@ -6,6 +6,7 @@ import { usePwa } from './pwa'
 import { useParameters } from './parameters'
 import { frame } from './commands'
 import { emptyMapTelemetry, updateMapTelemetry } from './mapTelemetry'
+import { firmwareFieldMap } from './fieldMapDefaults'
 import { phaseName } from './runDisplay'
 import CommandPanel from './components/CommandPanel.vue'
 import ParametersPanel from './components/ParametersPanel.vue'
@@ -65,12 +66,11 @@ watch(connected, value => {
     display.value = {}
   }
 })
-const mapReady = computed(() => Array.from({ length: 25 }, (_, i) => ['X', 'Y'].every(axis =>
-  model.parameters.value.some(p => p.name === `地图/节点${i}/${axis}(mm)`))).every(Boolean))
-const nodes = computed(() => Array.from({ length: 25 }, (_, i) => {
-  const row = Math.floor(i / 5); const col = row % 2 ? 4 - i % 5 : i % 5
-  return [i, ...['X', 'Y'].map((axis, index) => Number(model.parameters.value.find(p => p.name === `地图/节点${i}/${axis}(mm)`)?.value
-    ?? (index === 0 ? [320,720,1200,1680,2050][col] : [240,720,1200,1680,2020][row])))]
+const mapReady = computed(() => firmwareFieldMap.nodes.every(([id]) => ['X', 'Y'].every(axis =>
+  model.parameters.value.some(p => p.name === `地图/节点${id}/${axis}(mm)`))))
+const nodes = computed(() => firmwareFieldMap.nodes.map(([id, x, y]) => {
+  return [id, ...['X', 'Y'].map((axis, index) => Number(model.parameters.value.find(p => p.name === `地图/节点${id}/${axis}(mm)`)?.value
+    ?? [x, y][index]))]
 }))
 function gotoTarget() {
   const [x, y, heading] = commandPose.value
@@ -142,7 +142,8 @@ function pickTarget(x: number, y: number) {
         </div>
         <FieldMap :pose="pose" :target="targetVisible ? target : []" :nodes="nodes" :preview="preview"
           :route="map.routeNodes" :route-active="map.routeState === 'running'" @target="pickTarget" />
-        <p>蓝色为小车，青绿色为导航路径，橙色为目标。点击场地可选取目标坐标。</p>
+        <p>灰色为场地图路网，青绿色为导航路径，蓝线为试跑预览。边界距中心线各 {{ firmwareFieldMap.bodyWidth / 2 }} mm。</p>
+        <p>点击场地可选取目标。</p>
         <p v-if="map.arm.length">机械臂高度 / 伸出 / 转台 / 夹爪 {{ map.arm.map(n => n.toFixed(1)).join(' / ') }}</p>
         <fieldset v-if="page === '机械臂'"><legend>机械臂姿态示意</legend>
           <svg viewBox="0 0 450 220" aria-label="机械臂侧视图">
