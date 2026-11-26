@@ -15,6 +15,7 @@ int pidBaselineWrites=0,pidWrites=0;
 bool available=true,flashHasZero=false,storeAvailable=true,writeAvailable=true;
 uint16_t flashZero=0;
 int writes=0,zeroCommands=0,moves=0,transactionDepth=0;
+int velocityCommands=0,stopCommands=0;
 bool queryGap=false;
 uint8_t lastId=0,direction=0,acceleration=0;
 uint16_t speed=0;
@@ -45,6 +46,10 @@ const char *ZeroMotorEncoderPosition(uint8_t id){assert(transactionDepth>0);last
 void Emm_V5_Pos_Control(uint8_t id,uint8_t dir,uint16_t rpm,uint8_t acc,uint32_t pulses,bool ra,bool sn){
     ++moves;lastId=id;direction=dir;speed=rpm;acceleration=acc;targetPulses=pulses;absolute=ra;sync=sn;
 }
+void Emm_V5_Vel_Control(uint8_t id,uint8_t dir,uint16_t rpm,uint8_t acc,bool sn){
+    assert(id==7&&!sn);++velocityCommands;direction=dir;speed=rpm;acceleration=acc;
+}
+void Emm_V5_Stop_Now(uint8_t id,bool sn){assert(id==7&&!sn);++stopCommands;}
 #include "turret_motor_actual.inc"
 
 void snapshot(int64_t originCounts,int64_t position){
@@ -116,15 +121,13 @@ int main(){
     assert(Serial.text.find("OBSERVED")!=std::string::npos);
     assert(Serial.text.find("{EVT,TURRET,SAMPLE,")!=std::string::npos);
     assert(driverPid[2]==20000&&pidWrites==0);
-    const auto positive=TurretMotorQuantizePosition(0.12f);
-    const auto negative=TurretMotorQuantizePosition(-0.12f);
-    assert(positive.pulses==1&&negative.pulses==1&&positive.direction!=negative.direction);
-    uint32_t quantizedId=0;
-    assert(TurretMotorMoveQuantized(-0.12f,negative,160,10,quantizedId));
-    assert(quantizedId==trace.id&&direction==negative.direction&&targetPulses==negative.pulses&&absolute);
-    assert(!TurretMotorCommandCancelled(quantizedId));
-    TurretMotorCancelTrace();
-    assert(TurretMotorCommandCancelled(quantizedId));
+    assert(TurretMotorMove(-0.12f,160,10)&&targetPulses==1&&direction==0&&absolute);
+    TurretMotorSetVelocity(3,160);
+    assert(velocityCommands==1&&direction==1&&speed==3&&acceleration==160&&!TurretMotorTracking());
+    TurretMotorSetVelocity(-2,160);
+    assert(velocityCommands==2&&direction==0&&speed==2);
+    TurretMotorSetVelocity(0,160);
+    assert(stopCommands==1);
     // 官方0x43示例帧：单圈编码器与累计位置来自同一回复，位置为-65536。
     EmmFeedbackParser parser;EmmReply reply;
     const uint8_t bytes[]={7,0x43,0x1F,9,0x6B,0x67,0,3,0x43,0xEB,1,0,1,0,0,0,0,0,1,0,1,0,0,1,0,0,0,8,3,3,0x6B};

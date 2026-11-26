@@ -31,8 +31,14 @@ void MotionHardware::stopTray() {
     trayMoving=false;
 }
 
+void MotionHardware::stopRingTurret() {
+    if(!ringTurretRunning)return;
+    TurretMotorSetVelocity(0,ring::TURRET_CORRECTION_ACCELERATION);
+    ringTurretRunning=false;
+}
+
 void MotionHardware::stopRingVision() {
-    lastRingXCommand={};
+    stopRingTurret();
     if(!ringVisionActive)return;
     ring::input().close();
     ringVisionActive=false;
@@ -80,16 +86,15 @@ const char *MotionHardware::issue(const Step &s) {
         float length=0,turret=0;
         if(const char *error=readExtension(length))return error;
         if(!ReadArmTurretAngle(turret))return "MOTOR_READ";
-        // 转台四舍五入，伸缩脉冲向下取整。给脉冲换算留出向内的余量。
-        constexpr float halfTurretPulse=180.0f/(TURRET_MOTOR_GEAR_RATIO*TURRET_MOTOR_PULSES_PER_REV);
-        ringMinTurret=fmaxf(TURRET_CABLE_MIN_DEG,turret-ring::MAX_TURRET_CORRECTION_DEG)+halfTurretPulse;
-        ringMaxTurret=fminf(TURRET_CABLE_MAX_DEG,turret+ring::MAX_TURRET_CORRECTION_DEG)-halfTurretPulse;
+        const float margin=ring::TURRET_CORRECTION_CABLE_MARGIN_DEG;
+        ringMinTurret=fmaxf(TURRET_CABLE_MIN_DEG+margin,turret-ring::MAX_TURRET_CORRECTION_DEG);
+        ringMaxTurret=fminf(TURRET_CABLE_MAX_DEG-margin,turret+ring::MAX_TURRET_CORRECTION_DEG);
+        // 伸缩仍用绝对位置指令，给脉冲向下取整留出余量。
         const float minLength=length-ring::MAX_EXTENSION_CORRECTION_MM;
         ringMinLength=minLength>0?minLength+1.0f/LENGTH_PULSE:0.0f;
         ringMaxLength=fminf(170.0f,length+ring::MAX_EXTENSION_CORRECTION_MM);
         ringX=ring::Pid{};
         ringY=ring::Pid{};
-        lastRingXCommand={};
         ringHasLastFrame=false;
         ringSettings=ring::input().settings();
         ringDeadzone=ring::configuredDeadzone();
@@ -133,6 +138,13 @@ bool MotionHardware::feedback(const Step &s) {
         (s.kind==StepKind::ARM&&(s.liftArrival||s.workPlaceLiftArrival||s.turretArrival||ARM_FEEDBACK_ENABLED)&&!s.timed);
 }
 
+uint32_t MotionHardware::feedbackDelay(const Step &s) {
+    if(s.kind!=StepKind::RING_CORRECT)return SequenceIO::feedbackDelay(s);
+    if(!ringTurretRunning)return 20;
+    const int32_t remaining=static_cast<int32_t>(ringTurretStopMs-now());
+    return remaining<=0?0:remaining<20?remaining:20;
+}
+
 const char *MotionHardware::correctRing(const Step &s,bool &done) {
     ring::Frame frame;
     const bool received=ring::input().take(frame,done);
@@ -144,6 +156,8 @@ const char *MotionHardware::correctRing(const Step &s,bool &done) {
         stopRingVision();
         return nullptr;
     }
+    // 新帧重算速度，失帧时则在本次限时运行结束后停车。
+    if(received||(ringTurretRunning&&static_cast<int32_t>(now()-ringTurretStopMs)>=0))stopRingTurret();
     if(!received)return nullptr;
     if(ring::withinDeadzone(frame,ringDeadzone)) {
         ringX=ring::Pid{};
@@ -160,36 +174,41 @@ const char *MotionHardware::correctRing(const Step &s,bool &done) {
         if(const char *error=readExtension(length))return error;
         targetLength=fmaxf(ringMinLength,fminf(ringMaxLength,length+ringY.update(frame.y,dt,ringSettings.extension)));
     }
-    if(ring::withinDeadzone(frame.x,ringDeadzone.x)) {
-        ringX=ring::Pid{};
-        return MoveArm(-1,targetLength,-1,-1,s.speed,TURRET_ACCELERATION_SLOW)?nullptr:"EXECUTION";
-    }
+    if(!MoveArm(-1,targetLength,-1,-1,s.speed,TURRET_ACCELERATION_SLOW))return "EXECUTION";
+    if(ring::withinDeadzone(frame.x,ringDeadzone.x)) {ringX=ring::Pid{};return nullptr;}
+
     float turret=0;
     if(!ReadArmTurretAngle(turret))return "MOTOR_READ";
-    const float angle=turret-ringX.update(frame.x,dt,ringSettings.turret);
-    const float targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,angle));
-    // 保留原规划发令前的实测范围检查和 Y 轴先下发的顺序。
-    if(!ReadArmTurretAngle(turret)||!MoveArm(-1,targetLength,-1,-1,s.speed,TURRET_ACCELERATION_SLOW))
-        return "EXECUTION";
-    const auto position=TurretMotorQuantizePosition(targetTurret);
-    if(lastRingXCommand.id&&TurretMotorCommandCancelled(lastRingXCommand.id))lastRingXCommand={};
-    if(fabsf(frame.x)<=ring::RING_X_FINE_PX&&lastRingXCommand.id) {
-        const auto &previous=lastRingXCommand.position;
-        const bool samePulse=position.pulses==previous.pulses&&
-            (!position.pulses||position.direction==previous.direction);
-        if(now()-lastRingXCommand.sentAtMs<ring::RING_X_FINE_SEND_MS||samePulse)return nullptr;
+    currentArm.turret_angle=turret;
+    const float correction=-ringX.update(frame.x,dt,ringSettings.turret);
+    if(!isfinite(correction)) {
+        ringX=ring::Pid{};
+        return nullptr;
     }
-    uint32_t commandId=0;
-    if(!TurretMotorMoveQuantized(targetTurret,position,ring::TURRET_CORRECTION_ACCELERATION,
-                                ring::TURRET_CORRECTION_RPM,commandId)) {
-        lastRingXCommand={};
-        return "EXECUTION";
+    const float room=correction>0?ringMaxTurret-turret:turret-ringMinTurret;
+    const float travel=fminf(fabsf(correction),room);
+    if(travel<=0)return nullptr;
+
+    // 保留 PID 的角度单位。转速向上取整，以缩短运行时间实现小于 1 RPM 的平均修正。
+    const float rpmMs=travel*TURRET_MOTOR_GEAR_RATIO*1000.0f/6.0f;
+    const auto rpm=static_cast<int16_t>(fminf(ceilf(rpmMs/ring::TURRET_CORRECTION_MAX_RUN_MS),
+                                            ring::TURRET_CORRECTION_MAX_RPM));
+    const uint32_t commandAt=now();
+    const uint32_t age=commandAt-frame.timeMs;
+    if(age>=ring::TURRET_CORRECTION_MAX_RUN_MS)return nullptr;
+    uint32_t budget=ring::TURRET_CORRECTION_MAX_RUN_MS-age;
+    if(ringTimeoutMs) {
+        const uint32_t elapsed=commandAt-ringStartedMs;
+        if(elapsed>=ringTimeoutMs)return nullptr;
+        if(ringTimeoutMs-elapsed<budget)budget=ringTimeoutMs-elapsed;
     }
-    currentArm.turret_angle=targetTurret;
-    lastRingXCommand.id=commandId;
-    lastRingXCommand.sentAtMs=now();
-    lastRingXCommand.position=position;
-    return taskMotionAborted?"EXECUTION":nullptr;
+    const auto duration=static_cast<uint32_t>(fminf(rpmMs/rpm,budget));
+    if(!duration)return nullptr;
+    if(cancelled())return "STOPPED";
+    TurretMotorSetVelocity(correction>0?rpm:-rpm,ring::TURRET_CORRECTION_ACCELERATION);
+    ringTurretStopMs=commandAt+duration;
+    ringTurretRunning=true;
+    return nullptr;
 }
 /**
  * @brief 检查位置移动、转台或机械臂实测到位条件，并通过 done 返回本次结果。

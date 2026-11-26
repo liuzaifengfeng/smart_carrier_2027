@@ -17,10 +17,9 @@ class MotionHardware : public motion::SequenceIO {
     ring::Settings ringSettings;
     ring::Deadzone ringDeadzone;
     ring::Pid ringX,ringY;
-    struct {
-        uint32_t id=0,sentAtMs=0;
-        TurretMotorPosition position{};
-    } lastRingXCommand;
+    bool ringTurretRunning=false;
+    uint32_t ringTurretStopMs=0;
+    void stopRingTurret();
     const char *correctRing(const motion::Step &step,bool &done);
 public:
     /**
@@ -52,6 +51,7 @@ public:
      * @brief 判断当前步骤是否使用反馈完成；POSITION、TURRET_READY 或显式开启的机械臂反馈模式使用反馈。
      */
     bool feedback(const motion::Step &step) override;
+    uint32_t feedbackDelay(const motion::Step &step) override;
     /**
      * @brief 输出当前作业的 STEP 开始/结束日志，index 为步骤下标。
      */

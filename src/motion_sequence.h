@@ -67,6 +67,7 @@ struct SequenceIO {
      * @brief 判断该步骤应采用实际反馈还是固定等待时间来决定完成。
      */
     virtual bool feedback(const Step &step)=0;
+    virtual uint32_t feedbackDelay(const Step &){return 50;}
     /**
      * @brief 输出步骤开始或结束事件，用于日志耗时分析；begin=true 表示开始。
      */
@@ -126,7 +127,7 @@ public:
             if(!settled) {
                 bool done=false;error=io->ready(step,done);
                 if(error){finished=true;return;}
-                if(!done){due=io->now()+50;return;}
+                if(!done){due=io->now()+io->feedbackDelay(step);return;}
                 settled=true;readyAt=io->now();
             }
             if(io->now()-readyAt<step.holdMs){due=readyAt+step.holdMs;return;}

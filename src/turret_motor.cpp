@@ -10,7 +10,7 @@ bool zeroLoaded=false;
 float motorOriginAngle=0,lastMeasuredAngle=0;
 struct TurnTrace {bool active=false;uint32_t id=0,started=0,lastSample=0;uint8_t stableSamples=0;float start=0,target=0,overshoot=0;uint32_t periodMs=50,durationMs=0;};
 TurnTrace trace;
-uint32_t nextTrace=0,lastCancelledTrace=0;
+uint32_t nextTrace=0;
 void finishTrace(const char *reason) {
     Serial.printf("{EVT,TURRET,RESULT,%lu,%lu,%s,%.3f,%.3f,%.3f}\n",
         static_cast<unsigned long>(trace.id),static_cast<unsigned long>(millis()-trace.started),
@@ -69,7 +69,9 @@ static uint16_t motorRpm(float speedDegS) {
     return requestedRpm ? requestedRpm : 1; // 协议转速为整数RPM，最小非零档为1。
 }
 
-TurretMotorPosition TurretMotorQuantizePosition(float angle) {
+struct TurretMotorPosition { uint8_t direction; uint32_t pulses; };
+
+static TurretMotorPosition quantizePosition(float angle) {
     const float motorAngle = (angle-motorOriginAngle) * TURRET_MOTOR_GEAR_RATIO;
     const uint32_t pulses = static_cast<uint32_t>(fabsf(motorAngle) * TURRET_MOTOR_PULSES_PER_REV / 360.0f + 0.5f);
     const uint8_t direction = motorAngle < 0 ? 1 - TURRET_MOTOR_POSITIVE_DIR : TURRET_MOTOR_POSITIVE_DIR;
@@ -88,14 +90,17 @@ static bool moveProfile(float angle,const TurretMotorPosition &position,uint16_t
 }
 
 bool TurretMotorMove(float angle,uint8_t acceleration,uint16_t rpm) {
-    return moveProfile(angle,TurretMotorQuantizePosition(angle),rpm,acceleration,50,0);
+    return moveProfile(angle,quantizePosition(angle),rpm,acceleration,50,0);
 }
 
-bool TurretMotorMoveQuantized(float angle,const TurretMotorPosition &position,uint8_t acceleration,
-                             uint16_t rpm,uint32_t &commandId) {
-    if(!moveProfile(angle,position,rpm,acceleration,50,0))return false;
-    commandId=trace.id;
-    return true;
+void TurretMotorSetVelocity(int16_t rpm,uint8_t acceleration) {
+    TurretMotorCancelTrace();
+    if(rpm==0) {
+        Emm_V5_Stop_Now(TURRET_MOTOR_ID,false);
+        return;
+    }
+    Emm_V5_Vel_Control(TURRET_MOTOR_ID,rpm<0?1-TURRET_MOTOR_POSITIVE_DIR:TURRET_MOTOR_POSITIVE_DIR,
+                       rpm<0?-rpm:rpm,acceleration,false);
 }
 
 bool TurretMotorTrial(float angle,float speedDegS,uint16_t rampMs,uint32_t periodMs,uint32_t durationMs) {
@@ -105,7 +110,7 @@ bool TurretMotorTrial(float angle,float speedDegS,uint16_t rampMs,uint32_t perio
     // 试验页继续按每增加1RPM耗时(256-acc)*50us换算档位。
     const int step=static_cast<int>(rampMs*20.0f/rpm+0.5f);
     const uint8_t acceleration=rampMs==0?0:step<1?255:step>255?1:256-step;
-    return moveProfile(angle,TurretMotorQuantizePosition(angle),rpm,acceleration,periodMs,durationMs);
+    return moveProfile(angle,quantizePosition(angle),rpm,acceleration,periodMs,durationMs);
 }
 
 uint32_t TurretMotorNextDelay() {
@@ -131,10 +136,8 @@ bool TurretMotorSetZero(float &angle) {
 }
 
 bool TurretMotorTracking(){return trace.active;}
-bool TurretMotorCommandCancelled(uint32_t commandId){return commandId==lastCancelledTrace;}
 void TurretMotorCancelTrace(){
     if(!trace.active)return;
-    lastCancelledTrace=trace.id;
     finishTrace("CANCELLED");
 }
 void TurretMotorPoll() {

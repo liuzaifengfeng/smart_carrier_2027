@@ -28,8 +28,8 @@ uint16_t issuedRamp=0;bool issuedSlowLower=false;
 uint8_t issuedLengthAcceleration=0;
 uint8_t issuedSlowLowerAcceleration=0;
 uint16_t issuedTurretRpm=0;
-uint32_t turretCommands=0,cancelledTurretCommand=0;
-bool turretSendFails=false;
+uint32_t turretCommands=0,turretStops=0;
+int16_t turretVelocity=0;
 uint32_t millis(){return clockMs;}
 volatile bool taskMotionAborted=false;
 uint32_t ARM_FEEDBACK_ENABLED=0,ARM_GRIP_HOLD_MS=0,ARM_RELEASE_HOLD_MS=0;
@@ -41,19 +41,12 @@ bool cancelled(){return stop;}
 bool MoveArm(float,float length,float turret,float,float,uint8_t ramp,bool slowLower,uint8_t lengthAcceleration,uint8_t slowLowerAcceleration){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;issuedLengthAcceleration=lengthAcceleration;issuedSlowLowerAcceleration=slowLowerAcceleration;trayTargetAtArmIssue=trayTarget;return true;}
 void LedPwm_SetRingVisionActive(bool){}
 bool MoveArmPlanned(float,float length,float turret,float,float,uint8_t ramp,bool slowLower,uint16_t rpm){++issued;issuedLength=length;issuedTurret=turret;issuedRamp=ramp;issuedSlowLower=slowLower;issuedTurretRpm=rpm;return true;}
-TurretMotorPosition TurretMotorQuantizePosition(float angle) {
-    return {static_cast<uint8_t>(angle<0?0:1),
-        static_cast<uint32_t>(lroundf(fabsf(angle)*TURRET_MOTOR_PULSES_PER_REV/360.0f))};
-}
-bool TurretMotorMoveQuantized(float angle,const TurretMotorPosition &,uint8_t ramp,uint16_t rpm,uint32_t &id) {
-    if(turretSendFails)return false;
-    id=++turretCommands;
-    issuedTurret=angle;
+void TurretMotorSetVelocity(int16_t rpm,uint8_t ramp) {
+    if(rpm)++turretCommands;
+    else ++turretStops;
+    turretVelocity=rpm;
     issuedRamp=ramp;
-    issuedTurretRpm=rpm;
-    return true;
 }
-bool TurretMotorCommandCancelled(uint32_t id){return id==cancelledTurretCommand;}
 bool BeginPositionMove(float,float,float,float,uint8_t){++issued;return true;}
 void TickPositionMove(){}
 bool PositionMoveActive(){return false;}
@@ -286,11 +279,11 @@ void ringCorrection() {
     frame.x=1;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==2);
-    assert(issuedRamp==160&&issuedTurretRpm==10);
+    assert(issuedRamp==160&&turretVelocity==-1);
     frame.x=0;
     frame.y=-4;
     assert(ring::input().submit(1,frame));
-    assert(!hardware.ready(correct,done)&&!done&&issued==3&&issuedTurret==-1);
+    assert(!hardware.ready(correct,done)&&!done&&issued==3&&turretVelocity==0);
     assert(fabsf(issuedLength-71.28f)<0.002f);
     frame.y=4;
     assert(ring::input().submit(1,frame));
@@ -300,16 +293,16 @@ void ringCorrection() {
     frame.y=0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==5&&issuedLength==-1);
-    assert(fabsf(issuedTurret-85.868f)<0.001f);
+    assert(turretVelocity==-1);
     frame.x=-4;
     frame.y=-0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==6&&issuedLength==-1);
-    assert(fabsf(issuedTurret-86.132f)<0.001f);
+    assert(turretVelocity==1);
     frame.y=4;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==7);
-    assert(fabsf(issuedTurret-86.132f)<0.001f&&fabsf(issuedLength-71.72f)<0.002f);
+    assert(turretVelocity==1&&fabsf(issuedLength-71.72f)<0.002f);
     frame.x=0.5f;
     frame.y=-0.5f;
     assert(ring::withinDeadzone(frame,ring::configuredDeadzone()));
@@ -317,7 +310,7 @@ void ringCorrection() {
     assert(!ring::withinDeadzone(frame,ring::configuredDeadzone()));
     frame.y=-0.5f;
     assert(ring::input().submit(1,frame));
-    assert(!hardware.ready(correct,done)&&!done&&issued==7);
+    assert(!hardware.ready(correct,done)&&!done&&issued==7&&turretVelocity==0);
     frame.x=6;
     assert(ring::input().submit(1,frame));
     frame.x=0.5f;
@@ -336,21 +329,21 @@ void ringCorrection() {
     frame.y=700;
     assert(ring::input().submit(2,frame));
     assert(!hardware.ready(correct,done)&&!done);
-    assert(issuedTurret>95.9f&&issuedTurret<=96);
+    assert(turretVelocity==10);
     assert(issuedLength>91.4f&&issuedLength<=91.501f);
-    const float upperTurret=issuedTurret,upperLength=issuedLength;
+    const float upperLength=issuedLength;
 
-    turretMeasured=90;
+    turretMeasured=96;
     customPosition=llround(-80.0*LENGTH_PULSE*65536/3200);
     assert(ring::input().submit(2,frame));
     assert(!hardware.ready(correct,done)&&!done);
-    assert(issuedTurret==upperTurret&&issuedLength==upperLength);
+    assert(turretVelocity==0&&issuedLength==upperLength);
 
     frame.x=500;
     frame.y=-1000;
     assert(ring::input().submit(2,frame));
     assert(!hardware.ready(correct,done)&&!done);
-    assert(issuedTurret>=76&&issuedTurret<76.1f);
+    assert(turretVelocity==-10);
     assert(issuedLength>=51.5f&&issuedLength<51.6f);
     hardware.stopRingVision();
 
@@ -363,7 +356,7 @@ void ringCorrection() {
     frame.y=-500;
     assert(ring::input().submit(3,frame));
     assert(!hardware.ready(correct,done)&&!done);
-    assert(issuedTurret>359.9f&&issuedTurret<=360&&issuedLength==0);
+    assert(turretVelocity==4&&issuedLength==0);
     frame.x=frame.y=0;
     assert(ring::input().submit(3,frame));
     assert(ring::input().submit(3,frame));
@@ -385,11 +378,11 @@ void ringCorrection() {
     frame.x=2;
     frame.y=0.4f;
     assert(ring::input().submit(4,frame));
-    assert(!hardware.ready(correct,done)&&!done&&issuedTurret<86&&issuedLength==-1);
+    assert(!hardware.ready(correct,done)&&!done&&turretVelocity==-1&&issuedLength==-1);
     frame.x=1.5f;
     assert(ring::input().submit(4,frame));
     assert(ring::input().submit(4,frame));
-    assert(!hardware.ready(correct,done)&&done);
+    assert(!hardware.ready(correct,done)&&done&&turretVelocity==0);
     deadzone=ring::Deadzone{};
 
     ring::configuredTimeoutMs()=100;
@@ -408,7 +401,7 @@ void ringCorrection() {
     hardware.stopRingVision();
 }
 
-void ringFineTurret() {
+void ringVelocity() {
     MotionHardware hardware;
     motion::Step hover,correct;
     hover.kind=motion::StepKind::ARM;
@@ -416,44 +409,45 @@ void ringFineTurret() {
     correct.kind=motion::StepKind::RING_CORRECT;
     turretMeasured=90.0f;
     customPosition=llround(-20.0*LENGTH_PULSE*65536/3200);
-    ring::Settings settings;
-    settings.turret={0.1f,0.02f,0};
-    ring::input().settings(settings);
-    assert(!hardware.issue(hover)&&!hardware.issue(correct));
-    uint32_t token=1;
-    auto feed=[&](uint32_t interval,float x,float y=0.0f) {
-        clockMs+=interval;
-        ring::Frame frame;
-        frame.x=x;frame.y=y;frame.timeMs=clockMs;
-        assert(ring::input().submit(token,frame));
-        bool done=false;
-        const char *error=hardware.ready(correct,done);
-        assert(!done);
-        return error;
-    };
-    assert(!feed(0,1)&&turretCommands==1);
-    assert(!feed(119,3,4)&&turretCommands==1&&issuedLength>20); // X等待期间Y仍发令。
-    assert(!feed(1,2)&&turretCommands==2); // 满120 ms才使用新帧。
-    assert(fabsf(issuedTurret-(90.0f-0.2f-0.02f*(3*0.119f+2*0.001f)))<0.001f);
-    assert(!feed(120,2)&&turretCommands==2); // 目标角改变，但量化脉冲相同。
-    assert(!feed(1,4)&&!feed(1,4)&&turretCommands==4); // 大误差照常逐帧发令。
-    assert(!feed(1,3)&&turretCommands==4); // 从大误差发出的上一条也计入间隔。
-    assert(!feed(119,3)&&turretCommands==5);
-    cancelledTurretCommand=turretCommands;
-    assert(!feed(1,3)&&turretCommands==6); // 已取消的命令不参与间隔或去重。
-    turretSendFails=true;
-    assert(feed(1,4)&&turretCommands==6);
-    turretSendFails=false;
-    assert(!feed(1,3)&&turretCommands==7);
+    assert(!hardware.issue(hover));
+    motion::Program program;
+    program.append(correct);
+    motion::Sequence sequence;
+    sequence.begin(program,hardware);
+    sequence.tick();
+    assert(ring::input().submit(1,{1,4,clockMs}));
+    sequence.tick();
+    assert(turretCommands==1&&turretVelocity==-1&&issuedLength>20);
+    assert(sequence.nextDelay()==5); // 0.033 度对应约 5 ms，不被通用的 50 ms 轮询延后。
+    clockMs+=4;sequence.tick();
+    assert(turretStops==0);
+    ++clockMs;sequence.tick();
+    assert(turretStops==1&&turretVelocity==0&&sequence.active());
 
+    clockMs+=20;
+    assert(ring::input().submit(1,{-4,0,clockMs}));
+    sequence.tick();
+    assert(turretCommands==2&&turretVelocity==1);
+    hardware.stopRingVision();
+    assert(turretStops==2&&turretVelocity==0);
+
+    assert(!hardware.issue(hover)&&!hardware.issue(correct));
+    bool done=false;
+    assert(ring::input().submit(2,{4,0,clockMs}));
+    clockMs+=120;
+    assert(!hardware.ready(correct,done)&&!done&&turretCommands==2); // 陈旧帧不启动速度运动。
+    ring::configuredTimeoutMs()=100;
     hardware.stopRingVision();
     assert(!hardware.issue(hover)&&!hardware.issue(correct));
-    ++token;
-    assert(!feed(1,3)&&turretCommands==8); // 新令牌立即允许首条命令。
-    hardware.stopRingVision();
+    clockMs+=96;
+    assert(ring::input().submit(3,{100,0,clockMs}));
+    assert(!hardware.ready(correct,done)&&!done&&turretCommands==3);
+    assert(hardware.feedbackDelay(correct)==4);
+    clockMs+=4;
+    assert(!hardware.ready(correct,done)&&done&&turretVelocity==0&&turretStops==3);
 }
 int main(int argc,char **argv) {
     if(argc==2&&!strcmp(argv[1],"ring")){ringCorrection();return 0;}
-    if(argc==2&&!strcmp(argv[1],"ring-fine")){ringFineTurret();return 0;}
+    if(argc==2&&!strcmp(argv[1],"ring-velocity")){ringVelocity();return 0;}
     assert(argc==2);if(!strcmp(argv[1],"look3"))look3();else if(!strcmp(argv[1],"feedback"))feedback();else if(!strcmp(argv[1],"turret"))turretArrival();else if(!strcmp(argv[1],"lift"))liftArrival();else if(!strcmp(argv[1],"placement"))placement();else if(!strcmp(argv[1],"tray"))trayArrival();else assert(false);
 }
