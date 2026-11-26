@@ -28,7 +28,7 @@ export const operations: Record<string, Operation[]> = {
   底盘: [
     op('麦轮位置移动', 'CHASSIS', 'MOVE_POSITION', [['X / mm', '0'], ['Y / mm', '0'], ['转角 / °', '0'], ['轮速 / RPM', '80']]),
     op('方向运动', 'CHASSIS', 'MOVE', [['方向 0前 1后 2左 3右 4左转 5右转', '0'], ['RPM', '80'], ['停止 0 / 1', '0']]),
-    op('电机使能', 'ARM', 'ENABLE', [['使能 0 / 1', '1']]),
+    op('电机使能', 'ARM', 'ENABLE'),
     op('连续视觉对齐', 'VISION', 'ALIGN_START', [visionMode]),
     op('停止并清零对齐', 'VISION', 'ALIGN_STOP'),
     op('节点路径', 'NAV', 'ROUTE', [['节点（逗号分隔）', '0,1,8']]),

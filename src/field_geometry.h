@@ -34,12 +34,14 @@ inline uint32_t signature() {
  * @brief 检查指定位置、航向的整个方形车体与场地边界及障碍是否保持margin。
  * @return nullptr 几何通过，否则为BOUNDARY或OBSTACLE；距离单位mm，航向deg。
  */
-inline const char *check(float x,float y,float heading,float margin) {
+inline const char *check(float x,float y,float heading,float margin,bool checkBoundary=true) {
     const float a=heading*3.14159265358979323846f/180;
     const float fx=cosf(a),fy=sinf(a),rx=sinf(a),ry=-cosf(a),half=BODY/2;
-    const float extent=half*(fabsf(fx)+fabsf(rx));
-    if(x-extent<margin-0.001f||y-extent<margin-0.001f
-        ||x+extent>SIZE-margin+0.001f||y+extent>SIZE-margin+0.001f)return "BOUNDARY";
+    if(checkBoundary) {
+        const float extent=half*(fabsf(fx)+fabsf(rx));
+        if(x-extent<margin-0.001f||y-extent<margin-0.001f
+            ||x+extent>SIZE-margin+0.001f||y+extent>SIZE-margin+0.001f)return "BOUNDARY";
+    }
     for(const Rect &r:OBSTACLES) {
         float dx=x-(r.left+r.right)/2,dy=y-(r.bottom+r.top)/2;
         float hx=(r.right-r.left)/2+margin,hy=(r.top-r.bottom)/2+margin;

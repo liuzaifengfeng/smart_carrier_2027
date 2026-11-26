@@ -5,7 +5,7 @@ namespace node_position {
 constexpr bool MOTOR_STALL_CHECK_ENABLED=false; // 临时禁用所有底盘电机的固件堵转检查；恢复时改为true
 constexpr float PULSES_PER_REV=3200; // 要求底盘驱动配置为16细分，实车验收时核对
 constexpr double STRAIGHT_ARRIVAL_ENCODER_TOLERANCE=5000; // 每轮65536单位/圈坐标中的允许误差
-constexpr float STRAIGHT_HEADING_KP=4; // 航向偏差1度给4度/秒修正，再叠加原积分和阻尼。
+constexpr float STRAIGHT_HEADING_KP=5; // 航向偏差1度给5度/秒修正，再叠加原积分和阻尼。
 constexpr float STRAIGHT_LATERAL_KP=3; // 横向位置比例增益(1/s)：偏离10mm时给30mm/s平移修正。
 struct Settings {
     float speedMmS=2000,accelMmS2=2000,turnDegS=200,turnAccelDegS2=400,headingDeadbandDeg=1;

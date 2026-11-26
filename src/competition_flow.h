@@ -480,9 +480,9 @@ public:
             MotionRequest request;
             request.kind=MotionKind::HOME_OBSERVE;
             request.zone=homeZone;
-            request.armPrepared=true; // LOOK4 已随导航完成；保留原朝向修正。
-            if(motion(request)==1) { // 执行原返家朝向修正，复用已完成的 LOOK4。
-                beginAlignment(VisionStartMode::CORNER); // 朝向准备完成，开启角点对齐。
+            request.armPrepared=true; // LOOK4 已随导航完成。
+            if(motion(request)==1) { // 等待返家校角及区 2 右移完成。
+                beginAlignment(VisionStartMode::CORNER);
                 phase=Phase::HOME_ALIGN;
             }
             break;

@@ -91,6 +91,52 @@ void scanStartOffset() {
         assert(fabsf(turn(car.heading,config.endHeading))<settings.headingDeadbandDeg);
     }
 
+    // Leaving node 2 after backing up must account for both along-road and cross-road offsets.
+    Node departure[]={{{1180,240},0},{{1680,240},0},{{2065,240},0},{{2065,720},0},{{2065,1200},0}};
+    for(float heading:{0.0f,180.0f,270.0f}) {
+        Config config;config.count=5;config.policy=2;config.startHeading=heading;config.endHeading=90;
+        Route path;assert(!path.build(departure,config));
+        Sim car;car.heading=heading;car.location=departure[0].p+bodyToWorld({0,-100},heading);
+        Settings settings;settings.outerStraightVelocity=true;settings.alignStartToRoad=true;
+        settings.startOffset=car.location-departure[0].p;
+        Result result;assert(!run(path,settings,car,result));
+        assert(norm(car.location-departure[4].p)<3&&norm(result.estimated-departure[4].p)<3);
+    }
+
+    // Replay the offset logged after the node 2 retreat and inject small encoder fluctuations
+    // in the position move that aligns the chassis with the road.
+    struct RetreatSim : Sim {
+        unsigned disturbedReads=0;
+        const char *read(uint8_t id,Motor &motor) override {
+            const char *error=Sim::read(id,motor);
+            if(!error&&actions==1&&pending[id-1]&&motor.rpm==0) {
+                const int direction=pending[id-1]>0?1:-1;
+                motor.position=direction*((id==1||id==4)?-1:1);
+                ++disturbedReads;
+            }
+            return error;
+        }
+    } retreated;
+    Node firstRoad[]={{{1180,240}},{{1680,240}},{{2065,240}}};
+    Config retreatConfig;retreatConfig.count=3;retreatConfig.policy=2;
+    Route retreatPath;assert(!retreatPath.build(firstRoad,retreatConfig));
+    Settings retreatSettings;retreatSettings.outerStraightVelocity=true;retreatSettings.alignStartToRoad=true;
+    retreated.location={1081.41f,239.85f};
+    retreatSettings.startOffset=retreated.location-firstRoad[0].p;
+    Result retreatResult;
+    const char *retreatError=run(retreatPath,retreatSettings,retreated,retreatResult);
+    if(retreatError)fprintf(stderr,"node 2 retreat replay: %s at %.2f, %.2f\n",
+        retreatError,retreatResult.estimated.x,retreatResult.estimated.y);
+    assert(!retreatError&&retreated.disturbedReads>=4);
+    assert(norm(retreated.location-firstRoad[2].p)<3&&norm(retreatResult.estimated-firstRoad[2].p)<3);
+
+    Sim offMapEstimate;
+    offMapEstimate.location={1081.41f,144.83f};
+    retreatSettings.startOffset=offMapEstimate.location-firstRoad[0].p;
+    Result recovered;
+    assert(!run(retreatPath,retreatSettings,offMapEstimate,recovered));
+    assert(norm(recovered.estimated-firstRoad[2].p)<3);
+
     struct BypassSim : Sim {
         bool followedRoad=false;
         void wait(uint32_t ms) override {

@@ -9,7 +9,14 @@ const values = reactive(Object.fromEntries(Object.values(operations).flat().map(
 <template>
   <fieldset v-for="op in operations[page]" :key="op.action">
     <legend>{{ op.title }}</legend>
-    <form @submit.prevent="controller.send(frame(op.category, op.action, values[op.category + '/' + op.action]))">
+    <div v-if="op.category === 'ARM' && op.action === 'ENABLE'" class="actions">
+      <button type="button" :disabled="!controller.canControl.value"
+        @click="controller.send(frame(op.category, op.action, [1]))">使能</button>
+      <button type="button" :disabled="!controller.canControl.value"
+        @click="controller.send(frame(op.category, op.action, [0]))">失能</button>
+      <output>{{ controller.snapshots.value['ARM/ENABLE']?.join(' / ') }}</output>
+    </div>
+    <form v-else @submit.prevent="controller.send(frame(op.category, op.action, values[op.category + '/' + op.action]))">
       <label v-for="(field, index) in op.fields" :key="index">{{ field[0] }}
         <select v-if="field[2]" v-model="values[op.category + '/' + op.action]![index]">
           <option v-for="(label, value) in field[2]" :key="value" :value="value">{{ label }}</option>

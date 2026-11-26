@@ -5,7 +5,7 @@
 #include <mutex>
 
 namespace ring {
-constexpr float HOVER_MM = 10.0f;
+constexpr float HOVER_MM = 6.0f;
 constexpr float MAX_TURRET_CORRECTION_DEG = 10.0f;
 constexpr float MAX_EXTENSION_CORRECTION_MM = 20.0f;
 constexpr uint8_t TURRET_CORRECTION_ACCELERATION = 160;
@@ -37,7 +37,7 @@ struct Gains {
 };
 
 struct Settings {
-    Gains turret{0.055f, 0.048f, 0}; // X 像素 → 转台角度修正（deg）
+    Gains turret{0.02f, 0.047f, 0}; // X 像素 → 转台角度修正（deg）
     Gains extension{0.053f, 0.038f, 0}; // Y 像素 → 伸缩位移修正（mm）
 };
 

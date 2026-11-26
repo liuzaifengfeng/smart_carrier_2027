@@ -84,7 +84,7 @@ void place(Program &p,const MaterialStationPose &pose,float height,const Materia
     const size_t firstLower=p.count;
     if(slowLower) {
         const bool enableVision=ringCorrection&&ring::configuredTimeoutMs()!=0;
-        arm(p,"PLACE_DESCEND_10",ring::HOVER_MM,retracted?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+        arm(p,"PLACE_DESCEND_HOVER",ring::HOVER_MM,retracted?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
         Step &hover=p.steps[p.count-1];
         hover.slowLower=true;
         hover.timed=!ringCorrection;
@@ -276,10 +276,11 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
     case MotionKind::HOME_OBSERVE:
         position(p,0,0,NodeRouteTurn(currentPose.theta,HOME_ZONE_HEADING),80);
         if(!r.armPrepared)observation(p,ArmObservation::LOOK4,r.zone);
+        if(r.zone==2)position(p,150,0,0,80); // 按校角后的车身方向右移，再开启角点视觉。
         break;
     case MotionKind::HOME_RETURN: {
         observation(p,ArmObservation::START,r.zone);
-        position(p,r.zone==1?-115:-90,r.zone==1?-175:170,0,200);break;
+        position(p,r.zone==1?-115:140,r.zone==1?125:155,0,200);break;
     }
     case MotionKind::POSITION: position(p,r.x,r.y,r.theta,r.speed,r.positionAcceleration);break;
     case MotionKind::GOTO: {Step s;s.kind=StepKind::GOTO;s.name="GOTO";s.high=r.x;s.length=r.y;s.turret=r.theta;p.append(s);break;}

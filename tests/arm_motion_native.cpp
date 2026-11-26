@@ -78,19 +78,19 @@ void forward() {
         for(size_t i=0;i<p.count;++i) {
             const auto &s=p.steps[i];
             if(s.placementPosition){assert(s.placementPosition==w&&!strcmp(s.name,"PLACE_DESCEND"));++readbacks;}
-            if(!strcmp(s.name,"APPROACH_ROTATE")||!strcmp(s.name,"PICK_DESCEND")||!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_10"))assert(s.pawl==-1);
+            if(!strcmp(s.name,"APPROACH_ROTATE")||!strcmp(s.name,"PICK_DESCEND")||!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_HOVER"))assert(s.pawl==-1);
             if(!strcmp(s.name,"APPROACH_ROTATE")||!strcmp(s.name,"PLACE_ROTATE"))assert(s.turretArrival&&s.waitMs==0);
             if(!strcmp(s.name,"PLACE_ROTATE")&&w==3) {
                 assert(s.trayClearanceCargo==c&&s.trayWork3LimitCargo==0);
-                assert(!strcmp(p.steps[i+1].name,layer==1?"PLACE_DESCEND_10":"PLACE_DESCEND"));
+                assert(!strcmp(p.steps[i+1].name,layer==1?"PLACE_DESCEND_HOVER":"PLACE_DESCEND"));
                 assert(p.steps[i+1].trayWork3LimitCargo==c);
             }
             if(s.kind==motion::StepKind::ARM)assert(s.turretAcceleration==(layer==1?TURRET_ACCELERATION_SLOW:TURRET_ACCELERATION_FAST));
-            assert(s.slowLower==((!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_10"))&&layer==1));
+            assert(s.slowLower==((!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_HOVER"))&&layer==1));
             if(s.slowLower)assert(s.timed);
             if(!strcmp(s.name,"PICK_RETRACT")){assert(s.length==0);retract=true;}
-            if(!strcmp(s.name,"PLACE_DESCEND_10")){
-                assert(s.high==10&&s.waitMs==delays.placeDescendMs&&s.slowLowerAcceleration==248);
+            if(!strcmp(s.name,"PLACE_DESCEND_HOVER")){
+                assert(s.high==6&&s.waitMs==delays.placeDescendMs&&s.slowLowerAcceleration==248);
                 assert(p.steps[i+1].high==0&&p.steps[i+1].waitMs==100&&p.steps[i+1].slowLowerAcceleration==200);
             }
             if(!strcmp(s.name,"PLACE_DESCEND"))assert(near(s.high,layer==1?0:materialTransferLayout.workArea[w-1].high+(layer-1)*materialTransferLayout.secondLayerOffset));
@@ -275,8 +275,12 @@ void cornerPoses() {
         assert(ready.turretArrival&&ready.lengthArrival&&ready.lengthArrivalByPosition);
         currentPose.theta=180;
         r.kind=MotionKind::HOME_OBSERVE;r.armPrepared=true;
-        assert(!BuildArmProgram(r,p)&&p.count==1);
+        assert(!BuildArmProgram(r,p)&&p.count==(zone==1?1:2));
         assert(p.steps[0].kind==motion::StepKind::POSITION&&p.steps[0].turret==90);
+        if(zone==2) {
+            const auto &shift=p.steps[1];
+            assert(shift.kind==motion::StepKind::POSITION&&shift.high==150&&shift.length==0&&shift.turret==0&&shift.speed==80);
+        }
     }
 }
 void poses() {
@@ -300,20 +304,21 @@ void poses() {
     }
     currentArm.high=0;
     MotionRequest r;r.kind=MotionKind::HOME_OBSERVE;r.zone=2;motion::Program p;assert(!BuildArmProgram(r,p));
-    assert(p.steps[0].kind==motion::StepKind::POSITION&&p.steps[p.count-1].turret==90);
+    assert(p.count==4&&p.steps[0].kind==motion::StepKind::POSITION&&p.steps[2].turret==90);
+    assert(p.steps[3].kind==motion::StepKind::POSITION&&p.steps[3].high==150);
     r.armPrepared=true;assert(!BuildArmProgram(r,p));
-    assert(p.count==1&&p.steps[0].kind==motion::StepKind::POSITION); // 已提前 LOOK4，只保留航向修正。
+    assert(p.count==2&&p.steps[0].kind==motion::StepKind::POSITION&&p.steps[1].high==150);
     r.kind=MotionKind::HOME_RETURN;r.zone=1;assert(!BuildArmProgram(r,p));
-    assert(p.steps[p.count-1].kind==motion::StepKind::POSITION&&p.steps[p.count-1].high==-90&&p.steps[p.count-1].length==-190&&p.steps[p.count-1].speed==200);
+    assert(p.steps[p.count-1].kind==motion::StepKind::POSITION&&p.steps[p.count-1].high==-115&&p.steps[p.count-1].length==125&&p.steps[p.count-1].speed==200);
     r.zone=2;assert(!BuildArmProgram(r,p));
-    assert(p.steps[p.count-1].kind==motion::StepKind::POSITION&&p.steps[p.count-1].high==-70&&p.steps[p.count-1].length==200&&p.steps[p.count-1].speed==200);
+    assert(p.steps[p.count-1].kind==motion::StepKind::POSITION&&p.steps[p.count-1].high==140&&p.steps[p.count-1].length==155&&p.steps[p.count-1].speed==200);
     // 同步入口同样采用第一层放料全程慢、圆盘全程快。
     cargoPlatforms[0].material=MATERIAL_RED;issuedArm.clear();
     assert(MoveCargoToWorkArea(1,1));
     assert(issuedArm[1].turretAcceleration==TURRET_ACCELERATION_SLOW);
     assert(issuedArm[6].turretAcceleration==TURRET_ACCELERATION_SLOW);
     assert(issuedArm[7].slowLower);
-    assert(issuedArm[7].high==10&&issuedArm[7].pawl==-1&&issuedArm[8].high==0&&issuedArm[8].slowLower);
+    assert(issuedArm[7].high==6&&issuedArm[7].pawl==-1&&issuedArm[8].high==0&&issuedArm[8].slowLower);
     assert(issuedArm[9].pawl==0&&issuedArm[10].pawl==materialTransferLayout.clawOpenAngle);
     issuedArm.clear();assert(MoveDiscToCargo(1,1));
     assert(issuedArm[1].turretAcceleration==TURRET_ACCELERATION_FAST);
@@ -363,7 +368,7 @@ int main(int argc,char **argv) {
         assert(!BuildArmProgram(r,p)&&p.count==3);
         assert(p.steps[0].pawl==materialTransferLayout.clawClosedAngle);
         assert(p.steps[1].length==5&&p.steps[1].lengthArrival);
-        assert(p.steps[2].high==10&&p.steps[2].liftArrival&&!p.steps[2].ringVisionPosition);
+        assert(p.steps[2].high==6&&p.steps[2].liftArrival&&!p.steps[2].ringVisionPosition);
         r.kind=MotionKind::DEMO_PLACE;
         r.ringCorrection=true;
         ring::configuredTimeoutMs()=1000;
@@ -371,7 +376,7 @@ int main(int argc,char **argv) {
         unsigned closedLoops=0;
         for(size_t i=1;i+1<p.count;++i) {
             if(p.steps[i].kind!=motion::StepKind::RING_CORRECT)continue;
-            assert(p.steps[i-1].high==10&&p.steps[i-1].liftArrival);
+            assert(p.steps[i-1].high==6&&p.steps[i-1].liftArrival);
             assert(p.steps[i-1].ringVisionPosition==closedLoops+1);
             assert(p.steps[i+1].high==0&&p.steps[i+1].length==-1&&p.steps[i+1].turret==-1);
             ++closedLoops;
@@ -396,8 +401,8 @@ int main(int argc,char **argv) {
             for(size_t i=0;i<p.count;++i) {
                 const auto &step=p.steps[i];
                 assert(step.kind!=motion::StepKind::RING_CORRECT&&!step.ringVisionPosition);
-                if(strcmp(step.name,"PLACE_DESCEND_10")!=0)continue;
-                assert(step.high==10&&step.liftArrival&&step.lengthArrival&&!step.timed);
+                if(strcmp(step.name,"PLACE_DESCEND_HOVER")!=0)continue;
+                assert(step.high==6&&step.liftArrival&&step.lengthArrival&&!step.timed);
                 assert(!strcmp(p.steps[i+1].name,"PLACE_DESCEND")&&p.steps[i+1].high==0);
                 ++directDrops;
             }

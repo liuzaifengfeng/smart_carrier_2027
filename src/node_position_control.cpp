@@ -5,6 +5,8 @@
 namespace node_position {
 using namespace continuous;
 namespace {
+constexpr int64_t ENCODER_DIRECTION_MIN_COUNTS=128;
+
 const char *health(IO &io,uint8_t id,const Motor &m,double target=0) {
     const char *error=!(m.flags&1)?"MOTOR_DISABLED":
         MOTOR_STALL_CHECK_ENABLED&&(m.flags&12)?"MOTOR_STALL":nullptr;
@@ -106,7 +108,7 @@ const char *Runner::updateProgress(float progress,const H30Attitude &m,bool idle
     if(!rotating) {
         if(stage!=STRAIGHT_VELOCITY)output->estimated=start+(end-start)*progress;
         output->s=baseS+fabsf(delta)*progress;
-        return field::check(output->estimated.x,output->estimated.y,output->heading,0);
+        return field::check(output->estimated.x,output->estimated.y,output->heading,0,false);
     }
     return nullptr;
 }
@@ -181,7 +183,9 @@ void Runner::moveTick() {
     if(arrivedNow) {
         for(int i=0;i<4;++i) {
             const int64_t rawDelta=measured[i].position-origin[i];
-            if(!encoderSign[i]&&travelPulses[i]&&rawDelta)encoderSign[i]=(rawDelta>=0?1:-1)*(directions[i]?1:-1);
+            // 微小位置动作的计数波动不能用于确定后续直行的编码器方向。
+            if(!encoderSign[i]&&travelPulses[i]&&llabs(rawDelta)>ENCODER_DIRECTION_MIN_COUNTS)
+                encoderSign[i]=(rawDelta>=0?1:-1)*(directions[i]?1:-1);
             stopped[i]=measured[i];
         }
         io->timing(rotating?"TURN_ARRIVED":"STRAIGHT_ARRIVED");valid=true;arrived();
@@ -258,7 +262,7 @@ void Runner::straightVelocityTick() {
         // 未发出轮速时刷新静止基准。起步后沿用基准，按累计位移辨识轮向。
         if(!encoderSign[i]&&!applied.rpm[i])positions[i]=measured[i];
         const int64_t change=measured[i]-positions[i];
-        if(!encoderSign[i]&&llabs(change)>128&&applied.rpm[i])
+        if(!encoderSign[i]&&llabs(change)>ENCODER_DIRECTION_MIN_COUNTS&&applied.rpm[i])
             encoderSign[i]=(change>=0?1:-1)*(applied.rpm[i]>=0?1:-1);
         encoderDirectionsKnown=encoderDirectionsKnown&&encoderSign[i]!=0;
     }
@@ -333,7 +337,7 @@ const char *Runner::displacement(const Motor (&states)[4]) {
     float pulses[4];
     for(int i=0;i<4;++i) {
         const int64_t change=states[i].position-positions[i];
-        if(!encoderSign[i]&&llabs(change)>128&&applied.rpm[i])encoderSign[i]=(change>=0?1:-1)*(applied.rpm[i]>=0?1:-1);
+        if(!encoderSign[i]&&llabs(change)>ENCODER_DIRECTION_MIN_COUNTS&&applied.rpm[i])encoderSign[i]=(change>=0?1:-1)*(applied.rpm[i]>=0?1:-1);
         pulses[i]=encoderSign[i]?static_cast<float>(change*encoderSign[i])*PULSES_PER_REV/65536:0;
         positions[i]=states[i].position;
     }

@@ -34,9 +34,10 @@ size_t materialFirstStep=0;
 size_t materialRetriedStep=motion::Program::CAPACITY;
 uint32_t materialCheckToken=0;
 uint8_t stage=0,scanTurn=0,pathRetries=0;
-constexpr uint8_t SCAN_WAIT=4,SCAN_SWEEP=5,SCAN_WAIT_CODE=6;
+constexpr uint8_t SCAN_WAIT=4,SCAN_SWEEP=5,SCAN_WAIT_CODE=6,SCAN_RETREAT=7;
 uint32_t scanArrivedAt=0,scanTurnAt=0;
 float scanTrayAngle=0;
+bool scanRetreated=false;
 int64_t discBefore[4]={};
 float discBeforeHeading=0,discMeasuredYOffset=0;
 bool discMeasuredYOffsetValid=false;
@@ -273,9 +274,10 @@ void requestAnotherPath(const char *reason) {
 bool beginPath(float startYOffset=0) {
     const auto &r=job.request;
     const bool scan=r.kind==MotionKind::SCAN_TASK;
+    const bool preserveStartPosition=scan||(scanRetreated&&r.path[0]==SCAN_AREA_NODE);
     float plannedHeading=0;
     if(!H30PrepareNodePath(r.path,r.pathCount,r.kind==MotionKind::NODE_PATH?r.speed:NODE_PATH_SPEED_MM_S,
-        endpointHeading(r),r.automatic,startYOffset,scan?&plannedHeading:nullptr,scan)) {
+        endpointHeading(r),r.automatic,startYOffset,scan?&plannedHeading:nullptr,preserveStartPosition)) {
         if(RetryFormalRoute(r.kind,r.automatic)&&stage==1&&!cancelled())requestAnotherPath("START");
         else {Serial.println("{EVT,NAV,ROUTE_FAILED,START}");finish(MotionState::FAILED,"START");}
         return false;
@@ -323,6 +325,16 @@ void scanAtNode(bool automatic=false) {
     if(stage==SCAN_WAIT) {
         if(received){finishScan();return;}
         if(millis()-scanArrivedAt<1000)return;
+        if(!BeginPositionMove(0,-100,0,200)){finish(MotionState::FAILED,"EXECUTION");return;}
+        stage=SCAN_RETREAT;
+        phase("SCAN_RETREAT");
+        return;
+    }
+    if(stage==SCAN_RETREAT) {
+        TickPositionMove();
+        if(PositionMoveActive())return;
+        scanRetreated=true;
+        if(received){finishScan();return;}
         stage=SCAN_SWEEP;
         phase("SCAN_SWEEP");
     }
@@ -467,6 +479,7 @@ void navigationTick() {
                 portENTER_CRITICAL(&jobMux);status.phase="NAVIGATION";portEXIT_CRITICAL(&jobMux);
                 finish(MotionState::FAILED,ContinuousMotionFailure());return;
             }
+            scanRetreated=false;
             join.chassisDone=true;flag("CHASSIS_DONE");
             if(activeSpan){span(activeSpan,false);activeSpan=nullptr;}
             if(scan) {

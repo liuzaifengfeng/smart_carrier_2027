@@ -31,7 +31,7 @@ struct MotionRequest {
     bool startVision=false;
     bool discDeparture=false; // 正式圆盘抓取结束后，按路径首段决定如何补偿地图 Y。
     bool ringCorrection=false; // 确认圆环预放位，超时参数非零时启用视觉纠偏。
-    bool armPrepared=false; // 返航导航已完成 LOOK4，HOME_OBSERVE 只执行原有航向修正。
+    bool armPrepared=false; // 返航导航已完成 LOOK4，HOME_OBSERVE 跳过机械臂准备。
     uint8_t vision=0;
     uint8_t positionAcceleration=POSITION_MOVE_DEFAULT_ACCELERATION;
     uint16_t turretTrialRampMs=100;

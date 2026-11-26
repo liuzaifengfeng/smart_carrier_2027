@@ -171,7 +171,7 @@ function pickTarget(x: number, y: number) {
               <button :disabled="!canControl" @click="send(frame('ARM', 'RING_DEMO'))">三件圆环纠偏放料</button>
               <button :disabled="!canControl" @click="send(frame('NAV', 'STOP'))">停止试放</button>
             </div>
-            <p>前置动作闭爪并停在对应工位上方 10 mm。完整试放前，将车停在工作区并装好三个载物台。</p>
+            <p>前置动作闭爪并停在对应工位上方 6 mm。完整试放前，将车停在工作区并装好三个载物台。</p>
           </fieldset>
           <RingVisionPanel v-show="page === '视觉' || page === '机械臂'"
             :controller="controller" :model="model" :show-vision="page === '视觉'" />

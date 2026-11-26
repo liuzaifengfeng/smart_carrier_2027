@@ -4,6 +4,7 @@
 #include "servo.h"
 #include "disc_material_decision.h"
 #include "node_position_hardware.h"
+#include "ring_correction.h"
 
 #include <math.h>
 
@@ -234,8 +235,8 @@ bool placeAt(const MaterialStationPose &pose, float targetHeight,
         Servo_SetAngleMTurn(SERVO_ID_CARGO_TRAY, WORK_POSITION_3_TRAY_TARGET_DEG);
     }
     if(turretAcceleration==TURRET_ACCELERATION_SLOW) {
-        // 第一段沿用原下降延时，最后10mm只等待100ms，不查到位反馈。
-        if(!MoveArm(10,fromRetracted?pose.length:-1,-1,
+        // 第一段沿用原下降延时，从预放位降到0mm只等待100ms，不查到位反馈。
+        if(!MoveArm(ring::HOVER_MM,fromRetracted?pose.length:-1,-1,
                     -1,materialMotionSteps.placeDescendSpeed,turretAcceleration,true))return false;
         waitForArm(delays.placeDescendMs);
         if(!MoveArm(0,-1,-1,-1,materialMotionSteps.placeDescendSpeed,turretAcceleration,true))return false;

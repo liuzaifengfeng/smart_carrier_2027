@@ -318,20 +318,20 @@ void ringCorrection() {
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==4&&issuedTurret==-1);
     assert(fabsf(issuedLength-71.712f)<0.002f);
-    frame.x=4;
+    frame.x=8;
     frame.y=0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==5&&issuedLength==-1);
-    assert(fabsf(issuedTurret-85.780f)<0.001f);
-    frame.x=-4;
+    assert(fabsf(issuedTurret-85.840f)<0.001f);
+    frame.x=-8;
     frame.y=-0.5f;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==6&&issuedLength==-1);
-    assert(fabsf(issuedTurret-86.220f)<0.001f);
+    assert(fabsf(issuedTurret-86.160f)<0.001f);
     frame.y=4;
     assert(ring::input().submit(1,frame));
     assert(!hardware.ready(correct,done)&&!done&&issued==7);
-    assert(fabsf(issuedTurret-86.220f)<0.001f&&fabsf(issuedLength-71.712f)<0.002f);
+    assert(fabsf(issuedTurret-86.160f)<0.001f&&fabsf(issuedLength-71.712f)<0.002f);
     frame.x=0.5f;
     frame.y=-0.5f;
     assert(ring::withinDeadzone(frame,ring::configuredDeadzone()));
@@ -354,7 +354,7 @@ void ringCorrection() {
 
     assert(!hardware.issue(hover));
     assert(!hardware.issue(correct));
-    frame.x=-400;
+    frame.x=-600;
     frame.y=700;
     assert(ring::input().submit(2,frame));
     assert(!hardware.ready(correct,done)&&!done);
@@ -368,7 +368,7 @@ void ringCorrection() {
     assert(!hardware.ready(correct,done)&&!done);
     assert(issuedTurret==upperTurret&&issuedLength==upperLength);
 
-    frame.x=500;
+    frame.x=1000;
     frame.y=-1000;
     assert(ring::input().submit(2,frame));
     assert(!hardware.ready(correct,done)&&!done);

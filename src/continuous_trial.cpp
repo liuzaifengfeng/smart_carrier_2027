@@ -283,7 +283,7 @@ bool H30PrepareNodePath(const uint8_t *path,size_t count,float speedMmS,float fi
     formalSettings.turnAccelDegS2=NODE_PATH_TURN_ACCEL_DEG_S2;
     formalSettings.headingDeadbandDeg=NODE_PATH_HEADING_DEADBAND_DEG;
     if(count>=2&&path[count-1]==SCAN_AREA_NODE) {
-        cfg.slowApproachEdge=count-2; // 至少将驶入扫码点的最后一段限速。
+        cfg.slowApproachEdge=count>2?count-3:0; // 驶入扫码点的最后两段限速。
         for(size_t i=0;i<cfg.slowApproachEdge;++i) {
             if(path[i]==SCAN_AREA_NODE||path[i]==3||path[i]==7) {
                 cfg.slowApproachEdge=i;

@@ -7,12 +7,13 @@
 #include "motion_types.h"
 #include "task_code.h"
 
-constexpr uint8_t SCAN_WAIT=4,SCAN_SWEEP=5,SCAN_WAIT_CODE=6;
+constexpr uint8_t SCAN_WAIT=4,SCAN_SWEEP=5,SCAN_WAIT_CODE=6,SCAN_RETREAT=7;
 
 uint8_t stage,scanTurn,pathRetries;
 uint32_t scanArrivedAt,scanTurnAt,now,trayTravelMs;
 float scanTrayAngle;
-bool taskReceived;
+bool taskReceived,scanRetreated,retreatActive;
+unsigned retreatCommands;
 TaskCode currentTask;
 constexpr size_t SCANNER_BUF_LEN=64;
 int taskCodeMux;
@@ -35,6 +36,13 @@ struct {
     }
 } hardware;
 
+bool BeginPositionMove(float x,float y,float theta,float speed,uint8_t) {
+    assert(x==0&&y==-100&&theta==0&&speed==200);
+    ++retreatCommands;
+    return retreatActive=true;
+}
+void TickPositionMove(){}
+bool PositionMoveActive(){return retreatActive;}
 uint32_t millis(){return now;}
 void phase(const char *){}
 void updateDisplay(const char *, const char *, const char *){}
@@ -52,8 +60,10 @@ uint32_t nodePathRequestedAt;
 
 void reset(float angle=0){
     stage=SCAN_WAIT;scanTurn=pathRetries=0;now=scanArrivedAt=100;scanTrayAngle=angle;
+    scanRetreated=retreatActive=false;retreatCommands=0;
     taskReceived=false;state=MotionState::RUNNING;failure=nullptr;trayAngles.clear();scannerFrames.clear();
 }
+void completeRetreat(){retreatActive=false;scanAtNode();}
 void completeTurn(){now=scanTurnAt+trayTravelMs;scanAtNode();}
 
 int main(){
@@ -63,12 +73,21 @@ int main(){
     reset();now+=999;scanAtNode();assert(state==MotionState::RUNNING&&trayAngles.empty());
     taskReceived=true;scanAtNode();assert(state==MotionState::DONE&&trayAngles.empty());
 
-    reset(270);now+=1000;scanAtNode();assert(trayAngles==std::vector<float>{320});
+    assert(retreatCommands==0&&!scanRetreated);
+
+    reset();now+=1000;scanAtNode();
+    assert(stage==SCAN_RETREAT&&retreatCommands==1&&trayAngles.empty()&&!scanRetreated);
+    scannerFrames={"412+123+124+123"};scanAtNode();
+    assert(taskReceived&&state==MotionState::RUNNING&&retreatCommands==1);
+    completeRetreat();assert(state==MotionState::DONE&&scanRetreated&&trayAngles.empty());
+
+    reset(270);now+=1000;scanAtNode();completeRetreat();
+    assert(scanRetreated&&retreatCommands==1&&trayAngles==std::vector<float>{320});
     taskReceived=true;now+=999;scanAtNode();assert(state==MotionState::RUNNING&&trayAngles.size()==1);
     completeTurn();assert((trayAngles==std::vector<float>{320,270})&&state==MotionState::RUNNING);
     completeTurn();assert(state==MotionState::DONE);
 
-    reset();now+=1000;scanAtNode();
+    reset();now+=1000;scanAtNode();completeRetreat();
     for(size_t i=0;i<39;++i)completeTurn();
     assert(state==MotionState::RUNNING&&stage==SCAN_SWEEP&&trayAngles.size()==40);
     completeTurn();
@@ -81,7 +100,7 @@ int main(){
 
     reset();stage=SCAN_SWEEP;scanTurn=40;scanTurnAt=now;now+=1000;
     scanAtNode(true);
-    assert(stage==SCAN_SWEEP&&scanTurn==1&&trayAngles==std::vector<float>{50});
+    assert(stage==SCAN_SWEEP&&scanTurn==1&&retreatCommands==0&&trayAngles==std::vector<float>{50});
     scannerFrames={"412+123+124+123"};completeTurn();completeTurn();
     assert(state==MotionState::DONE);
 
