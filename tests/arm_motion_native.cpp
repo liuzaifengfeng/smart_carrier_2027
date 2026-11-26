@@ -69,6 +69,7 @@ void forward() {
         assert(p.steps[0].kind==motion::StepKind::TRAY_START&&p.steps[0].turret==cargoTrayAngles[c-1]);
         assert(p.steps[1].waitMs==delays.pickAbove.translateMs);
         assert(near(p.steps[1].length,materialTransferLayout.cargo.length));
+        assert(p.steps[1].lengthAcceleration==250);
         assert(p.steps[1].pawl==materialTransferLayout.cargoClawOpenAngle);
         assert(!strcmp(p.steps[3].name,"APPROACH_ROTATE"));
         assert(p.steps[4].kind==motion::StepKind::TRAY_READY&&p.steps[4].turret==p.steps[0].turret);
@@ -88,12 +89,19 @@ void forward() {
             if(s.kind==motion::StepKind::ARM)assert(s.turretAcceleration==(layer==1?TURRET_ACCELERATION_SLOW:TURRET_ACCELERATION_FAST));
             assert(s.slowLower==((!strcmp(s.name,"PLACE_DESCEND")||!strcmp(s.name,"PLACE_DESCEND_HOVER"))&&layer==1));
             if(s.slowLower)assert(s.timed);
-            if(!strcmp(s.name,"PICK_RETRACT")){assert(s.length==0);retract=true;}
+            if(!strcmp(s.name,"PICK_RETRACT")){
+                assert(s.length==0&&s.lengthAcceleration==250&&s.waitMs==100&&s.timed);
+                assert(!strcmp(p.steps[i+1].name,"PLACE_ROTATE"));
+                retract=true;
+            }
             if(!strcmp(s.name,"PLACE_DESCEND_HOVER")){
                 assert(s.high==6&&s.waitMs==delays.placeDescendMs&&s.slowLowerAcceleration==248);
                 assert(p.steps[i+1].high==0&&p.steps[i+1].waitMs==100&&p.steps[i+1].slowLowerAcceleration==200);
             }
-            if(!strcmp(s.name,"PLACE_DESCEND"))assert(near(s.high,layer==1?0:materialTransferLayout.workArea[w-1].high+(layer-1)*materialTransferLayout.secondLayerOffset));
+            if(!strcmp(s.name,"PLACE_DESCEND")){
+                assert(near(s.high,layer==1?0:materialTransferLayout.workArea[w-1].high+(layer-1)*materialTransferLayout.secondLayerOffset));
+                assert(s.lengthAcceleration==(layer==2?250:ARM_EXTENSION_ACCELERATION));
+            }
             if(!strcmp(s.name,"PLACE_RELEASE_ZERO")){
                 assert(layer==1&&s.pawl==0&&s.waitMs==300&&s.timed);
                 assert(s.high==-1&&s.length==-1&&s.turret==-1);
@@ -116,10 +124,11 @@ void reverse() {
         for(size_t i=0;i<p.count;++i)assert(strcmp(p.steps[i].name,"PLACE_RELEASE_ZERO")&&!p.steps[i].placementPosition);
         assert(p.steps[0].kind==motion::StepKind::TRAY_START&&p.steps[0].turret==cargoTrayAngles[c-1]);
         assert(p.steps[1].waitMs==workAreaToCargoDelays[w-1][c-1].pickAbove.translateMs);
+        assert(p.steps[1].lengthAcceleration==250);
         assert(p.steps[1].pawl==materialTransferLayout.clawOpenAngle);
         assert(p.steps[p.count-3].pawl==materialTransferLayout.cargoClawOpenAngle);
         bool lift=false,tray=false;
-        for(size_t i=0;i<p.count;++i)if(!strcmp(p.steps[i].name,"PICK_LIFT")){assert(p.steps[i].length==0);lift=true;}
+        for(size_t i=0;i<p.count;++i)if(!strcmp(p.steps[i].name,"PICK_LIFT")){assert(p.steps[i].length==0&&p.steps[i].lengthAcceleration==250);lift=true;}
         for(size_t i=0;i<p.count;++i)if(p.steps[i].kind==motion::StepKind::TRAY_READY){
             assert(p.steps[i].turret==p.steps[0].turret&&!strcmp(p.steps[i-1].name,"PLACE_ROTATE"));
             assert(!strcmp(p.steps[i+1].name,"PLACE_DESCEND"));
@@ -133,10 +142,10 @@ void reverse() {
 void rounds() {
     MotionRequest r;r.kind=MotionKind::PLACE_ROUND;r.layer=2;
     const int positions[3]={3,1,2};for(int i=0;i<3;++i){r.positions[i]=positions[i];cargoPlatforms[i].material=MATERIAL_RED;}
-    motion::Program p;assert(!BuildArmProgram(r,p));assert(p.count==48);
+    motion::Program p;assert(!BuildArmProgram(r,p));assert(p.count==42);
     for(uint8_t layer:{1,2}) {
         r.layer=layer;assert(!BuildArmProgram(r,p));
-        assert(p.count==(layer==1?54:48));
+        assert(p.count==(layer==1?48:42));
         int placed=0,turns=0;
         for(size_t i=0;i<p.count;++i) {
             if(p.steps[i].kind==motion::StepKind::ARM&&p.steps[i].trayClearanceCargo) {
@@ -290,7 +299,7 @@ void poses() {
         if(pose==ArmObservation::START)assert(p.steps[0].liftArrival&&p.steps[0].high==160&&p.steps[0].waitMs==0&&p.steps[1].waitMs==0&&p.steps[2].waitMs==500);
         if(pose==ArmObservation::LOOK)assert(p.steps[0].waitMs==1500&&p.steps[1].waitMs==0&&p.steps[2].waitMs==0);
         if(pose==ArmObservation::LOOK2)assert(p.steps[0].waitMs==1500&&p.count==2);
-        if(pose==ArmObservation::LOOK3)assert(p.steps[p.count-1].kind==motion::StepKind::TURRET_READY&&p.steps[p.count-1].waitMs==3000);
+        if(pose==ArmObservation::LOOK3)assert(p.steps[0].length==50&&p.steps[p.count-1].kind==motion::StepKind::TURRET_READY&&p.steps[p.count-1].waitMs==3000);
     }
     const float heights[]={0,85,170};const uint32_t waits[]={1500,750,0};
     for(auto pose:{ArmObservation::LOOK,ArmObservation::LOOK2,ArmObservation::LOOK3,ArmObservation::LOOK4}) {
@@ -356,7 +365,7 @@ void registry() {
     assert(entries[248].name=="圆环纠偏/X死区(px)"&&entries[248].address==&ring::configuredDeadzone().x);
     assert(entries[249].name=="圆环纠偏/Y死区(px)"&&entries[249].address==&ring::configuredDeadzone().y);
     assert(entries[250].name=="圆环纠偏/超时(ms)"&&entries[250].address==&ring::configuredTimeoutMs());
-    assert(entries[250].minimum==0&&entries[250].integer&&ring::configuredTimeoutMs()==2000);
+    assert(entries[250].minimum==0&&entries[250].integer&&ring::configuredTimeoutMs()==1100);
 }
 int main(int argc,char **argv) {
     assert(argc==2);

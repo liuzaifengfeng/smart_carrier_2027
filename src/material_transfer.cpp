@@ -216,9 +216,11 @@ bool placeAt(const MaterialStationPose &pose, float targetHeight,
              uint8_t sourceCargo = 0, uint8_t destinationCargo = 0) {
     const uint8_t workPosition = &pose == &materialTransferLayout.workArea[2] ? 3 : 0;
     if (fromRetracted) {
-        // 装盘时转向和伸缩同时发令，工位放料仍保持缩回转向。
-        waitForArm(delays.placeAbove.translateMs);
-        waitForArm(delays.placeAbove.settleMs);
+        if(sourceCargo)waitForArm(CARGO_RETRACT_BEFORE_TURN_MS);
+        else {
+            waitForArm(delays.placeAbove.translateMs);
+            waitForArm(delays.placeAbove.settleMs);
+        }
         const float targetLength = destinationCargo ? pose.length : -1;
         const uint8_t rotateAcceleration = destinationCargo ? TURRET_ACCELERATION_CARGO_PLACE : turretAcceleration;
         if (!(plannedAngle

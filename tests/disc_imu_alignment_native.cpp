@@ -106,7 +106,10 @@ int main(){
         start(mode);feed(10,40,-30);
         assert(outputSpeed==50);
         Serial.text.clear();
-        clockMs=autoAlignmentStartedMs+4999;TickVisualAlignment();
+        uint32_t timeoutMs=5000;
+        if(mode==VisionStartMode::DISC)timeoutMs=1500;
+        if(mode==VisionStartMode::WORK_AREA||mode==VisionStartMode::WORK_AREA_LOADED)timeoutMs=2500;
+        clockMs=autoAlignmentStartedMs+timeoutMs-1;TickVisualAlignment();
         assert(alignmentEnabled&&autoAlignmentState==AutoAlignmentState::WAITING&&outputSpeed==50);
         ++clockMs;TickVisualAlignment();
         assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::DONE&&outputSpeed==0);
@@ -118,13 +121,13 @@ int main(){
         Serial.text.clear();feed(10,40,-30);
         assert(outputSpeed==0&&Serial.text.empty());
     }
-    start();Serial.text.clear();clockMs+=5000;TickVisualAlignment();
+    start();Serial.text.clear();clockMs+=1500;TickVisualAlignment();
     assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::DONE&&imuReads==0);
     assert(Serial.text.find("{EVT,VISION,ALIGN_RESULT,DISC,TIMEOUT_CONTINUE,0,NA,NA,NA}")!=std::string::npos);
 
     start();imuHeading=89;feed(120,40,-30);
-    imuError="OFFLINE";clockMs=autoAlignmentStartedMs+4900;feed(100,12,-34);
-    Serial.text.clear();clockMs=autoAlignmentStartedMs+5000;TickVisualAlignment();
+    imuError="OFFLINE";clockMs=autoAlignmentStartedMs+1400;feed(100,12,-34);
+    Serial.text.clear();clockMs=autoAlignmentStartedMs+1500;TickVisualAlignment();
     assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::DONE&&outputSpeed==0);
     assert(Serial.text.find("{EVT,VISION,ALIGN_RESULT,DISC,TIMEOUT_CONTINUE,1,NA,12.000,-34.000}")!=std::string::npos);
 
@@ -139,8 +142,8 @@ int main(){
     }
     for(auto mode:{VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA_LOADED}) {
         start(mode);currentPose.theta=184;
-        clockMs=autoAlignmentStartedMs+4900;feed(0.097f,-1,-3);
-        clockMs=autoAlignmentStartedMs+5000;TickVisualAlignment();
+        clockMs=autoAlignmentStartedMs+2400;feed(0.097f,-1,-3);
+        clockMs=autoAlignmentStartedMs+2500;TickVisualAlignment();
         assert(autoAlignmentState==AutoAlignmentState::DONE&&currentPose.theta==184);
     }
 }

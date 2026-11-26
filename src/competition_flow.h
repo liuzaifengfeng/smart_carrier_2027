@@ -232,6 +232,8 @@ class CompetitionFlow {
         alignmentRestarted=false;
         io.visionStart(mode,mode==VisionStartMode::CORNER&&homeZone==2);
     }
+    static constexpr bool HOME_RETURN_ENABLED=false; // 第二层叠放完成后暂时直接结束。
+    static constexpr bool HOME_CORNER_ALIGNMENT_ENABLED=false; // 临时跳过返家角点视觉。
     bool aligned(VisionStartMode mode) {
         const auto result=io.visionStatus();if(result==AutoAlignmentState::WAITING)return false;
         io.visionStop(mode); // 对齐已结束，关闭该模式的视觉控制。
@@ -253,7 +255,7 @@ public:
     // ================= 主状态机：从上到下阅读整场比赛 =================
     // 启动 → 扫码 → 圆盘取料 → 粗加工放料 → 粗加工取回 → 暂存放料
     //             ↑_________________________________________| 第一轮结束后重复
-    // 第二轮暂存叠放完成 → 返家 → 角点对齐 → 收臂归位 → 完成。
+    // 第二轮暂存叠放完成 → 完成。启用返家时先返航归位。
     // 每次 tick 只处理当前阶段；动作完成后下一次 tick 才执行后续阶段。
     /**
      * @brief 推进一次比赛主状态机：启动、扫码、两轮取放料、返家；每次只处理当前阶段。运动通过 motion 提交，不在此等待机械行程。
@@ -460,7 +462,12 @@ public:
             if(!ticket.id)io.display(secondRound?"STACK T2":"PLACE T1");
             if(motion(request)==1) { // 提交并等待本轮暂存放料或第二层叠放。
                 io.clearProgress();
-                next(secondRound?STATE_RETURN_HOME:STATE_GRAB_ROUND2); // 第一轮继续取料，第二轮完成后返家。
+                if(!secondRound)next(STATE_GRAB_ROUND2);
+                else if(HOME_RETURN_ENABLED)next(STATE_RETURN_HOME);
+                else {
+                    next(STATE_DONE);
+                    if(io.state()==STATE_DONE)io.runDone();
+                }
             }
             break;
         }
@@ -482,8 +489,10 @@ public:
             request.zone=homeZone;
             request.armPrepared=true; // LOOK4 已随导航完成。
             if(motion(request)==1) { // 等待返家校角及区 2 右移完成。
-                beginAlignment(VisionStartMode::CORNER);
-                phase=Phase::HOME_ALIGN;
+                if(HOME_CORNER_ALIGNMENT_ENABLED) {
+                    beginAlignment(VisionStartMode::CORNER);
+                    phase=Phase::HOME_ALIGN;
+                } else phase=Phase::HOME_RETURN;
             }
             break;
         }

@@ -121,7 +121,7 @@ struct Runtime : CompetitionIO {
     void materialStop()override{material=false;}
     void taskReady()override{taskPublished=true;}
     void runStart()override{++starts;runPermission=true;}
-    void runDone()override{finished=true;}
+    void runDone()override{assert(!finished);finished=true;}
     void fail(RobotState reason)override{current=reason;}
     void display(const char *)override{}
     void complete(bool success=true){assert(pending);auto &s=jobs.at(pending);s.state=success?MotionState::DONE:MotionState::FAILED;s.chassisDone=s.armReady=success;pending=0;}
@@ -162,24 +162,23 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
             const size_t count=r.requests.size();for(int i=0;i<100;++i)flow.tick();assert(count==r.requests.size());
             assert(failureInjected||failVision);assert(!r.finished);return;
         }
-        if(tick>20)r.startZone=zone==1?2:1; // 返航必须使用开局锁定区号。
     }
     assert(failed==MotionKind::VELOCITY&&!failVision&&!cancel);
     assert(r.finished&&r.current==STATE_DONE&&discGrabs==6&&r.starts==1&&r.materialStarts==6);
+    assert(!r.pending&&r.requests.back().kind==MotionKind::PLACE_ROUND&&r.requests.back().layer==2);
+    const size_t completedRequests=r.requests.size();
+    for(int i=0;i<10;++i)flow.tick();
+    assert(r.requests.size()==completedRequests);
     assert(r.vision==std::vector<VisionStartMode>({VisionStartMode::DISC,VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA,
-        VisionStartMode::DISC,VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA_LOADED,VisionStartMode::CORNER}));
+        VisionStartMode::DISC,VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA_LOADED}));
     int paths=0,places=0,retrieves=0,discRecords=0,discDepartures=0;
     MotionKind previous=MotionKind::ARM_POSE;
     for(const auto &request:r.requests) {
         if(request.kind==MotionKind::NAVIGATE){
             ++paths;
-            if(request.endNode==0||request.endNode==4) {
-                assert(request.endNode==(zone==1?4:0)&&request.observation==ArmObservation::LOOK4&&request.cargo==0&&request.theta==270);
-                assert(previous==MotionKind::ARM_POSE); // 路径前 START 仍独立执行。
-            } else {
-                assert(request.observation==(request.endNode==14?ArmObservation::LOOK2:ArmObservation::LOOK));
-                assert(request.cargo==3); // 到站即选首件料盘，早于视觉对齐和首件作业。
-            }
+            assert(request.endNode!=0&&request.endNode!=4);
+            assert(request.observation==(request.endNode==14?ArmObservation::LOOK2:ArmObservation::LOOK));
+            assert(request.cargo==3); // 到站即选首件料盘，早于视觉对齐和首件作业。
         }
         if(request.kind==MotionKind::NAVIGATE&&request.startNode==10)assert(previous==MotionKind::RETRIEVE_ROUND);
         if(request.kind==MotionKind::NAVIGATE) {
@@ -205,11 +204,10 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
             const int expected[2][3]={{1,2,3},{2,3,1}};
             for(int i=0;i<3;++i)assert(request.positions[i]==expected[retrieves-1][i]);
         }
-        if(request.kind==MotionKind::HOME_RETURN||request.kind==MotionKind::HOME_OBSERVE)assert(request.zone==zone);
-        if(request.kind==MotionKind::HOME_OBSERVE)assert(request.armPrepared&&previous==MotionKind::NAVIGATE);
+        assert(request.kind!=MotionKind::HOME_RETURN&&request.kind!=MotionKind::HOME_OBSERVE);
         previous=request.kind;
     }
-    assert(paths==7&&places==4&&retrieves==2&&discRecords==2&&discDepartures==2);
+    assert(paths==6&&places==4&&retrieves==2&&discRecords==2&&discDepartures==2);
     assert(MergeDiscYIntoFirstStraight(5)&&MergeDiscYIntoFirstStraight(15)&&!MergeDiscYIntoFirstStraight(13));
 }
 void calibrationWait() {
@@ -271,8 +269,7 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"rounds")){fullFlow(1);fullFlow(2);}
     else if(!strcmp(argv[1],"failures")) {
         for(auto kind:{MotionKind::ARM_POSE,MotionKind::SCAN_TASK,MotionKind::NAVIGATE,MotionKind::DISC_RECORD_POSITION,
-            MotionKind::PLACE_ROUND,MotionKind::RETRIEVE_ROUND,
-            MotionKind::HOME_OBSERVE,MotionKind::HOME_RETURN})fullFlow(1,kind);
+            MotionKind::PLACE_ROUND,MotionKind::RETRIEVE_ROUND})fullFlow(1,kind);
     } else if(!strcmp(argv[1],"vision"))fullFlow(1,MotionKind::VELOCITY,true);
     else if(!strcmp(argv[1],"cancel"))fullFlow(1,MotionKind::VELOCITY,false,true);
     else assert(false);

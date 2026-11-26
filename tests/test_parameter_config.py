@@ -126,7 +126,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(parameters[names[0]]['value'], 1200)
             self.assertEqual(parameters[names[1]]['value'], 180)
             self.assertEqual(parameters['底盘/节点导航速度(mm/s)']['value'], 3000)
-            self.assertEqual(parameters['底盘/节点导航外圈加速度档位(EMM V5)']['value'], 190)
+            self.assertEqual(parameters['底盘/节点导航外圈加速度档位(EMM V5)']['value'], 200)
             self.assertEqual(generate(source, header), 105)
             for name, value in zip(names, ('1200', '180')):
                 self.assertIn(f'"{name}", {value}', header.read_text(encoding='utf-8'))

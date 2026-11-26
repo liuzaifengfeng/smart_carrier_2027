@@ -10,9 +10,9 @@
 
 uint32_t ALIGN_PID_MAX_SPEED_RPM = 50;       // 视觉PID对齐轮速上限，单位RPM；原20，提高到2.5倍。
 float NODE_PATH_SPEED_MM_S = 2500.0f;        // 正式节点路径的最大平移速度，单位mm/s。
-uint32_t NODE_PATH_OUTER_ACCEL_LEVEL = 190; // 正式节点路径外圈平移的 EMM V5 加减速档位。
+uint32_t NODE_PATH_OUTER_ACCEL_LEVEL = 200; // 正式节点路径外圈平移的 EMM V5 加减速档位。
 float NODE_PATH_MIDDLE_SPEED_MM_S = 3000.0f; // 经过7、11、12、13、17节点的平移速度上限。
-uint32_t NODE_PATH_MIDDLE_ACCEL_LEVEL = 170; // 中间道路平移的 EMM V5 加减速档位。
+uint32_t NODE_PATH_MIDDLE_ACCEL_LEVEL = 175; // 中间道路平移的 EMM V5 加减速档位。
 float NODE_PATH_TURN_DEG_S = 300.0f;         // 节点路径原地转向的最大角速度，单位°/s。
 float NODE_PATH_TURN_ACCEL_DEG_S2 = 400.0f;  // 节点路径原地转向的角加减速度，单位°/s²，并换算为驱动器加速度档位。
 float NODE_PATH_HEADING_DEADBAND_DEG = 1.0f; // 停稳后独立航向修正的允许误差，单位°；误差在此范围内不再转动。
@@ -261,7 +261,12 @@ void TickVisualAlignment() {
         Serial.printf("{EVT,VISION,ALIGN_RESULT,%s,%s,1,%s,%.3f,%.3f}\n",
             name,result,angle,lastVisualX,lastVisualY);
     };
-    if(autoAlignmentState==AutoAlignmentState::WAITING&&millis()-autoAlignmentStartedMs>=AUTO_ALIGN_TIMEOUT_MS) {
+    constexpr uint32_t discTimeoutMs=1500;
+    constexpr uint32_t workAreaTimeoutMs=2500;
+    const bool workArea=mode==VisionStartMode::WORK_AREA||mode==VisionStartMode::WORK_AREA_LOADED;
+    const uint32_t timeoutMs=mode==VisionStartMode::DISC?discTimeoutMs:
+        workArea?workAreaTimeoutMs:AUTO_ALIGN_TIMEOUT_MS;
+    if(autoAlignmentState==AutoAlignmentState::WAITING&&millis()-autoAlignmentStartedMs>=timeoutMs) {
         OmniMove(0,0,0,0);ResetDiscAlignmentPid();ResetAlignmentWait();
         traceVision(alignmentOwner,false,false);alignmentEnabled=false;
         autoAlignmentState=AutoAlignmentState::DONE;

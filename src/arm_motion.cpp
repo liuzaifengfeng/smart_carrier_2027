@@ -9,6 +9,7 @@
 
 using namespace motion;
 namespace {
+constexpr uint8_t WORK_TRANSFER_EXTENSION_ACCELERATION=250;
 /**
  * @brief 向Program追加一个机械臂位姿步骤；只记录目标、速度和等待时间，不发令。
  * @param planned true 表示转台使用已规划的精确多圈目标。
@@ -60,21 +61,31 @@ void above(Program &p,const MaterialStationPose &pose,float claw,const MaterialA
 /**
  * @brief 构建到位、下降、夹紧、抬升及可选缩回的取料序列；retract和together选择缩回衔接方式。
  */
-void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelays &d,bool retract,bool together,const float *angle,uint8_t cargo=0) {
+void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelays &d,bool retract,bool together,const float *angle,
+          uint8_t cargo=0,uint8_t extensionAcceleration=ARM_EXTENSION_ACCELERATION) {
     const float openAngle=cargo?materialTransferLayout.cargoClawOpenAngle:materialTransferLayout.clawOpenAngle;
+    const size_t approach=p.count;
     above(p,pose,openAngle,d.pickAbove,angle);
+    p.steps[approach].lengthAcceleration=extensionAcceleration;
     if(cargo)prepareTray(p,cargo,true);
     arm(p,"PICK_DESCEND",pose.high,-1,-1,-1,materialMotionSteps.pickDescendSpeed,d.pickDescendMs);
     arm(p,"PICK_GRIP",-1,-1,-1,materialTransferLayout.clawClosedAngle,materialMotionSteps.pickGripSpeed,d.pickGripMs,false,ARM_GRIP_HOLD_MS);
     arm(p,"PICK_LIFT",materialTransferLayout.approachHeight,together?0:-1,-1,-1,materialMotionSteps.pickLiftSpeed,d.pickLiftMs);
-    if(retract&&!together)arm(p,"PICK_RETRACT",-1,0,-1,-1,materialMotionSteps.pickLiftSpeed);
+    if(retract&&!together) {
+        arm(p,"PICK_RETRACT",-1,0,-1,-1,materialMotionSteps.pickLiftSpeed,CARGO_RETRACT_BEFORE_TURN_MS);
+        p.steps[p.count-1].timed=true;
+    }
+    if(together||retract)p.steps[p.count-1].lengthAcceleration=extensionAcceleration;
 }
 /**
  * @brief 构建放料转向、下降、松爪及抬升序列；height为实际层高，retracted表示小臂已缩回。
  */
-void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle,bool slowLower=false,uint8_t workPosition=0,uint8_t sourceCargo=0,uint8_t destinationCargo=0,bool ringCorrection=false,float trayTolerance=CARGO_TRAY_ARRIVAL_TOLERANCE_DEG) {
+void place(Program &p,const MaterialStationPose &pose,float height,const MaterialTransferDelays &d,bool retracted,const float *angle,bool slowLower=false,uint8_t workPosition=0,uint8_t sourceCargo=0,uint8_t destinationCargo=0,bool ringCorrection=false,uint8_t descendExtensionAcceleration=ARM_EXTENSION_ACCELERATION,float trayTolerance=CARGO_TRAY_ARRIVAL_TOLERANCE_DEG) {
     if(retracted) {
-        wait(p,"PLACE_TRANSLATE_WAIT",d.placeAbove.translateMs);wait(p,"PLACE_SETTLE",d.placeAbove.settleMs);
+        if(!sourceCargo) {
+            wait(p,"PLACE_TRANSLATE_WAIT",d.placeAbove.translateMs);
+            wait(p,"PLACE_SETTLE",d.placeAbove.settleMs);
+        }
         rotateArm(p,"PLACE_ROTATE",-1,destinationCargo?pose.length:-1,angle?*angle:pose.turretAngle,-1,materialMotionSteps.approachRotateSpeed,angle);
         p.steps[p.count-1].cargoPlaceTurn=destinationCargo!=0;
         p.steps[p.count-1].lengthArrival=destinationCargo!=0;
@@ -107,6 +118,7 @@ void place(Program &p,const MaterialStationPose &pose,float height,const Materia
     } else {
         const float releaseHeight=height+(destinationCargo?CARGO_TRAY_RELEASE_OFFSET_MM:0.0f);
         arm(p,"PLACE_DESCEND",releaseHeight,retracted&&!destinationCargo?pose.length:-1,-1,-1,materialMotionSteps.placeDescendSpeed,d.placeDescendMs);
+        p.steps[p.count-1].lengthAcceleration=descendExtensionAcceleration;
     }
     if(workPosition==3)p.steps[firstLower].trayWork3LimitCargo=sourceCargo;
     p.steps[p.count-1].placementPosition=workPosition;
@@ -152,10 +164,11 @@ const char *transfer(const MotionRequest &r,Program &p) {
         const auto &source=retrieve?work:cargo,&destination=retrieve?cargo:work;
         const float height=destination.high+(retrieve?0:(r.layer-1)*materialTransferLayout.secondLayerOffset);
         prepareTray(p,cargos[i],false);
-        pick(p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i],retrieve?0:cargos[i]);
+        pick(p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i],retrieve?0:cargos[i],WORK_TRANSFER_EXTENSION_ACCELERATION);
         place(p,destination,height,d,true,&selected.anglesDeg[2*i+1],!retrieve&&r.layer==1,
               retrieve?0:works[i],retrieve?0:cargos[i],retrieve?cargos[i]:0,
-              !retrieve&&r.ringCorrection);
+              !retrieve&&r.ringCorrection,
+              !retrieve&&r.layer==2?WORK_TRANSFER_EXTENSION_ACCELERATION:ARM_EXTENSION_ACCELERATION);
         if(!retrieve) {
             p.steps[p.count-1].workPlaceLiftArrival=true;
             p.steps[p.count-1].waitMs=0;
@@ -182,7 +195,7 @@ void observation(Program &p,ArmObservation pose,uint8_t zone) {
     case ArmObservation::LOOK2:
         arm(p,"LOOK2_LIFT",170,0,-1,-1,200,liftWait);rotateArm(p,"LOOK2_TURN",-1,0,90,80,200);break;
     case ArmObservation::LOOK3: {
-        arm(p,"LOOK3_LIFT",170,40,-1,-1,300,liftWait);rotateArm(p,"LOOK3_TURN",-1,-1,90,80,300);
+        arm(p,"LOOK3_LIFT",170,50,-1,-1,300,liftWait);rotateArm(p,"LOOK3_TURN",-1,-1,90,80,300);
         Step s;s.kind=StepKind::TURRET_READY;s.name="LOOK3_MEASURED_READY";s.turret=90;s.waitMs=3000;p.append(s);break;
     }
     case ArmObservation::LOOK4:
@@ -261,7 +274,7 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {
             auto delays=commonMaterialDelays;
             if(positionGrab)delays.placeDescendMs=200;
             place(p,destination,destination.high,delays,true,nullptr,false,0,0,cargo,false,
-                positionGrab?3.0f:CARGO_TRAY_ARRIVAL_TOLERANCE_DEG);
+                ARM_EXTENSION_ACCELERATION,positionGrab?3.0f:CARGO_TRAY_ARRIVAL_TOLERANCE_DEG);
             if(r.kind!=MotionKind::HELD_DISC) {
                 p.steps[p.count-1].materialEvent="DISC_PICK";p.steps[p.count-1].materialPosition=r.position;
             }
