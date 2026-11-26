@@ -7,11 +7,14 @@
 
 struct SequenceIO : motion::SequenceIO {
     uint32_t time=0;bool stop=false,measured=false,readyNow=false;
-    int issued=0,commits=0,begins=0,ends=0;
+    int issued=0,commits=0,begins=0,ends=0,missedReads=0;
     uint32_t now()override{return time;}
     bool cancelled()override{return stop;}
     const char *issue(const motion::Step &s)override{++issued;if(s.kind==motion::StepKind::COMMIT)++commits;return nullptr;}
-    const char *ready(const motion::Step &,bool &done)override{done=readyNow;return nullptr;}
+    const char *ready(const motion::Step &,bool &done)override{
+        if(missedReads){--missedReads;return "MOTOR_FEEDBACK_TIMEOUT";}
+        done=readyNow;return nullptr;
+    }
     bool feedback(const motion::Step &s)override{return measured&&s.kind==motion::StepKind::ARM;}
     void event(size_t,const motion::Step &,bool begin)override{if(begin)++begins;else ++ends;}
 };
@@ -34,6 +37,14 @@ void sequence() {
     p.append(move);p.append(commit);
     io=SequenceIO{};arm.begin(p,io,2);arm.tick();io.time=1000;arm.tick();arm.tick();arm.tick();
     assert(!arm.active()&&io.issued==2&&io.commits==1);
+    io=SequenceIO{};io.measured=io.readyNow=true;io.missedReads=1;
+    arm.begin(p,io);arm.tick();arm.tick();
+    assert(arm.active()&&!arm.failure()&&io.issued==1&&io.commits==0);
+    io.time=50;arm.tick();arm.tick();io.time=100;arm.tick();arm.tick();
+    assert(io.issued==2&&io.commits==1);
+    io=SequenceIO{};io.measured=true;io.missedReads=2;
+    arm.begin(p,io);arm.tick();arm.tick();io.time=50;arm.tick();
+    assert(arm.failure()&&!arm.active()&&io.issued==1&&!io.commits);
 }
 void join() {
     motion::Join j;int starts=0;
@@ -240,12 +251,14 @@ void recoverableStages() {
     r.alignment=AutoAlignmentState::IDLE;
     flow.tick();
     assert(r.vision.size()==2&&r.alignment==AutoAlignmentState::WAITING);
-    r.alignment=AutoAlignmentState::DONE;flow.tick();r.time+=10;flow.tick();
+    r.alignment=AutoAlignmentState::IDLE;flow.tick();r.time+=10;flow.tick();
     assert(r.requests.back().observation==ArmObservation::LOOK3);
     r.complete(false);flow.tick();flow.tick();
     assert(r.requests.size()==5&&r.requests.back().observation==ArmObservation::LOOK3&&!r.material);
     r.complete();flow.tick();
     assert(r.material&&r.materialStarts==1);
+    r.time+=14999;flow.tick();assert(r.materialStarts==1);
+    ++r.time;flow.tick();assert(r.material&&r.materialStarts==2);
 }
 int main(int argc,char **argv) {
     assert(argc==2);

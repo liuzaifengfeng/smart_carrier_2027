@@ -14,8 +14,7 @@ class DiscImuAlignmentTests(unittest.TestCase):
         parameters = chassis[chassis.index('VisionAlignmentDeadzone ALIGN_DEADZONES[]'):chassis.index('// 根据节点序号读取坐标')]
         start = chassis.index('void ResetDiscAlignmentPid()')
         end = chassis.index('\n/**', chassis.index('bool AlignToVisionContinuous(', start))
-        tolerance = chassis[chassis.index('bool WithinAlignmentTimeoutTolerance('):chassis.index('bool ChassisGetNodePosition(')]
-        (cache / 'disc_pid_actual.inc').write_text(parameters + tolerance + chassis[start:end], encoding='utf-8')
+        (cache / 'disc_pid_actual.inc').write_text(parameters + chassis[start:end], encoding='utf-8')
         runtime = (ROOT / 'src/robot_runtime.cpp').read_text(encoding='utf-8')
         tick = runtime[runtime.index('void TickVisualAlignment()'):runtime.index('// 通过 Serial0')]
         (cache / 'disc_tick_actual.inc').write_text(tick, encoding='utf-8')

@@ -12,6 +12,9 @@ enum class MotionKind : uint8_t {
     HOME_OBSERVE, HOME_RETURN, POSITION, GOTO, VELOCITY, ARM_RAW, SERVO_RAW, ENABLE, TRIAL, TURRET_TRIAL, AXIS_TRIAL, TRAY_ROTATE, RING_PREPARE,
     DISC_RECORD_POSITION
 };
+inline bool RetryFormalRoute(MotionKind kind,bool automatic) {
+    return kind==MotionKind::NAVIGATE||(kind==MotionKind::SCAN_TASK&&automatic);
+}
 inline bool MergeDiscYIntoFirstStraight(uint8_t nextNode) {
     return nextNode==5||nextNode==15;
 }

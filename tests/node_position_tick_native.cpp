@@ -112,6 +112,28 @@ void scanStartOffset() {
     Result result;assert(!run(path,settings,car,result));
     assert(car.followedRoad&&norm(car.location-bypass[2].p)<3);
 }
+void scanApproachSpeed() {
+    struct ApproachSim : Sim {
+        float fastRpm=0,slowRpm=0;
+        const char *velocity(const WheelCommand &command)override {
+            const float speed=abs(command.rpm[0]);
+            if(location.x<680)fastRpm=fmaxf(fastRpm,speed);
+            if(location.x>=730)slowRpm=fmaxf(slowRpm,speed);
+            return Sim::velocity(command);
+        }
+    } car;
+    Node points[]={{{315,240}},{{720,240}},{{1180,240}}};
+    Config cfg;cfg.policy=2;cfg.count=3;cfg.slowApproachEdge=1;
+    Route path;assert(!path.build(points,cfg));
+    Settings settings;settings.speedMmS=500;settings.accelMmS2=1500;
+    settings.outerStraightVelocity=true;
+    car.location=points[0].p;
+    Result result;assert(!run(path,settings,car,result));
+    Config wheelConfig=cfg;wheelConfig.maxRpm=5000;
+    assert(car.fastRpm==wheels({0,500},0,wheelConfig).rpm[0]);
+    assert(car.slowRpm==wheels({0,250},0,wheelConfig).rpm[0]);
+    assert(car.actions==1&&norm(result.estimated-points[2].p)<3);
+}
 void middleProfile() {
     for(bool reverse:{false,true}) {
         Node points[]={{{310,1200},0},{{600,1200},0},{{900,1200},0,true},{{1200,1200},0}};
@@ -427,4 +449,4 @@ void discReturnArrival() {
     error=RetryEmmFeedback(3,readsState);
     assert(!strcmp(error,"MOTOR_COMMAND_ERROR")&&requests==1);
 }
-int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"stable"))stableFrames();else if(!strcmp(argv[1],"hold"))middleHold();else if(!strcmp(argv[1],"middle"))middleProfile();else if(!strcmp(argv[1],"residual-recovery"))residualRecovery();else if(!strcmp(argv[1],"representative"))representativePolling();else if(!strcmp(argv[1],"disc-return"))discReturnArrival();else if(!strcmp(argv[1],"scan-start-offset"))scanStartOffset();else nodeTick();}
+int main(int argc,char **argv){assert(argc==2);if(!strcmp(argv[1],"scan"))scanTick();else if(!strcmp(argv[1],"stable"))stableFrames();else if(!strcmp(argv[1],"hold"))middleHold();else if(!strcmp(argv[1],"middle"))middleProfile();else if(!strcmp(argv[1],"residual-recovery"))residualRecovery();else if(!strcmp(argv[1],"representative"))representativePolling();else if(!strcmp(argv[1],"disc-return"))discReturnArrival();else if(!strcmp(argv[1],"scan-start-offset")){scanStartOffset();scanApproachSpeed();}else nodeTick();}

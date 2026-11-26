@@ -73,14 +73,22 @@ export function useParameters(controller: Controller) {
     void controller.send(frame('CFG', expected.action, [sequence, ...expected.values]))
   }
   function write(callback?: () => void, indexes?: readonly number[]) {
-    const changes = Object.entries(edits.value).filter(([index]) => !indexes || indexes.includes(Number(index)))
+    const changes: [string, string][] = []
     for (const parameter of parameters.value) {
-      if (!(parameter.index in edits.value) || (indexes && !indexes.includes(parameter.index))) continue
-      const value = Number(edits.value[parameter.index])
+      const text = edits.value[parameter.index]?.trim()
+      if (!text || (indexes && !indexes.includes(parameter.index))) continue
+      const value = Number(text)
+      if (value === Number(parameter.value)) continue
       if (!Number.isFinite(value) || value < parameter.min || value > parameter.max || (parameter.integer && !Number.isInteger(value))) {
         status.value = parameter.name + ' 超出固件参数范围'
         return
       }
+      changes.push([String(parameter.index), text])
+    }
+    if (!changes.length) {
+      status.value = '没有需要发送的参数修改'
+      callback?.()
+      return
     }
     afterRead = callback
     written = changes

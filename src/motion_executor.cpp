@@ -31,6 +31,7 @@ bool running=false;
 bool armSpanOpen=false;
 bool materialPaused=false,resumeMaterial=false;
 size_t materialFirstStep=0;
+size_t materialRetriedStep=motion::Program::CAPACITY;
 uint32_t materialCheckToken=0;
 uint8_t stage=0,scanTurn=0,pathRetries=0;
 constexpr uint8_t SCAN_WAIT=4,SCAN_SWEEP=5,SCAN_WAIT_CODE=6;
@@ -202,6 +203,21 @@ bool tickArm() {
                 ++completed;
                 materialFirstStep=i+1;
             }
+            bool beforeGrip=true;
+            for(size_t i=materialFirstStep;i<=arm.stepIndex();++i) {
+                const char *name=program.steps[i].name;
+                if(!strcmp(name,"PICK_GRIP")||!strcmp(name,"DISC_GRIP")) {
+                    beforeGrip=false;break;
+                }
+            }
+            if(beforeGrip&&motion::retryableFeedback(error)&&materialRetriedStep!=materialFirstStep) {
+                materialRetriedStep=materialFirstStep;
+                Serial.printf("{EVT,MOTION,MATERIAL_RETRY,%lu,%s,%s}\n",
+                    static_cast<unsigned long>(job.id),program.steps[arm.stepIndex()].name,error);
+                arm.begin(program,hardware,materialFirstStep);
+                span("ARM_PROGRAM",true);armSpanOpen=true;
+                return false;
+            }
             const bool disc=kind==MotionKind::DISC_GRAB;
             const unsigned cargo=disc?request.cargo:CargoForGrabIndex(completed);
             const unsigned work=disc?request.position:request.positions[completed];
@@ -242,13 +258,27 @@ void startTray(float angle) {
 /**
  * @brief 准备正式节点路径并启动控制器，设置导航及机械臂合流条件；返回是否启动成功。
  */
+void requestAnotherPath(const char *reason) {
+    portENTER_CRITICAL(&nodePathMux);
+    nodePathState=NodePathState::WAITING;
+    nodePathRequestedAt=millis();
+    nodePathLen=0;
+    portEXIT_CRITICAL(&nodePathMux);
+    phase("PATH_WAIT");
+    stage=1;
+    Serial.printf("{EVT,NAV,ROUTE_RETRY,%s}\n",reason);
+    // 保留回传窗口。下一次 ROUTE_REQUEST 由 takeRequestedPath 发出。
+}
+
 bool beginPath(float startYOffset=0) {
     const auto &r=job.request;
     const bool scan=r.kind==MotionKind::SCAN_TASK;
     float plannedHeading=0;
     if(!H30PrepareNodePath(r.path,r.pathCount,r.kind==MotionKind::NODE_PATH?r.speed:NODE_PATH_SPEED_MM_S,
         endpointHeading(r),r.automatic,startYOffset,scan?&plannedHeading:nullptr,scan)) {
-        Serial.println("{EVT,NAV,ROUTE_FAILED,START}");finish(MotionState::FAILED,"START");return false;
+        if(RetryFormalRoute(r.kind,r.automatic)&&stage==1&&!cancelled())requestAnotherPath("START");
+        else {Serial.println("{EVT,NAV,ROUTE_FAILED,START}");finish(MotionState::FAILED,"START");}
+        return false;
     }
     char route[sizeof("{EVT,NAV,ROUTE_PATH,4294967295}")+MAX_NODE_PATH_LENGTH*3];
     size_t length=snprintf(route,sizeof(route),"{EVT,NAV,ROUTE_PATH,%lu",static_cast<unsigned long>(job.id));
@@ -284,7 +314,7 @@ void finishScan() {
 /**
  * @brief 节点到达后等待有效任务码，必要时让料盘围绕扫码角最多摆动十轮。
  */
-void scanAtNode() {
+void scanAtNode(bool automatic=false) {
     const bool received=pollTaskCode();
     if(stage==SCAN_WAIT_CODE) {
         if(received)finishScan();
@@ -296,17 +326,23 @@ void scanAtNode() {
         stage=SCAN_SWEEP;
         phase("SCAN_SWEEP");
     }
-    // 每段摆动留出 500 ms，期间持续监听扫码。
-    constexpr uint32_t travelMs=500;
+    // 每段摆动留出 1000 ms，期间持续监听扫码。
+    constexpr uint32_t travelMs=1000;
     if(scanTurn&&millis()-scanTurnAt<travelMs)return;
     if(received&&scanTurn%2==0){finishScan();return;}
     constexpr uint8_t stepsPerRound=4,maxRounds=10;
     if(scanTurn==stepsPerRound*maxRounds) {
-        stage=SCAN_WAIT_CODE;
-        phase("SCAN_WAIT_CODE");
-        Serial.println("{EVT,TASK,SCAN_TIMEOUT,WAIT_CODE}");
-        updateDisplay("DISPLAY","DEBUG","NO QR - WAIT CODE");
-        return;
+        if(automatic) {
+            scanTurn=0;
+            Serial.println("{EVT,TASK,SCAN_RETRY,RESWEEP}");
+            updateDisplay("DISPLAY","DEBUG","QR RESCAN");
+        } else {
+            stage=SCAN_WAIT_CODE;
+            phase("SCAN_WAIT_CODE");
+            Serial.println("{EVT,TASK,SCAN_TIMEOUT,WAIT_CODE}");
+            updateDisplay("DISPLAY","DEBUG","NO QR - WAIT CODE");
+            return;
+        }
     }
 
     constexpr float offsets[stepsPerRound]={50,0,-50,0};
@@ -348,9 +384,10 @@ bool takeRequestedPath(MotionRequest &request) {
     const auto state=nodePathState;
     const bool timedOut=state==NodePathState::WAITING
         && millis()-nodePathRequestedAt>=ROUTE_REPLY_TIMEOUT_MS;
-    const bool retry=timedOut&&pathRetries<ROUTE_REPLY_MAX_RETRIES;
+    const bool newBatch=timedOut&&RetryFormalRoute(request.kind,request.automatic)&&pathRetries==ROUTE_REPLY_MAX_RETRIES;
+    const bool retry=timedOut&&(pathRetries<ROUTE_REPLY_MAX_RETRIES||newBatch);
     if(retry) {
-        ++pathRetries;
+        pathRetries=newBatch?0:pathRetries+1;
         nodePathRequestedAt=millis();
     } else if(timedOut)nodePathState=NodePathState::FAILED;
     if(state==NodePathState::RECEIVED) {
@@ -360,6 +397,7 @@ bool takeRequestedPath(MotionRequest &request) {
     }
     portEXIT_CRITICAL(&nodePathMux);
     if(retry) {
+        if(newBatch)Serial.println("{EVT,NAV,ROUTE_RETRY,TIMEOUT}");
         sendRouteRequest(request);
     } else if(timedOut) {
         Serial.println("{EVT,NAV,ROUTE_FAILED,TIMEOUT}");
@@ -375,7 +413,7 @@ bool takeRequestedPath(MotionRequest &request) {
 void navigationTick() {
     auto &r=job.request;
     const bool scan=r.kind==MotionKind::SCAN_TASK;
-    if(scan&&stage>=SCAN_WAIT){scanAtNode();return;}
+    if(scan&&stage>=SCAN_WAIT){scanAtNode(r.automatic);return;}
     if(stage==0&&(r.kind==MotionKind::NAVIGATE||scan)) {
         portENTER_CRITICAL(&nodePathMux);
         nodePathRequestedAt=millis();
@@ -387,7 +425,11 @@ void navigationTick() {
     }
     if(stage==1) {
         if(!takeRequestedPath(r))return;
-        if(r.path[0]!=r.startNode||r.path[r.pathCount-1]!=r.endNode){Serial.println("{EVT,NAV,ROUTE_FAILED,ENDPOINT}");finish(MotionState::FAILED,"ENDPOINT");return;}
+        if(r.path[0]!=r.startNode||r.path[r.pathCount-1]!=r.endNode) {
+            if(RetryFormalRoute(r.kind,r.automatic))requestAnotherPath("ENDPOINT");
+            else {Serial.println("{EVT,NAV,ROUTE_FAILED,ENDPOINT}");finish(MotionState::FAILED,"ENDPOINT");}
+            return;
+        }
         float startYOffset=0;
         if(r.discDeparture) {
             if(!MergeDiscYIntoFirstStraight(r.path[1])) {
@@ -429,7 +471,7 @@ void navigationTick() {
             if(activeSpan){span(activeSpan,false);activeSpan=nullptr;}
             if(scan) {
                 scanArrivedAt=millis();scanTurn=0;
-                stage=SCAN_WAIT;phase("SCAN_WAIT");scanAtNode();return;
+                stage=SCAN_WAIT;phase("SCAN_WAIT");scanAtNode(r.automatic);return;
             }
             if(r.kind==MotionKind::NAVIGATE&&r.cargo) {
                 hardware.preselectTray(cargoTrayAngles[r.cargo-1]);
@@ -476,6 +518,7 @@ void task(void *) {
                 ulTaskNotifyTake(pdTRUE,(alignmentEnabled||TurretMotorTracking())?pdMS_TO_TICKS(TurretMotorNextDelay()):portMAX_DELAY);continue;
             }
             running=true;stage=0;join=motion::Join{};activeSpan=nullptr;armSpanOpen=false;
+            materialRetriedStep=motion::Program::CAPACITY;
             hardware.configure(job.id,cancelled);
             setAlignmentEnabled(false);
             TickVisualAlignment(); // 旧视觉停车在新位置目标装载前完成，不能在同步触发后覆盖它。

@@ -34,14 +34,14 @@
           "integer": false
         },
         "搬运/待操作区/伸出(mm)": {
-          "value": 36,
+          "value": 39,
           "description": "三个小料盘共用的取放料伸出距离。",
           "minimum": 0,
           "maximum": 170,
           "integer": false
         },
         "搬运/待操作区/转台(deg)": {
-          "value": -13.5,
+          "value": -14.5,
           "description": "三个小料盘共用的机械臂转台角度。",
           "minimum": -150,
           "maximum": 360,
@@ -76,7 +76,7 @@
           "integer": false
         },
         "搬运/工作区1/伸出(mm)": {
-          "value": 70.5,
+          "value": 70.9000015,
           "description": "工作区1：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
@@ -97,14 +97,14 @@
           "integer": false
         },
         "搬运/工作区2/伸出(mm)": {
-          "value": 7,
+          "value": 9.30000019,
           "description": "工作区2：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区2/转台(deg)": {
-          "value": 85.3000031,
+          "value": 85.6999969,
           "description": "工作区2：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -118,14 +118,14 @@
           "integer": false
         },
         "搬运/工作区3/伸出(mm)": {
-          "value": 43.5,
+          "value": 47,
           "description": "工作区3：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区3/转台(deg)": {
-          "value": 124.0,
+          "value": 124.699997,
           "description": "工作区3：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -326,14 +326,14 @@
           "integer": false
         },
         "PID/视觉Y/Kp": {
-          "value": 0.00999999978,
+          "value": 0.00800000038,
           "description": "比例增益，乘以当前误差。误差单位沿用视觉端输出，不能默认视为毫米。",
           "minimum": 0.0,
           "maximum": 100.0,
           "integer": false
         },
         "PID/视觉Y/Ki": {
-          "value": 0.000500000024,
+          "value": 0.000600000028,
           "description": "积分增益，乘以累计误差积分。误差单位沿用视觉端输出，不能默认视为毫米。",
           "minimum": 0.0,
           "maximum": 100.0,

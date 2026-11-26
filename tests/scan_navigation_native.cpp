@@ -30,7 +30,7 @@ MotionState state;
 std::vector<float> trayAngles;
 struct {
     void issue(const motion::Step &step){
-        assert(step.kind==motion::StepKind::TRAY_ROTATE&&step.waitMs==500);
+        assert(step.kind==motion::StepKind::TRAY_ROTATE&&step.waitMs==1000);
         trayAngles.push_back(step.turret);trayTravelMs=step.waitMs;
     }
 } hardware;
@@ -64,7 +64,7 @@ int main(){
     taskReceived=true;scanAtNode();assert(state==MotionState::DONE&&trayAngles.empty());
 
     reset(270);now+=1000;scanAtNode();assert(trayAngles==std::vector<float>{320});
-    taskReceived=true;now+=499;scanAtNode();assert(state==MotionState::RUNNING&&trayAngles.size()==1);
+    taskReceived=true;now+=999;scanAtNode();assert(state==MotionState::RUNNING&&trayAngles.size()==1);
     completeTurn();assert((trayAngles==std::vector<float>{320,270})&&state==MotionState::RUNNING);
     completeTurn();assert(state==MotionState::DONE);
 
@@ -78,6 +78,12 @@ int main(){
     assert(state==MotionState::RUNNING&&stage==SCAN_WAIT_CODE);
     scannerFrames={"invalid"};scanAtNode();assert(state==MotionState::RUNNING);
     scannerFrames={"412+123+124+123"};scanAtNode();assert(state==MotionState::DONE);
+
+    reset();stage=SCAN_SWEEP;scanTurn=40;scanTurnAt=now;now+=1000;
+    scanAtNode(true);
+    assert(stage==SCAN_SWEEP&&scanTurn==1&&trayAngles==std::vector<float>{50});
+    scannerFrames={"412+123+124+123"};completeTurn();completeTurn();
+    assert(state==MotionState::DONE);
 
     reset();Serial.text.clear();
     MotionRequest route;
@@ -95,6 +101,14 @@ int main(){
     Serial.text.clear();
     assert(!takeRequestedPath(route)&&state==MotionState::FAILED&&strcmp(failure,"PATH_TIMEOUT")==0);
     assert(nodePathState==NodePathState::FAILED&&Serial.text=="{EVT,NAV,ROUTE_FAILED,TIMEOUT}\n");
+
+    reset();Serial.text.clear();
+    route.kind=MotionKind::NAVIGATE;
+    nodePathRequestedAt=now;
+    nodePathState=NodePathState::WAITING;
+    pathRetries=10;now+=2000;
+    assert(!takeRequestedPath(route)&&state==MotionState::RUNNING&&pathRetries==0);
+    assert(Serial.text=="{EVT,NAV,ROUTE_RETRY,TIMEOUT}\n{EVT,NAV,ROUTE_WAITING}\n{EVT,NAV,ROUTE_REQUEST,0,0}\n");
 
     reset();Serial.text.clear();
     nodePathRequestedAt=now;

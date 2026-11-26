@@ -173,19 +173,28 @@ const char *MotionHardware::correctRing(const Step &s,bool &done) {
     if(!ReadArmTurretAngle(turret)||!MoveArm(-1,targetLength,-1,-1,s.speed,TURRET_ACCELERATION_SLOW))
         return "EXECUTION";
     if(correction==0)return nullptr;
-    // 单脉冲虽能编码，但实车在小角度目标下可保持静止并回报已到位。
-    const float step=copysignf(fmaxf(fabsf(correction),ring::MIN_TURRET_CORRECTION_DEG),correction);
-    const float targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,turret+step));
-    const auto position=TurretMotorQuantizePosition(targetTurret);
+    float targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,turret+correction));
+    auto position=TurretMotorQuantizePosition(targetTurret);
     const auto current=TurretMotorQuantizePosition(turret);
-    const auto samePulse=[](const TurretMotorPosition &a,const TurretMotorPosition &b) {
-        return a.pulses==b.pulses&&(!a.pulses||a.direction==b.direction);
+    const auto signedPulses=[](const TurretMotorPosition &p) -> int64_t {
+        return p.direction==TURRET_MOTOR_POSITIVE_DIR?int64_t(p.pulses):-int64_t(p.pulses);
     };
-    if(samePulse(position,current))return nullptr;
+    if(signedPulses(position)==signedPulses(current)) {
+        // 非零 PID 输出量化后若没有位移，就沿修正方向补一个脉冲。
+        const bool positive=correction>0;
+        const int64_t next=signedPulses(current)+(positive?1:-1);
+        const float limit=positive?ringMaxTurret:ringMinTurret;
+        const int64_t limitPulses=signedPulses(TurretMotorQuantizePosition(limit));
+        if(positive?next>limitPulses:next<limitPulses)return nullptr;
+        position={static_cast<uint8_t>(next<0?1-TURRET_MOTOR_POSITIVE_DIR:TURRET_MOTOR_POSITIVE_DIR),
+                  static_cast<uint32_t>(next<0?-next:next)};
+        targetTurret=fmaxf(ringMinTurret,fminf(ringMaxTurret,turret+copysignf(turretPulseDegrees,correction)));
+    }
     if(lastRingXCommand.id&&TurretMotorCommandCancelled(lastRingXCommand.id))lastRingXCommand={};
     if(fabsf(frame.x)<=ring::RING_X_FINE_PX&&lastRingXCommand.id) {
         if(now()-lastRingXCommand.sentAtMs<ring::RING_X_FINE_SEND_MS||
-           (samePulse(position,lastRingXCommand.position)&&TurretMotorCommandActive(lastRingXCommand.id)))return nullptr;
+           (signedPulses(position)==signedPulses(lastRingXCommand.position)&&
+            TurretMotorCommandActive(lastRingXCommand.id)))return nullptr;
     }
     uint32_t commandId=0;
     if(!TurretMotorMoveQuantized(targetTurret,position,ring::TURRET_CORRECTION_ACCELERATION,
@@ -236,14 +245,14 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
         return nullptr;
     }
     if(s.turretArrival) {
-        float measured=0;if(!ReadArmTurretAngle(measured))return "EXECUTION";
+        float measured=0;if(!ReadArmTurretAngle(measured))return "MOTOR_READ";
         done=fabsf(measured-turretTarget)<=5.0f;
         if(done&&s.lengthArrival) {
             node_position::Motor state;
             const char *error=ReadMotorFeedback(6,state);if(error)return error;
             const double length=fabs(static_cast<double>(state.position))*3200/65536/LENGTH_PULSE;
-            const bool stoppedAtTarget=s.allowStoppedLengthArrival&&(state.flags&1)&&abs(state.rpm)<=3;
-            done=((state.flags&2)||stoppedAtTarget)&&fabs(length-s.length)<=1.0;
+            const double errorMm=fabs(length-s.length);
+            done=s.lengthArrivalByPosition ? errorMm<=10.0 : (state.flags&2)&&errorMm<=1.0;
         }
         if(done)Serial.printf("{EVT,MOTION,TURRET_ARRIVED,%lu,%.3f,%.3f}\n",
             static_cast<unsigned long>(job),turretTarget,measured);
@@ -258,11 +267,11 @@ const char *MotionHardware::ready(const Step &s,bool &done) {
         if(!(state.flags&2)||fabs(measured-target)>1)return nullptr;
     }
     if(s.planned||s.turret!=-1) {
-        float measured=0;if(!ReadArmTurretAngle(measured))return "EXECUTION";
+        float measured=0;if(!ReadArmTurretAngle(measured))return "MOTOR_READ";
         if(fabsf(measured-currentArm.turret_angle)>5)return nullptr;
     }
     if(s.pawl!=-1) {
-        float measured=0;if(!readServoAngle(1,measured,100))return "EXECUTION";
+        float measured=0;if(!readServoAngle(1,measured,100))return "SERVO_READ";
         if(fabsf(continuous::turn(measured,s.pawl))>5)return nullptr;
     }
     done=true;return nullptr;

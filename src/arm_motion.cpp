@@ -189,7 +189,7 @@ void observation(Program &p,ArmObservation pose,uint8_t zone) {
         arm(p,"LOOK4_LIFT",170,-1,-1,-1,200,liftWait);
         rotateArm(p,"LOOK4_READY",-1,zone==1?150:0,zone==1?270:90,80,200);
         p.steps[p.count-1].lengthArrival=true;
-        p.steps[p.count-1].allowStoppedLengthArrival=zone==2;
+        p.steps[p.count-1].lengthArrivalByPosition=true;
         break;
     default: break;
     }

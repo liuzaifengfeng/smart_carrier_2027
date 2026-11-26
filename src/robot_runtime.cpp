@@ -263,12 +263,10 @@ void TickVisualAlignment() {
     };
     if(autoAlignmentState==AutoAlignmentState::WAITING&&millis()-autoAlignmentStartedMs>=AUTO_ALIGN_TIMEOUT_MS) {
         OmniMove(0,0,0,0);ResetDiscAlignmentPid();ResetAlignmentWait();
-        const bool fresh=hasFeedback&&millis()-lastFeedbackMs<=ALIGN_FEEDBACK_TIMEOUT_MS;
-        const bool acceptable=fresh&&WithinAlignmentTimeoutTolerance(mode,lastAngleError,lastVisualX,lastVisualY);
         traceVision(alignmentOwner,false,false);alignmentEnabled=false;
-        autoAlignmentState=acceptable?AutoAlignmentState::DONE:AutoAlignmentState::FAILED;
+        autoAlignmentState=AutoAlignmentState::DONE;
         updateVisionLight();
-        reportResult(acceptable?"TIMEOUT_CONTINUE":!hasFeedback?"TIMEOUT_NO_FRAME":!fresh?"TIMEOUT_STALE":"TIMEOUT_ERROR");
+        reportResult("TIMEOUT_CONTINUE");
     }
     if(!alignmentEnabled){alignedReported=false;lastFeedbackMs=0;xSemaphoreGive(xAlignmentMotionMutex);return;}
     VisualAlignmentFrame_t alignment;

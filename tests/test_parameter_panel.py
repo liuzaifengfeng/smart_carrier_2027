@@ -277,18 +277,21 @@ class PanelTests(unittest.TestCase):
         self.panel.parameters[0].name = "搬运/圆盘/高度(mm)"
         self.panel.parameters[1].name = "搬运/速度"
         self.panel.value.set("120")
+        self.panel.edits[1] = "200"
         self.panel.test_action.set("试选中机械臂轴")
         self.panel.apply_and_test()
         seq = self.panel.sequence
         self.assertNotIn("ARM,MOVE1", " ".join(self.sent))
         self.panel.receive(f"{{RSP,CFG,BEGIN,OK,{seq}}}")
         self.panel.receive(f"{{RSP,CFG,SET,OK,{seq},0}}")
+        self.assertEqual(self.sent[-1], f"{{CMD,CFG,COMMIT,{seq}}}")
         self.panel.receive(f"{{RSP,CFG,COMMIT,OK,{seq}}}")
         self.assertNotIn("ARM,MOVE1", " ".join(self.sent))
+        self.assertEqual(self.sent[-1], f"{{CMD,CFG,GET,{seq+1},0}}")
         self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq+1},0,搬运/圆盘/高度(mm),120,0,175,0}}")
-        self.panel.receive(f"{{RSP,CFG,GET,VALUE,{seq+1},1,搬运/速度,1000,1,1000,1}}")
-        self.panel.receive(f"{{RSP,CFG,GET,END,{seq+1},2}}")
-        self.assertEqual(self.sent[-1], "{CMD,ARM,MOVE1,120,-1,1000}")
+        self.panel.receive(f"{{RSP,CFG,GET,END,{seq+1},1}}")
+        self.assertEqual(self.sent[-1], "{CMD,ARM,MOVE1,120,-1,200}")
+        self.assertEqual(self.panel.edits, {1: "200"})
         self.assertIsNotNone(self.panel.test_running)
         self.panel.receive_test_result("{EVT,ARM,MOVE1,ISSUED}")
         self.assertIsNone(self.panel.test_running)
@@ -306,6 +309,13 @@ class PanelTests(unittest.TestCase):
         self.panel.receive(f"{{RSP,CFG,BEGIN,OK,{seq}}}")
         self.panel.receive(f"{{RSP,CFG,SET,ERR,{seq},RANGE}}")
         self.assertNotIn("ARM,MOVE1", " ".join(self.sent))
+
+    def test_joint_enable_sends_only_arm_motor_addresses(self):
+        self.panel.set_joint_enable((7, 6, 5))
+        self.assertEqual(self.sent, ["{CMD,EMM,ENABLE,7,0}", "{CMD,EMM,ENABLE,6,0}", "{CMD,EMM,ENABLE,5,0}"])
+        self.panel.joint_mode.set("使能")
+        self.panel.set_joint_enable((6,))
+        self.assertEqual(self.sent[-1], "{CMD,EMM,ENABLE,6,1}")
 
 
 class ActionGroupPanelTests(unittest.TestCase):

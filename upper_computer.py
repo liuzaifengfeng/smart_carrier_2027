@@ -381,6 +381,24 @@ PARAMETER_TEST_ACTIONS = {
 }
 
 
+def build_parameter_test_indexes(action, stage, parameters, selected_name=None):
+    if action == "试选中机械臂轴":
+        return [p["index"] for p in parameters if p["name"] == selected_name]
+    if action == "底盘小距离移动":
+        prefixes = ("标定/X", "标定/Y", "标定/旋转")
+        return [p["index"] for p in parameters if p["name"].startswith(prefixes)]
+    if action == "开局机械臂姿态":
+        return [p["index"] for p in parameters if p["name"].startswith(("标定/升降", "标定/伸缩"))]
+    if stage == "全部参数":
+        stage = {
+            "圆盘抓取一件": "圆盘抓取（两轮）",
+            "三件放到工作区": "粗加工（两轮）",
+            "三件码垛第二层": "暂存第二层",
+            "三件从工作区取回": "粗加工（两轮）",
+        }.get(action, stage)
+    return [p["index"] for p in parameters if parameter_matches_stage(p["name"], stage)]
+
+
 def build_parameter_test_command(action: str, stage: str, selected_name: str | None,
                                  values: dict[str, float], *, color: int = 1, cargo: int = 1,
                                  move: tuple[str, str, str, str] = ("0", "0", "0", "80")) -> str:
@@ -443,6 +461,8 @@ class ParameterPanel(ttk.Frame):
         self.timer = None
         self.selected = None
         self.verifying = False
+        self.trial_written = {}
+        self.trial_readback = deque()
         self.run_main = run_main
         self.run_after_verify = False
         self.test_after_verify = None
@@ -509,6 +529,16 @@ class ParameterPanel(ttk.Frame):
         self.test_button.grid(row=0, column=1, padx=(5, 0))
         self.stop_test_button = ttk.Button(test_bar, text="停止视觉定位", command=self.stop_test_vision)
         self.stop_test_button.grid(row=0, column=2, padx=(5, 0))
+        joints = ttk.LabelFrame(self, text="机械臂使能控制（调试模式）", padding=5)
+        joints.pack(fill=tk.X, pady=(5, 0))
+        self.joint_mode = tk.StringVar(value="失能")
+        ttk.Combobox(joints, textvariable=self.joint_mode, values=("失能", "使能"),
+                     state="readonly", width=6).pack(side=tk.LEFT)
+        self.joint_buttons = []
+        for name, ids in (("全部三轴", (7, 6, 5)), ("转台", (7,)), ("伸缩", (6,)), ("升降", (5,))):
+            button = ttk.Button(joints, text=name, command=lambda ids=ids: self.set_joint_enable(ids))
+            button.pack(side=tk.LEFT, padx=(5, 0))
+            self.joint_buttons.append(button)
         test_bar.columnconfigure(0, weight=1)
         self.test_inputs = ttk.Frame(test_bar)
         self.test_inputs.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(4, 0))
@@ -574,6 +604,8 @@ class ParameterPanel(ttk.Frame):
         self.run_button.configure(state=tk.NORMAL if idle and self.ready and self.run_main else tk.DISABLED)
         self.test_button.configure(state=tk.NORMAL if idle and self.ready and not self.test_running else tk.DISABLED)
         self.stop_test_button.configure(state=tk.NORMAL if idle and self.ready else tk.DISABLED)
+        for button in self.joint_buttons:
+            button.configure(state=tk.NORMAL if idle else tk.DISABLED)
         if self.action_group_panel is not None:
             self.action_group_panel.refresh()
 
@@ -659,12 +691,27 @@ class ParameterPanel(ttk.Frame):
         except (ValueError, OverflowError) as exc:
             messagebox.showerror("试动作参数无效", str(exc), parent=self)
             return
-        if self.edits:
+        indexes = build_parameter_test_indexes(action, self.category.get(),
+            [{"index": index, "name": self.parameters[index].name} for index in self.edits], selected_name)
+        if indexes:
             self.run_after_verify = False
             self.test_after_verify = (action, line)
-            self.send()
+            self.send(indexes)
         else:
             self.dispatch_test(action, line)
+
+    def set_joint_enable(self, ids):
+        if self.mode or self.test_running:
+            return
+        try:
+            for motor in ids:
+                line = build_frame("CMD", "EMM", "ENABLE", motor, int(self.joint_mode.get() == "使能"))
+                self.send_line(line)
+                self.log("TX", line)
+        except (RuntimeError, OSError) as exc:
+            self.status.set(str(exc))
+            return
+        self.status.set(f"已发送机械臂{self.joint_mode.get()}指令；驱动器应答见串口日志。")
 
     def dispatch_test(self, action, line):
         try:
@@ -798,6 +845,8 @@ class ParameterPanel(ttk.Frame):
         self.mode = ""
         self.ready = False
         self.commands.clear()
+        self.trial_written.clear()
+        self.trial_readback.clear()
         self.run_after_verify = False
         self.test_after_verify = None
         self.status.set(message + "；请重新读取确认小车当前值。")
@@ -835,7 +884,11 @@ class ParameterPanel(ttk.Frame):
         self.received = {}
         self.status.set("正在回读生效值…" if verify else "正在读取小车参数…")
         self.update_controls()
-        self.transmit(build_frame("CMD", "CFG", "GET", self.sequence))
+        self.request_readback()
+
+    def request_readback(self):
+        args = (self.trial_readback[0],) if self.trial_readback else ()
+        self.transmit(build_frame("CMD", "CFG", "GET", self.sequence, *args))
 
     def select(self, _event=None):
         selection = self.tree.selection()
@@ -894,18 +947,21 @@ class ParameterPanel(ttk.Frame):
         self.select()
         self.status.set("已撤销本地编辑。")
 
-    def send(self):
+    def send(self, indexes=None):
         if self.mode or not self.ready or not self.edit():
             return
         if not self.edits:
             self.status.set("没有需要发送的修改。")
             return
+        changes = self.edits if indexes is None else {index: self.edits[index] for index in indexes}
+        self.trial_written = {} if indexes is None else changes
+        self.trial_readback = deque(self.trial_written)
         self.sequence += 1
         self.mode = "write"
         self.commands = deque([("BEGIN", "BEGIN")])
-        self.commands.extend((f"SET,{i},{v}", f"SET,{i}") for i, v in self.edits.items())
+        self.commands.extend((f"SET,{i},{v}", f"SET,{i}") for i, v in changes.items())
         self.commands.append(("COMMIT", "COMMIT"))
-        self.status.set(f"正在发送 {len(self.edits)} 项修改…")
+        self.status.set(f"正在发送 {len(changes)} 项修改…")
         self.update_controls()
         self.send_next()
 
@@ -946,14 +1002,28 @@ class ParameterPanel(ttk.Frame):
                 self.received[p.index] = p
             elif self.mode == "read" and fields[0] == "END":
                 count = int(fields[2])
-                if len(fields) != 3 or count <= 0 or set(self.received) != set(range(count)):
+                if self.trial_readback:
+                    if count != 1 or self.trial_readback.popleft() not in self.received:
+                        raise ValueError("指定参数回读不完整")
+                    if self.trial_readback:
+                        self.sequence += 1
+                        self.request_readback()
+                        return
+                    count = len(self.trial_written)
+                elif len(fields) != 3 or count <= 0 or set(self.received) != set(range(count)):
                     raise ValueError("读取不完整")
                 if self.verifying:
-                    for index, expected in self.edits.items():
+                    for index, expected in (self.trial_written or self.edits).items():
                         if index not in self.received or not math.isclose(float(self.received[index].value), float(expected), rel_tol=1e-6, abs_tol=1e-8):
                             raise ValueError("回读值与发送值不一致")
-                self.parameters = self.received
-                self.edits.clear()
+                if self.trial_written:
+                    self.parameters.update(self.received)
+                    for index in self.trial_written:
+                        del self.edits[index]
+                    self.trial_written.clear()
+                else:
+                    self.parameters = self.received
+                    self.edits.clear()
                 self.selected = None
                 self.value.set("")
                 self.refresh_tree()

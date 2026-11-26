@@ -272,7 +272,7 @@ void cornerPoses() {
         assert(lift.high==170&&lift.length==-1&&lift.turret==-1&&lift.pawl==-1&&lift.waitMs==750);
         const auto &ready=p.steps[1];
         assert(ready.high==-1&&ready.turret==(zone==1?270:90)&&ready.length==(zone==1?150:0)&&ready.pawl==80);
-        assert(ready.turretArrival&&ready.lengthArrival&&ready.allowStoppedLengthArrival==(zone==2));
+        assert(ready.turretArrival&&ready.lengthArrival&&ready.lengthArrivalByPosition);
         currentPose.theta=180;
         r.kind=MotionKind::HOME_OBSERVE;r.armPrepared=true;
         assert(!BuildArmProgram(r,p)&&p.count==1);

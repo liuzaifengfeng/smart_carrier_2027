@@ -17,6 +17,16 @@ const selectedName = ref('')
 const color = ref(1)
 const cargo = ref(1)
 const move = ref(['0','0','0','80'])
+const jointEnable = ref(0)
+const joints = [
+  { name: '全部三轴', motors: [7, 6, 5] },
+  { name: '转台', motors: [7] },
+  { name: '伸缩', motors: [6] },
+  { name: '升降', motors: [5] },
+]
+function setJoints(motors: number[]) {
+  for (const motor of motors) void props.controller.send(frame('EMM', 'ENABLE', [motor, jointEnable.value]))
+}
 async function filterStage() {
   try {
     const py = await python()
@@ -30,9 +40,12 @@ async function test() {
     const py = await python()
     py.globals.set('test_data', JSON.stringify({ action: testAction.value, stage: stage.value,
       selected: selectedName.value, color: color.value, cargo: cargo.value, move: move.value,
-      values: Object.fromEntries(props.model.parameters.value.map(p => [p.name, Number(props.model.edits.value[p.index] ?? p.value)])) }))
-    const line = py.runPython("from desktop_helpers import build_parameter_test_command\ndata = json.loads(test_data)\nbuild_parameter_test_command(data['action'], data['stage'], data['selected'], data['values'], color=data['color'], cargo=data['cargo'], move=data['move'])") as string
-    props.model.write(() => { void props.controller.send(line) })
+      parameters: props.model.parameters.value.filter(p => props.model.edits.value[p.index]?.trim())
+        .map(({ index, name }) => ({ index, name })),
+      values: Object.fromEntries(props.model.parameters.value.map(p => [p.name, Number(props.model.edits.value[p.index]?.trim() || p.value)])) }))
+    const [line, indexes]: [string, number[]] = JSON.parse(py.runPython(
+      "from desktop_helpers import build_parameter_test_command, build_parameter_test_indexes\ndata = json.loads(test_data)\njson.dumps([build_parameter_test_command(data['action'], data['stage'], data['selected'], data['values'], color=data['color'], cargo=data['cargo'], move=data['move']), build_parameter_test_indexes(data['action'], data['stage'], data['parameters'], data['selected'])])"))
+    props.model.write(() => { void props.controller.send(line) }, indexes)
   } catch (error) { note.value = String(error) }
 }
 const groups = computed(() => [...new Set(props.model.parameters.value.filter(p => p.name.startsWith('动作组延时/')).map(p => p.name.split('/').slice(1, -1).join('/')))])
@@ -123,6 +136,14 @@ function trial() {
       <template v-if="testAction === '底盘小距离移动'"><label v-for="(name,i) in ['X mm','Y mm','转角 °','轮速 RPM']" :key="name">{{ name }}<input v-model="move[i]"></label></template>
       <button :disabled="!controller.canControl.value || model.busy.value || !model.parameters.value.length" @click="test">应用参数并试动作</button>
       <button :disabled="!controller.canControl.value" @click="controller.send('{CMD,VISION,ALIGN_STOP}')">停止视觉对齐</button>
+    </fieldset>
+    <fieldset><legend>机械臂使能控制（调试模式）</legend>
+      <div class="actions">
+        <label>操作<select v-model.number="jointEnable"><option :value="0">失能</option><option :value="1">使能</option></select></label>
+        <button v-for="joint in joints" :key="joint.name" type="button"
+          :disabled="!controller.canControl.value || model.busy.value"
+          @click="setJoints(joint.motors)">{{ joint.name }}{{ jointEnable ? '使能' : '失能' }}</button>
+      </div>
     </fieldset>
   </template>
   <label>搜索参数<input v-model="search"></label>

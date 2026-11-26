@@ -2,8 +2,12 @@
 #include <stdint.h>
 #include "material_transfer.h"
 #include <stddef.h>
+#include <string.h>
 
 namespace motion {
+inline bool retryableFeedback(const char *error) {
+    return error&&(!strcmp(error,"MOTOR_FEEDBACK_TIMEOUT")||!strcmp(error,"MOTOR_READ")||!strcmp(error,"SERVO_READ"));
+}
 enum class StepKind : uint8_t { ARM, WAIT, TURRET_READY, POSITION, GOTO, COMMIT, RAW_SERVO, ENABLE, VELOCITY, TRAY_ROTATE, TRAY_START, TRAY_READY, RING_CORRECT };
 struct Step {
     StepKind kind=StepKind::WAIT;
@@ -20,7 +24,7 @@ struct Step {
     bool planned=false;
     bool turretArrival=false; // 独立转向步骤由转盘电机实测多圈角度决定完成。
     bool lengthArrival=false; // 转向时同时检查伸缩轴到位。
-    bool allowStoppedLengthArrival=false; // 允许用伸缩轴实测位置和近零转速替代到位标志。
+    bool lengthArrivalByPosition=false; // LOOK4 仅按伸缩轴实测位置确认到位。
     bool cargoPlaceTurn=false; // 持料转向料盘使用独立的加速度配置。
     bool workPlaceLiftArrival=false; // 工位放料后抬升：实测高度误差小于10mm即继续。
     bool liftArrival=false; // 初始化抬升实测到位后，才允许后续转盘动作。
@@ -78,7 +82,7 @@ class Sequence {
     SequenceIO *io=nullptr;
     size_t index=0;
     uint32_t issuedAt=0,readyAt=0,due=0;
-    bool issued=false,settled=false,finished=true;
+    bool issued=false,settled=false,finished=true,retriedFeedback=false;
     const char *error=nullptr;
 public:
     /**
@@ -126,14 +130,21 @@ public:
         if(io->feedback(step)) {
             if(!settled) {
                 bool done=false;error=io->ready(step,done);
-                if(error){finished=true;return;}
+                if(error) {
+                    if(!retriedFeedback&&retryableFeedback(error)&&(step.kind==StepKind::ARM||
+                        step.kind==StepKind::TURRET_READY||step.kind==StepKind::TRAY_READY||step.kind==StepKind::TRAY_ROTATE)) {
+                        retriedFeedback=true;error=nullptr;due=io->now()+50;return;
+                    }
+                    finished=true;return;
+                }
+                retriedFeedback=false;
                 if(!done){due=io->now()+50;return;}
                 settled=true;readyAt=io->now();
             }
             if(io->now()-readyAt<step.holdMs){due=readyAt+step.holdMs;return;}
         } else if(io->now()-issuedAt<step.waitMs){due=issuedAt+step.waitMs;return;}
         if(io->cancelled()){error="STOPPED";finished=true;return;}
-        io->event(index,step,false);++index;issued=settled=false;due=io->now();
+        io->event(index,step,false);++index;issued=settled=retriedFeedback=false;due=io->now();
         if(index==program->count)finished=true;
     }
 };

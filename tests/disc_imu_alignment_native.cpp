@@ -99,19 +99,19 @@ int main(){
     feed(10,40,-30);
     assert(outputX<0&&outputY>0&&outputRotation<0); // 仅视觉XY取反。
 
-    // 5秒超时必须停车，只有新鲜且接近的误差可以继续。
+    // 自动对齐超时结束底盘闭环，主任务继续推进。
     start();for(int i=0;i<10;++i)TickVisualAlignment();assert(imuReads==0);
     alignmentEnabled=false;feed(100);assert(imuReads==0);
-    for(auto mode:{VisionStartMode::DISC,VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA_LOADED,VisionStartMode::CORNER}){
+    for(auto mode:{VisionStartMode::DISC,VisionStartMode::DISC_MATERIAL,VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA_LOADED,VisionStartMode::CORNER}){
         start(mode);feed(10,40,-30);
         assert(outputSpeed==50);
         Serial.text.clear();
         clockMs=autoAlignmentStartedMs+4999;TickVisualAlignment();
         assert(alignmentEnabled&&autoAlignmentState==AutoAlignmentState::WAITING&&outputSpeed==50);
         ++clockMs;TickVisualAlignment();
-        assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::FAILED&&outputSpeed==0);
+        assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::DONE&&outputSpeed==0);
         const std::string result=std::string("{EVT,VISION,ALIGN_RESULT,")
-            +visionNames[static_cast<uint8_t>(mode)]+",TIMEOUT_STALE,1,"
+            +visionNames[static_cast<uint8_t>(mode)]+",TIMEOUT_CONTINUE,1,"
             +(mode==VisionStartMode::DISC?"0.000":"10.000")+",40.000,-30.000}";
         assert(Serial.text.find(result)!=std::string::npos);
         assert(Serial.text.find("{EVT,VISION,ALIGN_DONE}")==std::string::npos);
@@ -119,14 +119,14 @@ int main(){
         assert(outputSpeed==0&&Serial.text.empty());
     }
     start();Serial.text.clear();clockMs+=5000;TickVisualAlignment();
-    assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::FAILED&&imuReads==0);
-    assert(Serial.text.find("{EVT,VISION,ALIGN_RESULT,DISC,TIMEOUT_NO_FRAME,0,NA,NA,NA}")!=std::string::npos);
+    assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::DONE&&imuReads==0);
+    assert(Serial.text.find("{EVT,VISION,ALIGN_RESULT,DISC,TIMEOUT_CONTINUE,0,NA,NA,NA}")!=std::string::npos);
 
     start();imuHeading=89;feed(120,40,-30);
     imuError="OFFLINE";clockMs=autoAlignmentStartedMs+4900;feed(100,12,-34);
     Serial.text.clear();clockMs=autoAlignmentStartedMs+5000;TickVisualAlignment();
-    assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::FAILED&&outputSpeed==0);
-    assert(Serial.text.find("{EVT,VISION,ALIGN_RESULT,DISC,TIMEOUT_ERROR,1,NA,12.000,-34.000}")!=std::string::npos);
+    assert(!alignmentEnabled&&autoAlignmentState==AutoAlignmentState::DONE&&outputSpeed==0);
+    assert(Serial.text.find("{EVT,VISION,ALIGN_RESULT,DISC,TIMEOUT_CONTINUE,1,NA,12.000,-34.000}")!=std::string::npos);
 
     for(auto mode:{VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA_LOADED}) {
         start(mode);
@@ -139,9 +139,8 @@ int main(){
     }
     for(auto mode:{VisionStartMode::WORK_AREA,VisionStartMode::WORK_AREA_LOADED}) {
         start(mode);currentPose.theta=184;
-        clockMs=autoAlignmentStartedMs+4900;feed(0,mode==VisionStartMode::WORK_AREA?1.25f:3.25f,0);
+        clockMs=autoAlignmentStartedMs+4900;feed(0.097f,-1,-3);
         clockMs=autoAlignmentStartedMs+5000;TickVisualAlignment();
-        const auto expected=mode==VisionStartMode::WORK_AREA?AutoAlignmentState::DONE:AutoAlignmentState::FAILED;
-        assert(autoAlignmentState==expected&&currentPose.theta==184);
+        assert(autoAlignmentState==AutoAlignmentState::DONE&&currentPose.theta==184);
     }
 }

@@ -295,7 +295,14 @@ void Runner::straightVelocityTick() {
         applied={};straightStopping=true;due=io->now();return;
     }
     // 制动距离包含两个40ms周期，覆盖四轮依次采样、装载及同步的延迟；不增加停车等待。
-    const float cap=fminf(maximum,acceleration*(sqrtf(.08f*.08f+2*remaining/acceleration)-.08f));
+    float cap=fminf(maximum,acceleration*(sqrtf(.08f*.08f+2*remaining/acceleration)-.08f));
+    if(isfinite(approachStart)) {
+        const float toApproach=approachStart-dot(output->estimated-lineStart,tangent);
+        const float halfSpeed=maximum*.5f;
+        // 给同一直线的限速点预留制动距离，无需在节点停车换速。
+        const float brakingDistance=fmaxf(0,toApproach-straightSpeed*.08f);
+        cap=fminf(cap,sqrtf(halfSpeed*halfSpeed+2*acceleration*brakingDistance));
+    }
     braking=cap<straightSpeed;
     straightSpeed+=clamp(cap-straightSpeed,-acceleration*dt,acceleration*dt);
     float omega=0;
@@ -390,9 +397,16 @@ void Runner::tick() {
         targetHeading=phase.h0;attempts=0;headingRecoveryUsed=false;
         if(curved){action=CURVE;curveBegin=index;after=block;stage=ALIGN;break;}
         action=STRAIGHT;end=phase.end;float length=phase.length;
+        approachStart=INFINITY;
+        const bool velocityStraight=(phase.middle||settings->outerStraightVelocity)
+            &&(norm(offset)==0||settings->alignStartToRoad);
         while(after<route->segmentCount) {
             const auto &next=route->segments[after];
             if(next.kind!=LINE||next.middle!=phase.middle||fabsf(turn(phase.h0,next.h0))>.01f||dot(end-phase.start,next.end-next.start)<=0)break;
+            if(next.slowApproach&&!phase.slowApproach) {
+                if(!velocityStraight)break; // 位置模式整段使用同一个速度。
+                if(!isfinite(approachStart))approachStart=length;
+            }
             end=next.end;length+=next.length;++after;
         }
         const Vec direction=(end-phase.start)*(1/length);
@@ -440,6 +454,7 @@ void Runner::tick() {
         if(failure)break;
         valid=false;io->beginAction();start=output->estimated;baseS=output->s;
         maximum=rotating?settings->turnDegS:route->segments[index].middle?settings->middleSpeedMmS:settings->speedMmS;
+        if(!rotating&&action==STRAIGHT&&route->segments[index].slowApproach)maximum*=.5f;
         if(rotating&&attempts>3)maximum=fminf(maximum*.25f,30.0f);
         acceleration=rotating?settings->turnAccelDegS2:route->segments[index].middle?settings->middleAccelMmS2:settings->accelMmS2;
         started=previous=io->now();lastReport=lastArrivalReport=0;

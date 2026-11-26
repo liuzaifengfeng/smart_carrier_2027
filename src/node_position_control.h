@@ -228,6 +228,7 @@ class Runner {
     HeadingGuard headingGuard;
     H30HeadingHold headingHold;
     float straightSpeed=0,straightTravel=0;
+    float approachStart=INFINITY;
     bool straightStopping=false;
     bool quietSeen=false,residualRetried=false,headingRecoveryUsed=false;
     uint32_t residualSince=0;

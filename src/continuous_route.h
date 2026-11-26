@@ -58,11 +58,13 @@ struct Config {
     float kp=2,maxOmega=45,correction=20,omegaAccel=90;
     uint8_t policy=0; // 0旧模型；试跑1自动/2停转；3正式外圈连续、内侧位置模式。
     float outset=60,margin=20;
+    size_t slowApproachEdge=MAX_NODES;
 };
 struct Pose { Vec p,tangent; float curvature=0; };
 enum SegmentKind { LINE=0, CUBIC=1, ROTATE=2 };
 struct Segment {
     bool middle=false; // 平移段使用独立的中间道路速度和加速度。
+    bool slowApproach=false;
     Vec start,end,center;
     float offset=0,length=0,radius=0,angle=0,sweep=0;
     uint8_t kind=LINE;

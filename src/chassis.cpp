@@ -29,11 +29,11 @@ struct NodePosition {
 // 从底向上、从左到右：0~4、9~5、10~14、19~15、20~24。
 // 沿用项目 X 向右、Y 向上；中心间距 480 mm。
 NodePosition NODE_POSITIONS[FIELD_NODE_COUNT] = {
-    {305.0f, 240.0f}, {720.0f, 240.0f}, {1180.0f, 240.0f}, {1680.0f, 240.0f}, {2075.0f, 240.0f},
-    {2075.0f, 720.0f}, {1680.0f, 720.0f}, {1180.0f, 720.0f}, {720.0f, 720.0f}, {305.0f, 720.0f},
-    {305.0f, 1200.0f}, {720.0f, 1200.0f}, {1180.0f, 1200.0f}, {1680.0f, 1200.0f}, {2075.0f, 1200.0f},
-    {2075.0f, 1680.0f}, {1680.0f, 1680.0f}, {1180.0f, 1680.0f}, {720.0f, 1680.0f}, {305.0f, 1680.0f},
-    {305.0f, 2030.0f}, {720.0f, 2030.0f}, {1180.0f, 2030.0f}, {1680.0f, 2030.0f}, {2075.0f, 2030.0f},
+    {315.0f, 240.0f}, {720.0f, 240.0f}, {1180.0f, 240.0f}, {1680.0f, 240.0f}, {2065.0f, 240.0f},
+    {2065.0f, 720.0f}, {1680.0f, 720.0f}, {1180.0f, 720.0f}, {720.0f, 720.0f}, {315.0f, 720.0f},
+    {315.0f, 1200.0f}, {720.0f, 1200.0f}, {1180.0f, 1200.0f}, {1680.0f, 1200.0f}, {2065.0f, 1200.0f},
+    {2065.0f, 1680.0f}, {1680.0f, 1680.0f}, {1180.0f, 1680.0f}, {720.0f, 1680.0f}, {315.0f, 1680.0f},
+    {315.0f, 2030.0f}, {720.0f, 2030.0f}, {1180.0f, 2030.0f}, {1680.0f, 2030.0f}, {2065.0f, 2030.0f},
 };
 
 constexpr uint32_t MOTOR_COMMAND_GAP_MS = 5;           // 连续发送两条电机命令的间隔
@@ -139,13 +139,6 @@ float normalizeHeading(float heading) {
 /**
  * @brief 按节点编号读取当前地图X/Y坐标(mm)，成功时写入x和y并返回true。
  */
-bool WithinAlignmentTimeoutTolerance(VisionStartMode mode,float angle,float x,float y) {
-    const auto &deadzone=ALIGN_DEADZONES[static_cast<uint8_t>(mode)];
-    const float scale=mode==VisionStartMode::WORK_AREA_LOADED?1.0f:1.5f;
-    return fabsf(angle)<=deadzone.angleDeg*scale
-        && fabsf(x)<=deadzone.visualX*scale && fabsf(y)<=deadzone.visualY*scale;
-}
-
 bool ChassisGetNodePosition(uint8_t node,float &x,float &y) {
     NodePosition p;
     if(!getNodePosition(node,p))return false;

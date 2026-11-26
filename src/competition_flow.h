@@ -134,7 +134,7 @@ class CompetitionFlow {
     Phase phase=Phase::START_PREPARE_ARM;
     uint8_t homeZone=0;
     int preparedProgress=0;
-    uint32_t due=0;
+    uint32_t due=0,materialRequestedAt=0;
     bool waitingForSubmit=false,alignmentRestarted=false,observationRetried=false,discSnapshotRetried=false;
     /**
      * @brief 把对外主状态映射到内部第一个阶段；失败或完成状态映射到 INACTIVE。
@@ -178,7 +178,7 @@ class CompetitionFlow {
             MotionSubmitError error;
             ticket.id=io.submit(r,error);
             if(!ticket.id) {
-                if(error==MotionSubmitError::BUSY&&!waitingForSubmit) {
+                if(error==MotionSubmitError::BUSY||(error==MotionSubmitError::QUEUE&&!waitingForSubmit)) {
                     waitingForSubmit=true;
                     return 0;
                 }
@@ -235,10 +235,14 @@ class CompetitionFlow {
     bool aligned(VisionStartMode mode) {
         const auto result=io.visionStatus();if(result==AutoAlignmentState::WAITING)return false;
         io.visionStop(mode); // 对齐已结束，关闭该模式的视觉控制。
-        if(result==AutoAlignmentState::IDLE&&!alignmentRestarted) {
-            alignmentRestarted=true;
-            io.visionStart(mode,mode==VisionStartMode::CORNER&&homeZone==2);
-            return false;
+        if(result==AutoAlignmentState::IDLE) {
+            if(!alignmentRestarted) {
+                alignmentRestarted=true;
+                io.visionStart(mode,mode==VisionStartMode::CORNER&&homeZone==2);
+                return false;
+            }
+            io.display("ALIGN UNAVAILABLE - CONTINUE");
+            return true;
         }
         if(result!=AutoAlignmentState::DONE){io.fail(STATE_ALIGN_FAILED);return false;}
         return true;
@@ -351,6 +355,7 @@ public:
             if(motion(pose(ArmObservation::LOOK3))==1) { // 对齐后切到单件物料观察姿态。
                 preparedProgress=0;
                 io.materialStart(); // 开启单件物料识别，后续抓取由运动任务执行。
+                materialRequestedAt=io.now();
                 phase=Phase::DISC_GRAB_MATERIALS;
             }
             break;
@@ -366,6 +371,13 @@ public:
             if(progress>preparedProgress&&motion(pose(ArmObservation::LOOK3))==1) { // 新抓完一件后恢复 LOOK3，准备识别下一件。
                 preparedProgress=progress;
                 io.materialStart(); // 开启单件物料识别，后续抓取由运动任务执行。
+                materialRequestedAt=io.now();
+            }
+            if(progress==preparedProgress&&!io.motionBusy()&&io.now()-materialRequestedAt>=15000) {
+                io.materialStop();
+                io.materialStart();
+                materialRequestedAt=io.now();
+                io.display("DISC MATERIAL RESCAN");
             }
             break;
         }
