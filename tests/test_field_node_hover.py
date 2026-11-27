@@ -6,10 +6,10 @@ from upper_computer import FIELD_NODE_RADIUS_MM, field_node_at
 
 class FieldNodeHoverTests(unittest.TestCase):
     def test_center_and_edge_are_inside_node_region(self):
-        self.assertEqual(field_node_at(240.0, 240.0), (0, 240.0, 240.0))
+        self.assertEqual(field_node_at(320.0, 240.0), (0, 320.0, 240.0))
         self.assertEqual(
-            field_node_at(240.0 + FIELD_NODE_RADIUS_MM, 240.0),
-            (0, 240.0, 240.0),
+            field_node_at(320.0 + FIELD_NODE_RADIUS_MM, 240.0),
+            (0, 320.0, 240.0),
         )
 
     def test_position_outside_node_regions_has_no_center(self):
