@@ -34,14 +34,14 @@
           "integer": false
         },
         "搬运/待操作区/伸出(mm)": {
-          "value": 39,
+          "value": 37,
           "description": "三个小料盘共用的取放料伸出距离。",
           "minimum": 0,
           "maximum": 170,
           "integer": false
         },
         "搬运/待操作区/转台(deg)": {
-          "value": -14.5,
+          "value": -14.3000002,
           "description": "三个小料盘共用的机械臂转台角度。",
           "minimum": -150,
           "maximum": 360,
@@ -76,14 +76,14 @@
           "integer": false
         },
         "搬运/工作区1/伸出(mm)": {
-          "value": 76,
+          "value": 80,
           "description": "工作区1：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区1/转台(deg)": {
-          "value": 51.5999985,
+          "value": 52,
           "description": "工作区1：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -97,14 +97,14 @@
           "integer": false
         },
         "搬运/工作区2/伸出(mm)": {
-          "value": 17,
+          "value": 18,
           "description": "工作区2：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区2/转台(deg)": {
-          "value": 86.5,
+          "value": 85.8000031,
           "description": "工作区2：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
@@ -118,14 +118,14 @@
           "integer": false
         },
         "搬运/工作区3/伸出(mm)": {
-          "value": 53,
+          "value": 51,
           "description": "工作区3：伸缩轴绝对伸出长度，以开机清零位置为原点。",
           "minimum": 0.0,
           "maximum": 170.0,
           "integer": false
         },
         "搬运/工作区3/转台(deg)": {
-          "value": 124,
+          "value": 124.300003,
           "description": "工作区3：转台舵机目标角度，固件在线缆范围内选择最近的等效角度；不要填-1（固件表示不移动）。",
           "minimum": -150.0,
           "maximum": 360.0,
