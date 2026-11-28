@@ -1,6 +1,8 @@
 // 扫码串口的接收任务。
 // 监听端组装任务码并交给等待端，业务任务通过队列接口取得扫码结果。
 
+#include "robot_runtime.h"
+#include "task_code.h"
 #include "scanner.h"  // 引入 scanner.h 中的声明和定义。
 #include <SoftwareSerial.h>  // 引入 SoftwareSerial.h 中的声明和定义。
 
@@ -34,6 +36,12 @@ static void Task_ScannerListen(void *pvParameters) {  // 定义函数或成员 �
                         ScannerMsg_t msg;  // 声明 msg，类型和可用范围由所在声明决定。
                         memset(msg.data, 0, sizeof(msg.data));  // 调用 memset，传入 msg.data, 0, sizeof(msg.data)。
                         strncpy(msg.data, rxBuf, SCANNER_BUF_LEN - 1);  // 调用 strncpy，传入 msg.data, rxBuf, SCANNER_BUF_LEN - 1。
+                        if (IsSerialDebugMode()) {
+                            char code[SCANNER_BUF_LEN];
+                            memcpy(code, msg.data, sizeof(code));
+                            NormalizeScannerTaskCode(code);
+                            Serial.printf("[SCANNER] recv: %s\n", code);
+                        }
                         if (xScannerQueue != NULL) {  // 当 xScannerQueue != NULL 成立时进入此分支，否则继续后续流程。
                             // 以零等待投递。队列满时本次发送失败，已排队的旧帧继续等待消费。
                             xQueueSend(xScannerQueue, &msg, 0);  // 调用 xQueueSend（横向QueueSend），传入 xScannerQueue, &msg, 0。

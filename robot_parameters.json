@@ -27,7 +27,7 @@
           "integer": false
         },
         "搬运/待操作区/高度(mm)": {
-          "value": 125,
+          "value": 127,
           "description": "三个小料盘共用的取料高度，装盘松爪目标比此值高 3 mm。",
           "minimum": 0,
           "maximum": 175,

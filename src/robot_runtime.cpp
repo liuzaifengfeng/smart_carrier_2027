@@ -451,7 +451,7 @@ void vHomeTimerCallback(TimerHandle_t xTimer) {  // 定义函数或成员 的入
  */
 bool waitScannerCode(char *out, uint32_t len, uint32_t timeoutMs) {  // 定义函数或成员 的入口 waitScannerCode（wait扫码器Code），参数由此处的签名确定。
     if (Scanner_WaitCode(out, len, timeoutMs)) {  // 当 Scanner_WaitCode(out, len, timeoutMs) 成立时进入此分支，否则继续后续流程。
-        Serial.printf("[SCANNER] recv: %s\n", out);  // 调用 Serial.printf，传入 "[SCANNER] recv: %s\n", out。
+        if (!IsSerialDebugMode()) Serial.printf("[SCANNER] recv: %s\n", out);  // 调用 Serial.printf，传入 "[SCANNER] recv: %s\n", out。
         return true;  // 结束当前函数并返回 true。
     }  // 结束此条件分支。
     return false;  // 结束当前函数并返回 false。

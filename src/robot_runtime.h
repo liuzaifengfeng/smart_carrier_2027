@@ -50,17 +50,17 @@ extern uint32_t ALIGN_PID_MAX_SPEED_RPM;  // 声明外部定义 uint32_t ALIGN_P
 extern uint32_t SCAN_SEARCH_SPEED_RPM;  // 声明外部定义 uint32_t SCAN_SEARCH_SPEED_RPM，供本编译单元引用。
 constexpr uint8_t SCAN_AREA_NODE = 2;  // 将 2 写入或初始化 SCAN_AREA_NODE（扫码AREA节点）。
 constexpr uint8_t DISC_AREA_NODE = 14;  // 将 14 写入或初始化 DISC_AREA_NODE（圆盘AREA节点）。
-// 粗加工区中心约为 (210, 1100)，对应当前 5x5 地图的 10 号节点。
-constexpr uint8_t COARSE_AREA_NODE = 10;  // 将 10 写入或初始化 COARSE_AREA_NODE（COARSEAREA节点）。
-// 当前地图暂存区中心 (1200,2180) 对应节点 22，地图调整时同步核对。
-constexpr uint8_t TEMP_AREA_NODE = 22;  // 将 22 写入或初始化 TEMP_AREA_NODE（TEMPAREA节点）。
+// 粗加工区中心约为 (1200, 2180)，对应当前 5x5 地图的 22 号节点。
+constexpr uint8_t COARSE_AREA_NODE = 22;  // 将 22 写入或初始化 COARSE_AREA_NODE（COARSEAREA节点）。
+// 当前地图暂存区中心 (210, 1100) 对应节点 10，地图调整时同步核对。
+constexpr uint8_t TEMP_AREA_NODE = 10;  // 将 10 写入或初始化 TEMP_AREA_NODE（TEMPAREA节点）。
 // 启停区附近的地图节点；最终归位由 CORNER 视觉对齐。
 constexpr uint8_t HOME_ZONE1_NODE = 4;  // 将 4 写入或初始化 HOME_ZONE1_NODE（HOMEZONE1节点）。
 constexpr uint8_t HOME_ZONE2_NODE = 0;  // 将 0 写入或初始化 HOME_ZONE2_NODE（HOMEZONE2节点）。
 constexpr float StartZoneHeading(uint8_t zone) { return zone==1?180.0f:0.0f; }  // 定义函数或成员 StartZoneHeading（起点Zone航向），参数由此处的签名确定。
 constexpr float DISC_AREA_HEADING = 90.0f;  // 将 90.0f 写入或初始化 DISC_AREA_HEADING（圆盘AREA航向）。
-constexpr float COARSE_AREA_HEADING = 270.0f;  // 将 270.0f 写入或初始化 COARSE_AREA_HEADING（COARSEAREA航向）。
-constexpr float TEMP_AREA_HEADING = 180.0f;  // 将 180.0f 写入或初始化 TEMP_AREA_HEADING（TEMPAREA航向）。
+constexpr float COARSE_AREA_HEADING = 180.0f;  // 将 180.0f 写入或初始化 COARSE_AREA_HEADING（COARSEAREA航向）。
+constexpr float TEMP_AREA_HEADING = 270.0f;  // 将 270.0f 写入或初始化 TEMP_AREA_HEADING（TEMPAREA航向）。
 #include "robot_state.h"  // 引入 robot_state.h 中的声明和定义。
 
 
@@ -175,3 +175,5 @@ StartZone SelectReleaseStartZone(bool waitForPanel);  // 声明接口 SelectRele
  * @brief 比赛总计时器超时回调，执行既有停止、失败状态及主任务暂停处理。
  */
 void vHomeTimerCallback(TimerHandle_t xTimer);  // 声明接口 vHomeTimerCallback（vHome定时器Callback），参数由此处的签名确定。
+
+bool IsSerialDebugMode();

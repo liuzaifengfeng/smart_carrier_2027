@@ -160,7 +160,7 @@ function draw() {
   }
   for (const [px, py, name] of [
     [2250, 150, '启停区1'], [150, 150, '启停区2'], [2350, 1500, '原料区'],
-    [1200, 2180, '暂存区'], [210, 1100, '粗加工区'], [1200, 80, '二维码板'],
+    [1200, 2180, '粗加工区'], [210, 1100, '暂存区'], [1200, 80, '二维码板'],
   ] as const) label(name, x(px), y(py), 13, '#111', true)
   for (const [id, px, py] of props.nodes) {
     const onRoute = props.route?.includes(id!)

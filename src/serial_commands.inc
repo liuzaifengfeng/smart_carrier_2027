@@ -2,6 +2,7 @@
 // 任务负责读 Serial0，分发层按命令组和动作处理，异步运动用编号和后续事件表示实际结果。
 
 // 由 robot_runtime.cpp 在业务状态与动作函数之后包含。仅此任务读取 Serial0。
+#include <atomic>
 #include <float.h>  // 引入 float.h 中的声明和定义。
 #include "debug_release_button.h"  // 引入 debug_release_button.h 中的声明和定义。
 #include "start_panel.h"  // 引入 start_panel.h 中的声明和定义。
@@ -12,7 +13,9 @@
 #include "node_position_hardware.h"  // 引入 node_position_hardware.h 中的声明和定义。
 #include "motor_bus.h"  // 引入 motor_bus.h 中的声明和定义。
 #include "ring_correction.h"  // 引入 ring_correction.h 中的声明和定义。
-static bool serialDebugMode = true;  // 将 true 写入或初始化 serialDebugMode（serialDebug模式）。
+static std::atomic<bool> serialDebugMode{true};  // 将 true 写入或初始化 serialDebugMode（serialDebug模式）。
+bool IsSerialDebugMode() { return serialDebugMode.load(); }
+
 /**
  * @brief 处理连续路径试跑配置、准备、启动、状态和停止指令；返回是否已匹配处理。
  */

@@ -180,7 +180,7 @@ void fullFlow(uint8_t zone,MotionKind failed=MotionKind::VELOCITY,bool failVisio
             assert(request.observation==(request.endNode==14?ArmObservation::LOOK2:ArmObservation::LOOK));
             assert(request.cargo==3); // 到站即选首件料盘，早于视觉对齐和首件作业。
         }
-        if(request.kind==MotionKind::NAVIGATE&&request.startNode==10)assert(previous==MotionKind::RETRIEVE_ROUND);
+        if(request.kind==MotionKind::NAVIGATE&&request.startNode==22)assert(request.endNode==10&&previous==MotionKind::RETRIEVE_ROUND);
         if(request.kind==MotionKind::NAVIGATE) {
             assert(request.discDeparture==(request.startNode==14));
             if(request.discDeparture)++discDepartures;

@@ -67,6 +67,14 @@ void completeRetreat(){retreatActive=false;scanAtNode();}
 void completeTurn(){now=scanTurnAt+trayTravelMs;scanAtNode();}
 
 int main(){
+    reset();
+    scannerFrames={"12X+12x+x21+231","15X+123+551+231","12x+123+321+231"};
+    assert(!pollTaskCode());
+    scannerFrames={"12X+123+x21+231"};
+    assert(pollTaskCode());
+    assert(currentTask.round1_colors[0]==1&&currentTask.round1_colors[1]==2&&currentTask.round1_colors[2]==5);
+    assert(currentTask.round2_colors[0]==5&&currentTask.round2_colors[1]==2&&currentTask.round2_colors[2]==1);
+    assert(currentTask.round1_pos[2]==3&&currentTask.round2_pos[0]==2);
     reset();scannerFrames={"412+1\"3+124+123"};assert(!pollTaskCode());
     scannerFrames={"412+1\"3+124+123","412+123+124+123"};assert(pollTaskCode());
     scanAtNode();assert(state==MotionState::DONE&&trayAngles.empty());

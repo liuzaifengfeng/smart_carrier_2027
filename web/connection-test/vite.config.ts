@@ -4,7 +4,7 @@ import { defineConfig } from 'vite'
 
 const chassis = readFileSync(new URL('../../src/chassis.cpp', import.meta.url), 'utf8')
 const geometry = readFileSync(new URL('../../src/field_geometry.def', import.meta.url), 'utf8')
-const positions = chassis.match(/NODE_POSITIONS\[FIELD_NODE_COUNT\]\s*=\s*\{([\s\S]*?)\};/)?.[1] ?? ''
+const positions = chassis.match(/NODE_POSITIONS\[FIELD_NODE_COUNT\]\s*=\s*\{([\s\S]*?)\};/)?.[1]?.replace(/\/\/[^\r\n]*/g, '') ?? ''
 const nodes = Array.from(positions.matchAll(/\{\s*([\d.]+)f?,\s*([\d.]+)f?\s*\}/g),
   ([, x, y], id) => [id, Number(x), Number(y)])
 const bounds = geometry.match(/FIELD_BOUNDS\(\s*(\d+),\s*(\d+)\s*\)/)

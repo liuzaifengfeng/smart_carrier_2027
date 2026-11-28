@@ -74,7 +74,7 @@ NodePathState nodePathState=NodePathState::IDLE;
 uint8_t nodePathBuffer[25];size_t nodePathLen=0;
 uint32_t nodePathRequestedAt=0;
 constexpr uint32_t ROUTE_REPLY_TIMEOUT_MS=2000;
-constexpr uint8_t DISC_AREA_NODE=14,COARSE_AREA_NODE=10,TEMP_AREA_NODE=22;
+constexpr uint8_t DISC_AREA_NODE=14,COARSE_AREA_NODE=22,TEMP_AREA_NODE=10;
 constexpr float StartZoneHeading(uint8_t zone){return zone==1?180.0f:0.0f;}
 uint32_t SubmitLidarPoseAction(bool fromCommand=false,bool allowRepeat=false,uint8_t startZone=0);
 float NODE_PATH_SPEED_MM_S=2500;

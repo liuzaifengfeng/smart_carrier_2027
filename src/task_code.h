@@ -5,6 +5,15 @@
 
 #include <stddef.h>  // 引入 stddef.h 中的声明和定义。
 
+// 两轮颜色段用 X/x 表示黑色，任务码统一使用编号 5。
+inline void NormalizeScannerTaskCode(char *code) {
+    for (size_t i = 0; code[i] != '\0'; ++i) {
+        if ((i < 3 || (i >= 8 && i < 11)) && (code[i] == 'X' || code[i] == 'x')) {
+            code[i] = '5';
+        }
+    }
+}
+
 // 每个数组按该轮任务中的三件物料索引。
 // 粗加工位置来自对应轮的 pos；第二轮暂存叠放的位置映射在比赛流程中处理。
 struct TaskCode {  // 定义 TaskCode（任务Code） 的类型成员或作用域。

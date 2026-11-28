@@ -12,7 +12,7 @@
 #include <string.h>  // 引入 string.h 中的声明和定义。
 
 struct CompetitionMap {  // 定义 CompetitionMap 的类型成员或作用域。
-    uint8_t scan=2,disc=14,coarse=10,temp=22,home1=4,home2=0;  // 将 2,disc=14,coarse=10,temp=22,home1=4,home2=0 写入或初始化 scan（扫码）。
+    uint8_t scan=2,disc=14,coarse=22,temp=10,home1=4,home2=0;  // 将 2,disc=14,coarse=22,temp=10,home1=4,home2=0 写入或初始化 scan（扫码）。
     float homeHeading=HOME_ZONE_HEADING;  // 将 HOME_ZONE_HEADING 写入或初始化 homeHeading（home航向）。
 };  // 结束此类型定义。
 struct CompetitionIO {  // 定义 CompetitionIO（Competition设备接口） 的类型成员或作用域。

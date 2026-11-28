@@ -308,6 +308,7 @@ bool beginPath(float startYOffset=0) {  // 定义函数或成员 的入口 begin
 bool pollTaskCode() {  // 定义函数或成员 的入口 pollTaskCode（poll任务Code），参数由此处的签名确定。
     char code[SCANNER_BUF_LEN];  // 声明 code，类型和可用范围由所在声明决定。
     while(!taskReceived&&waitScannerCode(code,sizeof(code),0)) {  // 当 !taskReceived&&waitScannerCode(code,sizeof(code),0) 成立时继续循环。
+        NormalizeScannerTaskCode(code);
         const auto task=parseTaskCode(code);  // 将 parseTaskCode(code) 写入或初始化 task（任务）。
         portENTER_CRITICAL(&taskCodeMux);if(!taskReceived&&task.valid){currentTask=task;taskReceived=true;}portEXIT_CRITICAL(&taskCodeMux);  // 将 task;taskReceived=true;}portEXIT_CRITICAL(&taskCodeMux) 写入或初始化 currentTask（当前任务）。
         Serial.printf("[SCANNER] task code %s\n",task.valid?"OK":"ERR");  // 调用 Serial.printf，传入 "[SCANNER] task code %s\n",task.valid?"OK":"ERR"。
