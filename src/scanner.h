@@ -1,9 +1,12 @@
-#ifndef SCANNER_H
-#define SCANNER_H
+// 扫码模块的串口初始化和等待接口。
+// 等待端提供输出缓冲区和超时，收到的内容再由任务码解析层解释。
 
-#include <Arduino.h>
-#include <FreeRTOS.h>
-#include <queue.h>
+#ifndef SCANNER_H  // 宏 SCANNER_H 未定义时纳入此分支。
+#define SCANNER_H  // 为后续文本展开定义宏 SCANNER_H。
+
+#include <Arduino.h>  // 引入 Arduino.h 中的声明和定义。
+#include <FreeRTOS.h>  // 引入 FreeRTOS.h 中的声明和定义。
+#include <queue.h>  // 引入 queue.h 中的声明和定义。
 
 /*******************************************************************************
  * 扫码模块 (条码/二维码扫码枪) 驱动
@@ -20,27 +23,27 @@
  ******************************************************************************/
 
 // 扫码枪软串口配置 (可在调用 Scanner_Init 时覆盖)
-#ifndef SCANNER_RX_PIN
+#ifndef SCANNER_RX_PIN  // 宏 SCANNER_RX_PIN 未定义时纳入此分支。
 #define SCANNER_RX_PIN 4          // 软串口 RX = IO4
-#endif
+#endif  // 结束本组条件编译。
 
-#ifndef SCANNER_BAUDRATE
+#ifndef SCANNER_BAUDRATE  // 宏 SCANNER_BAUDRATE 未定义时纳入此分支。
 #define SCANNER_BAUDRATE 9600     // 扫码枪默认波特率
-#endif
+#endif  // 结束本组条件编译。
 
 // 单帧扫码字符串最大长度 (含结尾 '\0')
-#define SCANNER_BUF_LEN 64
+#define SCANNER_BUF_LEN 64  // 为后续文本展开定义宏 SCANNER_BUF_LEN 64。
 
 // 消息队列深度
-#define SCANNER_QUEUE_LEN 8
+#define SCANNER_QUEUE_LEN 8  // 为后续文本展开定义宏 SCANNER_QUEUE_LEN 8。
 
 // 消息队列句柄 (主状态机通过它 / Scanner_WaitCode 读取)
-extern QueueHandle_t xScannerQueue;
+extern QueueHandle_t xScannerQueue;  // 声明外部定义 QueueHandle_t xScannerQueue，供本编译单元引用。
 
 // 队列元素: 一帧扫码字符串 (ASCII, 不含换行回车)
-typedef struct {
-    char data[SCANNER_BUF_LEN];
-} ScannerMsg_t;
+typedef struct {  // 声明 struct，类型和可用范围由所在声明决定。
+    char data[SCANNER_BUF_LEN];  // 声明 data（数据），类型和可用范围由所在声明决定。
+} ScannerMsg_t;  // 续写当前声明或运算，提供 } ScannerMsg_t;。
 
 /**
  * @brief 扫码模块初始化
@@ -50,7 +53,7 @@ typedef struct {
  * @param rxPin   软串口接收引脚 (默认 IO4)
  * @param baudrate 波特率 (默认 9600)
  */
-void Scanner_Init(int rxPin = SCANNER_RX_PIN, uint32_t baudrate = SCANNER_BAUDRATE);
+void Scanner_Init(int rxPin = SCANNER_RX_PIN, uint32_t baudrate = SCANNER_BAUDRATE);  // 声明接口 Scanner_Init（扫码器Init），参数由此处的签名确定。
 
 /**
  * @brief 从扫码枪消息队列读取一帧字符串；由 waitScannerCode 包装为毫秒接口。
@@ -59,6 +62,6 @@ void Scanner_Init(int rxPin = SCANNER_RX_PIN, uint32_t baudrate = SCANNER_BAUDRA
  * @param timeoutMs 实际为 FreeRTOS Tick 数；0 立即查询，portMAX_DELAY 永久等待。
  * @return true 拿到一帧数据, false 超时/无数据
  */
-bool Scanner_WaitCode(char *out, uint32_t len, TickType_t timeoutMs);
+bool Scanner_WaitCode(char *out, uint32_t len, TickType_t timeoutMs);  // 声明接口 Scanner_WaitCode（扫码器WaitCode），参数由此处的签名确定。
 
 #endif // SCANNER_H

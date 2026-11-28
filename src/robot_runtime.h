@@ -1,114 +1,117 @@
-#pragma once
+// 比赛流程、串口任务与视觉运行层使用的声明。
+// 查看同一状态由谁更新时，应从这里找到声明，再追踪定义和写入点。
 
-#include <Arduino.h>
-#include <FreeRTOS.h>
-#include <task.h>
-#include <queue.h>
-#include <semphr.h>
-#include <FastLED.h>
-#include "ota_service.h"
-#include <ArduinoJson.h>
+#pragma once  // 要求编译器在同一编译单元中只展开本头文件一次。
 
-#include "Emm_V5.h"
-#include "chassis.h"
-#include "servo.h"
-#include "scanner.h"
-#include "material_transfer.h"
-#include "runtime_parameters.h"
-#include "serial_frame.h"
-#include "led_pwm.h"
-#include "disc_material_decision.h"
-#include "task_code.h"
-#include "node_route_heading.h"
+#include <Arduino.h>  // 引入 Arduino.h 中的声明和定义。
+#include <FreeRTOS.h>  // 引入 FreeRTOS.h 中的声明和定义。
+#include <task.h>  // 引入 task.h 中的声明和定义。
+#include <queue.h>  // 引入 queue.h 中的声明和定义。
+#include <semphr.h>  // 引入 semphr.h 中的声明和定义。
+#include <FastLED.h>  // 引入 FastLED.h 中的声明和定义。
+#include "ota_service.h"  // 引入 ota_service.h 中的声明和定义。
+#include <ArduinoJson.h>  // 引入 ArduinoJson.h 中的声明和定义。
 
-#define LED_PIN 48
+#include "Emm_V5.h"  // 引入 Emm_V5.h 中的声明和定义。
+#include "chassis.h"  // 引入 chassis.h 中的声明和定义。
+#include "servo.h"  // 引入 servo.h 中的声明和定义。
+#include "scanner.h"  // 引入 scanner.h 中的声明和定义。
+#include "material_transfer.h"  // 引入 material_transfer.h 中的声明和定义。
+#include "runtime_parameters.h"  // 引入 runtime_parameters.h 中的声明和定义。
+#include "serial_frame.h"  // 引入 serial_frame.h 中的声明和定义。
+#include "led_pwm.h"  // 引入 led_pwm.h 中的声明和定义。
+#include "disc_material_decision.h"  // 引入 disc_material_decision.h 中的声明和定义。
+#include "task_code.h"  // 引入 task_code.h 中的声明和定义。
+#include "node_route_heading.h"  // 引入 node_route_heading.h 中的声明和定义。
+
+#define LED_PIN 48  // 为后续文本展开定义宏 LED_PIN 48。
 constexpr uint8_t BOOT0_PIN = 0; // 板载BOOT按键，低电平按下。
-#define NUM_LEDS 1
-#define OTA_HOSTNAME "smartcarrier_ESP32S3"
-#define VERSION "0.1.4-framework"
-#define CHASSIS_MOTOR_1 1
-#define CHASSIS_MOTOR_2 2
-#define CHASSIS_MOTOR_3 3
-#define CHASSIS_MOTOR_4 4
+#define NUM_LEDS 1  // 为后续文本展开定义宏 NUM_LEDS 1。
+#define OTA_HOSTNAME "smartcarrier_ESP32S3"  // 为后续文本展开定义宏 OTA_HOSTNAME "smartcarrier_ESP32S3"。
+#define VERSION "0.1.4-framework"  // 为后续文本展开定义宏 VERSION "0.1.4-framework"。
+#define CHASSIS_MOTOR_1 1  // 为后续文本展开定义宏 CHASSIS_MOTOR_1 1。
+#define CHASSIS_MOTOR_2 2  // 为后续文本展开定义宏 CHASSIS_MOTOR_2 2。
+#define CHASSIS_MOTOR_3 3  // 为后续文本展开定义宏 CHASSIS_MOTOR_3 3。
+#define CHASSIS_MOTOR_4 4  // 为后续文本展开定义宏 CHASSIS_MOTOR_4 4。
 #define LIFT_MOTOR_5   5      // 升降电机
 #define ARM_MOTOR_6   6      // 机械臂电机
-constexpr uint32_t ALIGN_FEEDBACK_TIMEOUT_MS = 300;
-constexpr uint32_t ALIGN_LOG_INTERVAL_MS = 500;
+constexpr uint32_t ALIGN_FEEDBACK_TIMEOUT_MS = 300;  // 将 300 写入或初始化 ALIGN_FEEDBACK_TIMEOUT_MS（ALIGN反馈超时毫秒）。
+constexpr uint32_t ALIGN_LOG_INTERVAL_MS = 500;  // 将 500 写入或初始化 ALIGN_LOG_INTERVAL_MS（ALIGNLOGINTERVAL毫秒）。
 constexpr uint32_t AUTO_ALIGN_TIMEOUT_MS = 5000; // 包含等待首帧的时间。
 extern float NODE_PATH_SPEED_MM_S; // 正式节点路径平移速度，mm/s；不是电机RPM。
 extern uint32_t NODE_PATH_OUTER_ACCEL_LEVEL; // 外圈平移加减速档位；启动整条路径时冻结。
 extern float NODE_PATH_MIDDLE_SPEED_MM_S; // 中间道路平移速度，mm/s。
 extern uint32_t NODE_PATH_MIDDLE_ACCEL_LEVEL; // 中间道路平移加减速档位。
-extern float NODE_PATH_TURN_DEG_S;
-extern float NODE_PATH_TURN_ACCEL_DEG_S2;
-extern float NODE_PATH_HEADING_DEADBAND_DEG;
-extern uint32_t SCAN_APPROACH_SPEED_RPM;
-extern uint32_t ALIGN_PID_MAX_SPEED_RPM;
-extern uint32_t SCAN_SEARCH_SPEED_RPM;
-constexpr uint8_t SCAN_AREA_NODE = 2;
-constexpr uint8_t DISC_AREA_NODE = 14;
+extern float NODE_PATH_TURN_DEG_S;  // 声明外部定义 float NODE_PATH_TURN_DEG_S，供本编译单元引用。
+extern float NODE_PATH_TURN_ACCEL_DEG_S2;  // 声明外部定义 float NODE_PATH_TURN_ACCEL_DEG_S2，供本编译单元引用。
+extern float NODE_PATH_HEADING_DEADBAND_DEG;  // 声明外部定义 float NODE_PATH_HEADING_DEADBAND_DEG，供本编译单元引用。
+extern uint32_t SCAN_APPROACH_SPEED_RPM;  // 声明外部定义 uint32_t SCAN_APPROACH_SPEED_RPM，供本编译单元引用。
+extern uint32_t ALIGN_PID_MAX_SPEED_RPM;  // 声明外部定义 uint32_t ALIGN_PID_MAX_SPEED_RPM，供本编译单元引用。
+extern uint32_t SCAN_SEARCH_SPEED_RPM;  // 声明外部定义 uint32_t SCAN_SEARCH_SPEED_RPM，供本编译单元引用。
+constexpr uint8_t SCAN_AREA_NODE = 2;  // 将 2 写入或初始化 SCAN_AREA_NODE（扫码AREA节点）。
+constexpr uint8_t DISC_AREA_NODE = 14;  // 将 14 写入或初始化 DISC_AREA_NODE（圆盘AREA节点）。
 // 粗加工区中心约为 (210, 1100)，对应当前 5x5 地图的 10 号节点。
-constexpr uint8_t COARSE_AREA_NODE = 10;
+constexpr uint8_t COARSE_AREA_NODE = 10;  // 将 10 写入或初始化 COARSE_AREA_NODE（COARSEAREA节点）。
 // 当前地图暂存区中心 (1200,2180) 对应节点 22，地图调整时同步核对。
-constexpr uint8_t TEMP_AREA_NODE = 22;
+constexpr uint8_t TEMP_AREA_NODE = 22;  // 将 22 写入或初始化 TEMP_AREA_NODE（TEMPAREA节点）。
 // 启停区附近的地图节点；最终归位由 CORNER 视觉对齐。
-constexpr uint8_t HOME_ZONE1_NODE = 4;
-constexpr uint8_t HOME_ZONE2_NODE = 0;
-constexpr float StartZoneHeading(uint8_t zone) { return zone==1?180.0f:0.0f; }
-constexpr float DISC_AREA_HEADING = 90.0f;
-constexpr float COARSE_AREA_HEADING = 270.0f;
-constexpr float TEMP_AREA_HEADING = 180.0f;
-#include "robot_state.h"
+constexpr uint8_t HOME_ZONE1_NODE = 4;  // 将 4 写入或初始化 HOME_ZONE1_NODE（HOMEZONE1节点）。
+constexpr uint8_t HOME_ZONE2_NODE = 0;  // 将 0 写入或初始化 HOME_ZONE2_NODE（HOMEZONE2节点）。
+constexpr float StartZoneHeading(uint8_t zone) { return zone==1?180.0f:0.0f; }  // 定义函数或成员 StartZoneHeading（起点Zone航向），参数由此处的签名确定。
+constexpr float DISC_AREA_HEADING = 90.0f;  // 将 90.0f 写入或初始化 DISC_AREA_HEADING（圆盘AREA航向）。
+constexpr float COARSE_AREA_HEADING = 270.0f;  // 将 270.0f 写入或初始化 COARSE_AREA_HEADING（COARSEAREA航向）。
+constexpr float TEMP_AREA_HEADING = 180.0f;  // 将 180.0f 写入或初始化 TEMP_AREA_HEADING（TEMPAREA航向）。
+#include "robot_state.h"  // 引入 robot_state.h 中的声明和定义。
 
 
 
-enum class NodePathState { IDLE, WAITING, RECEIVING, RECEIVED, RUNNING, DONE, FAILED };
+enum class NodePathState { IDLE, WAITING, RECEIVING, RECEIVED, RUNNING, DONE, FAILED };  // 定义 NodePathState（节点路径状态） 的类型成员或作用域。
 
 
 
-typedef struct {
-    float angleDeg;
-    float visualX;
-    float visualY;
-    uint32_t sequence;
-} VisualAlignmentFrame_t;
+typedef struct {  // 声明 struct，类型和可用范围由所在声明决定。
+    float angleDeg;  // 声明 angleDeg（角度角度），类型和可用范围由所在声明决定。
+    float visualX;  // 声明 visualX（visual横向），类型和可用范围由所在声明决定。
+    float visualY;  // 声明 visualY（visual纵向），类型和可用范围由所在声明决定。
+    uint32_t sequence;  // 声明 sequence，类型和可用范围由所在声明决定。
+} VisualAlignmentFrame_t;  // 续写当前声明或运算，提供 } VisualAlignmentFrame_t;。
 
-typedef struct {
-    char cmd[20];
-    float param1, param2, param3;
-} VisualCmd_t;
+typedef struct {  // 声明 struct，类型和可用范围由所在声明决定。
+    char cmd[20];  // 声明 cmd（命令），类型和可用范围由所在声明决定。
+    float param1, param2, param3;  // 声明 param3，类型和可用范围由所在声明决定。
+} VisualCmd_t;  // 续写当前声明或运算，提供 } VisualCmd_t;。
 
-extern CRGB leds[NUM_LEDS];
-extern float X_PULSE;
-extern TaskCode currentTask;
-extern portMUX_TYPE taskCodeMux;
-extern volatile RobotState currentState;
-extern volatile StartZone currentStartZone;
-extern volatile bool taskReceived;
-extern volatile int  roundProgress;
-extern volatile bool firstDiscGrabReady;
+extern CRGB leds[NUM_LEDS];  // 声明外部定义 CRGB leds[NUM_LEDS]，供本编译单元引用。
+extern float X_PULSE;  // 声明外部定义 float X_PULSE，供本编译单元引用。
+extern TaskCode currentTask;  // 声明外部定义 TaskCode currentTask，供本编译单元引用。
+extern portMUX_TYPE taskCodeMux;  // 声明外部定义 portMUX_TYPE taskCodeMux，供本编译单元引用。
+extern volatile RobotState currentState;  // 声明外部定义 volatile RobotState currentState，供本编译单元引用。
+extern volatile StartZone currentStartZone;  // 声明外部定义 volatile StartZone currentStartZone，供本编译单元引用。
+extern volatile bool taskReceived;  // 声明外部定义 volatile bool taskReceived，供本编译单元引用。
+extern volatile int  roundProgress;  // 声明外部定义 volatile int roundProgress，供本编译单元引用。
+extern volatile bool firstDiscGrabReady;  // 声明外部定义 volatile bool firstDiscGrabReady，供本编译单元引用。
 extern volatile bool discMessageResumeRequested; // look3 实测到位后，排空此前旧帧再开放圆盘抓取。
-extern volatile bool enableRun;
-extern volatile bool alignmentEnabled;
-extern volatile bool discMaterialActive;
-extern uint8_t discMaterialColor;
-extern QueueHandle_t xAlignmentQueue;
-extern NodePathState nodePathState;
-extern portMUX_TYPE nodePathMux;
-extern uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH];
-extern size_t nodePathLen;
-constexpr uint32_t ROUTE_REPLY_TIMEOUT_MS = 2000;
-constexpr uint8_t ROUTE_REPLY_MAX_RETRIES = 10;
+extern volatile bool enableRun;  // 声明外部定义 volatile bool enableRun，供本编译单元引用。
+extern volatile bool alignmentEnabled;  // 声明外部定义 volatile bool alignmentEnabled，供本编译单元引用。
+extern volatile bool discMaterialActive;  // 声明外部定义 volatile bool discMaterialActive，供本编译单元引用。
+extern uint8_t discMaterialColor;  // 声明外部定义 uint8_t discMaterialColor，供本编译单元引用。
+extern QueueHandle_t xAlignmentQueue;  // 声明外部定义 QueueHandle_t xAlignmentQueue，供本编译单元引用。
+extern NodePathState nodePathState;  // 声明外部定义 NodePathState nodePathState，供本编译单元引用。
+extern portMUX_TYPE nodePathMux;  // 声明外部定义 portMUX_TYPE nodePathMux，供本编译单元引用。
+extern uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH];  // 声明外部定义 uint8_t nodePathBuffer[MAX_NODE_PATH_LENGTH]，供本编译单元引用。
+extern size_t nodePathLen;  // 声明外部定义 size_t nodePathLen，供本编译单元引用。
+constexpr uint32_t ROUTE_REPLY_TIMEOUT_MS = 2000;  // 将 2000 写入或初始化 ROUTE_REPLY_TIMEOUT_MS（路线REPLY超时毫秒）。
+constexpr uint8_t ROUTE_REPLY_MAX_RETRIES = 10;  // 将 10 写入或初始化 ROUTE_REPLY_MAX_RETRIES（路线REPLY最大RETRIES）。
 extern uint32_t nodePathRequestedAt; // 由 nodePathMux 保护。
-extern SemaphoreHandle_t xAlignmentMotionMutex;
-extern QueueHandle_t xVisualTaskQueue;
-extern TimerHandle_t xHomeTimer;
-extern SemaphoreHandle_t xLidarPoseMutex;
+extern SemaphoreHandle_t xAlignmentMotionMutex;  // 声明外部定义 SemaphoreHandle_t xAlignmentMotionMutex，供本编译单元引用。
+extern QueueHandle_t xVisualTaskQueue;  // 声明外部定义 QueueHandle_t xVisualTaskQueue，供本编译单元引用。
+extern TimerHandle_t xHomeTimer;  // 声明外部定义 TimerHandle_t xHomeTimer，供本编译单元引用。
+extern SemaphoreHandle_t xLidarPoseMutex;  // 声明外部定义 SemaphoreHandle_t xLidarPoseMutex，供本编译单元引用。
 
 /**
  * @brief 读取自动对齐状态，供主流程决定是否进入取放料阶段。
  */
-AutoAlignmentState getAutoAlignmentState();
+AutoAlignmentState getAutoAlignmentState();  // 声明接口 getAutoAlignmentState（getAutoAlignment状态），参数由此处的签名确定。
 /**
  * @brief 开启或关闭底盘视觉对齐，并维护当前模式、完成判定和显示应答。
  * @param enable true 开启，false 关闭。
@@ -117,31 +120,31 @@ AutoAlignmentState getAutoAlignmentState();
  * @param owner 拥有该次对齐的视觉模式。
  * @param onlyOwner 是否仅允许匹配拥有者关闭。
  */
-void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false, VisionStartMode owner = VisionStartMode::NONE,
-    bool onlyOwner = false, bool invertCornerXY = false);
+void setAlignmentEnabled(bool enable, bool acknowledge = false, bool automatic = false, VisionStartMode owner = VisionStartMode::NONE,  // 定义函数或成员 setAlignmentEnabled（setAlignment已启用），参数由此处的签名确定。
+    bool onlyOwner = false, bool invertCornerXY = false);  // 将 false, bool invertCornerXY = false) 写入或初始化 onlyOwner。
 /**
  * @brief 按起始区提交扫码准备姿态，正式模式复用已完成标志避免重复动作。
  * @param fromCommand true 表示串口显式请求。
  * @param allowRepeat 是否允许重复执行已完成的正式准备动作。
  * @return 非零作业编号；0 表示未提交或无需重复。
  */
-uint32_t SubmitLidarPoseAction(bool fromCommand=false,bool allowRepeat=false,uint8_t startZone=0);
+uint32_t SubmitLidarPoseAction(bool fromCommand=false,bool allowRepeat=false,uint8_t startZone=0);  // 声明接口 SubmitLidarPoseAction，参数由此处的签名确定。
 /**
  * @brief 处理扫码准备作业结束，仅在正式模式成功时登记准备已完成。
  */
-void CompleteLidarPose(bool success,bool debug);
+void CompleteLidarPose(bool success,bool debug);  // 声明接口 CompleteLidarPose，参数由此处的签名确定。
 /**
  * @brief 封装并发送上位机显示事件；返回是否发送成功。
  */
-bool updateDisplay(const char *commandType, const char *displayType, const char *content);
+bool updateDisplay(const char *commandType, const char *displayType, const char *content);  // 声明接口 updateDisplay，参数由此处的签名确定。
 /**
  * @brief 发送开启指定视觉模式的请求，并按模式设置对齐或物料识别状态。
  */
-void requestVisionStart(VisionStartMode mode,bool invertCornerXY=false);
+void requestVisionStart(VisionStartMode mode,bool invertCornerXY=false);  // 声明接口 requestVisionStart（请求视觉起点），参数由此处的签名确定。
 /**
  * @brief 发送停止指定视觉模式的请求，并结束对应本地控制状态。
  */
-void requestVisionStop(VisionStartMode mode);
+void requestVisionStop(VisionStartMode mode);  // 声明接口 requestVisionStop（请求视觉停止），参数由此处的签名确定。
 /**
  * @brief 从扫码枪消息队列取出一帧字符串。
  * @param out 输出任务码缓冲区。
@@ -149,26 +152,26 @@ void requestVisionStop(VisionStartMode mode);
  * @param timeoutMs 等待毫秒数，0 表示立即查询。
  * @return true 取得数据，false 没有数据或参数无效。
  */
-bool waitScannerCode(char *out, uint32_t len, uint32_t timeoutMs);
+bool waitScannerCode(char *out, uint32_t len, uint32_t timeoutMs);  // 声明接口 waitScannerCode（wait扫码器Code），参数由此处的签名确定。
 /**
  * @brief 启动时读取转台或夹爪实际角度，成功时写入 storedAngle；不发运动指令。
  */
-void readStartupServoAngle(uint8_t servoId, float &storedAngle);
+void readStartupServoAngle(uint8_t servoId, float &storedAngle);  // 声明接口 readStartupServoAngle（readStartupServo角度），参数由此处的签名确定。
 /**
  * @brief 比赛主任务，每10ms调用 CompetitionFlow::tick，处理状态编排及主阶段日志。
  */
-void Task_MainStateMachine(void *pvParameters);
+void Task_MainStateMachine(void *pvParameters);  // 声明接口 Task_MainStateMachine（任务Main状态Machine），参数由此处的签名确定。
 /**
  * @brief 接收串口帧并分发查询、参数、调试与运动请求；运动交给统一执行器。
  */
-void Task_Serial_CMD(void *pvParameters);
+void Task_Serial_CMD(void *pvParameters);  // 声明接口 Task_Serial_CMD（任务Serial命令），参数由此处的签名确定。
 /**
  * @brief 采样板载BOOT按钮并记录Release请求，实际切换由空闲串口任务处理。
  */
 void PollDebugBootButton(); // loop采样，Release由空闲的串口任务统一执行。
-StartZone ReadPanelStartRequest();
-StartZone SelectReleaseStartZone(bool waitForPanel);
+StartZone ReadPanelStartRequest();  // 声明接口 ReadPanelStartRequest（ReadPanel起点请求），参数由此处的签名确定。
+StartZone SelectReleaseStartZone(bool waitForPanel);  // 声明接口 SelectReleaseStartZone（SelectRelease起点Zone），参数由此处的签名确定。
 /**
  * @brief 比赛总计时器超时回调，执行既有停止、失败状态及主任务暂停处理。
  */
-void vHomeTimerCallback(TimerHandle_t xTimer);
+void vHomeTimerCallback(TimerHandle_t xTimer);  // 声明接口 vHomeTimerCallback（vHome定时器Callback），参数由此处的签名确定。

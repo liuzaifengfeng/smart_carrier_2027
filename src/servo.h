@@ -1,7 +1,10 @@
-#ifndef FASHIONSTAR_SERVO_H
-#define FASHIONSTAR_SERVO_H
+// 总线舵机地址、协议常量及接口。
+// 普通与多圈角度接口的参数长度和编码方式不同，更改目标时需查看对应调用。
 
-#include <Arduino.h>
+#ifndef FASHIONSTAR_SERVO_H  // 宏 FASHIONSTAR_SERVO_H 未定义时纳入此分支。
+#define FASHIONSTAR_SERVO_H  // 为后续文本展开定义宏 FASHIONSTAR_SERVO_H。
+
+#include <Arduino.h>  // 引入 Arduino.h 中的声明和定义。
 
 /*******************************************************************************
  * Fashion Star (华馨京) UART 总线舵机驱动模块 (以 HA8-U25H-M 为主)
@@ -13,15 +16,15 @@
  ******************************************************************************/
 
 // 默认串口引脚定义 (ESP32-S3 可在 Servo_Init 中自定义引脚)
-#ifndef SERVO_UART_TX_PIN
-#define SERVO_UART_TX_PIN 18
-#endif
+#ifndef SERVO_UART_TX_PIN  // 宏 SERVO_UART_TX_PIN 未定义时纳入此分支。
+#define SERVO_UART_TX_PIN 18  // 为后续文本展开定义宏 SERVO_UART_TX_PIN 18。
+#endif  // 结束本组条件编译。
 
-#ifndef SERVO_UART_RX_PIN
-#define SERVO_UART_RX_PIN 17
-#endif
+#ifndef SERVO_UART_RX_PIN  // 宏 SERVO_UART_RX_PIN 未定义时纳入此分支。
+#define SERVO_UART_RX_PIN 17  // 为后续文本展开定义宏 SERVO_UART_RX_PIN 17。
+#endif  // 结束本组条件编译。
 
-#define SERVO_UART_BAUDRATE 115200
+#define SERVO_UART_BAUDRATE 115200  // 为后续文本展开定义宏 SERVO_UART_BAUDRATE 115200。
 
 // 常用机械结构舵机 ID 宏定义 (可按实际硬件分配调整)
 #define SERVO_ID_CLAW       1    // 夹爪舵机
@@ -52,10 +55,10 @@
 #define FSUS_CMD_STOP              0x18// 停止/释放/保持锁力
 
 // 状态返回值
-#define FSUS_STATUS_SUCCESS     0
-#define FSUS_STATUS_TIMEOUT     1
-#define FSUS_STATUS_CHECKSUM_ERR 2
-#define FSUS_STATUS_ID_MISMATCH 3
+#define FSUS_STATUS_SUCCESS     0  // 为后续文本展开定义宏 FSUS_STATUS_SUCCESS 0。
+#define FSUS_STATUS_TIMEOUT     1  // 为后续文本展开定义宏 FSUS_STATUS_TIMEOUT 1。
+#define FSUS_STATUS_CHECKSUM_ERR 2  // 为后续文本展开定义宏 FSUS_STATUS_CHECKSUM_ERR 2。
+#define FSUS_STATUS_ID_MISMATCH 3  // 为后续文本展开定义宏 FSUS_STATUS_ID_MISMATCH 3。
 
 // ================= 函数接口声明 =================
 
@@ -66,7 +69,7 @@
  * @param rxPin RX 引脚号 (默认 SERVO_UART_RX_PIN)
  * @param txPin TX 引脚号 (默认 SERVO_UART_TX_PIN)
  */
-void Servo_Init(HardwareSerial *serialPort = &Serial2, uint32_t baudrate = SERVO_UART_BAUDRATE, int rxPin = SERVO_UART_RX_PIN, int txPin = SERVO_UART_TX_PIN);
+void Servo_Init(HardwareSerial *serialPort = &Serial2, uint32_t baudrate = SERVO_UART_BAUDRATE, int rxPin = SERVO_UART_RX_PIN, int txPin = SERVO_UART_TX_PIN);  // 声明接口 Servo_Init，参数由此处的签名确定。
 
 /**
  * @brief 设置舵机单圈绝对角度 (最常用接口)
@@ -75,7 +78,7 @@ void Servo_Init(HardwareSerial *serialPort = &Serial2, uint32_t baudrate = SERVO
  * @param interval 运动总耗时 (单位: ms, 0 表示尽快到达)
  * @param power 功率限制 (0~1000 mW，0 为舵机默认最大功率)
  */
-void Servo_SetAngle(uint8_t servoId, float angle, uint16_t interval = 0, uint16_t power = 0);
+void Servo_SetAngle(uint8_t servoId, float angle, uint16_t interval = 0, uint16_t power = 0);  // 声明接口 Servo_SetAngle（ServoSet角度），参数由此处的签名确定。
 
 /**
  * @brief 多圈绝对角度控制 (HA8-U25H-M 磁编码专用，支持 ±1024 圈)
@@ -84,7 +87,7 @@ void Servo_SetAngle(uint8_t servoId, float angle, uint16_t interval = 0, uint16_
  * @param interval 运行时间 (ms)
  * @param power 功率限制 (mW)
  */
-void Servo_SetAngleMTurn(uint8_t servoId, float angle, uint32_t interval = 0, uint16_t power = 0);
+void Servo_SetAngleMTurn(uint8_t servoId, float angle, uint32_t interval = 0, uint16_t power = 0);  // 声明接口 Servo_SetAngleMTurn（ServoSet角度MTurn），参数由此处的签名确定。
 void Servo_MoveCargoTray(float angle); // 自动选盘、归零用短斜坡，多圈目标角度单位为度。
 
 /**
@@ -96,7 +99,7 @@ void Servo_MoveCargoTray(float angle); // 自动选盘、归零用短斜坡，�
  * @param t_dec 减速时间（ms，不小于 20）
  * @param power 执行功率（mW），0 使用舵机功率保护阈值
  */
-void Servo_SetAngleMTurnByInterval(uint8_t servoId, float angle, uint32_t interval, uint16_t t_acc, uint16_t t_dec, uint16_t power = 0);
+void Servo_SetAngleMTurnByInterval(uint8_t servoId, float angle, uint32_t interval, uint16_t t_acc, uint16_t t_dec, uint16_t power = 0);  // 声明接口 Servo_SetAngleMTurnByInterval（ServoSet角度MTurnByInterval），参数由此处的签名确定。
 
 /**
  * @brief 梯形加减速角度控制 (平滑平稳运动)
@@ -107,7 +110,7 @@ void Servo_SetAngleMTurnByInterval(uint8_t servoId, float angle, uint32_t interv
  * @param t_dec 减速时间 (ms, 最小 > 20ms)
  * @param power 功率限制 (mW)
  */
-void Servo_SetAngleByInterval(uint8_t servoId, float angle, uint16_t interval, uint16_t t_acc, uint16_t t_dec, uint16_t power = 0);
+void Servo_SetAngleByInterval(uint8_t servoId, float angle, uint16_t interval, uint16_t t_acc, uint16_t t_dec, uint16_t power = 0);  // 声明接口 Servo_SetAngleByInterval（ServoSet角度ByInterval），参数由此处的签名确定。
 
 /**
  * @brief 读取舵机当前实时角度 (阻塞式读取)
@@ -116,22 +119,22 @@ void Servo_SetAngleByInterval(uint8_t servoId, float angle, uint16_t interval, u
  * @param timeoutMs 超时时间 (默认 50ms)
  * @return true 读取成功, false 超时或校验失败
  */
-bool Servo_QueryAngle(uint8_t servoId, float &currentAngle, uint32_t timeoutMs = 50);
+bool Servo_QueryAngle(uint8_t servoId, float &currentAngle, uint32_t timeoutMs = 50);  // 声明接口 Servo_QueryAngle（ServoQuery角度），参数由此处的签名确定。
 
 // 读取与 Servo_SetAngleMTurn 相同坐标系的真实多圈角度（单位：度）。
 // 返回 false 表示通信失败，调用方不能用单圈读数代替多圈读数。
-bool Servo_QueryAngleMTurn(uint8_t servoId, float &currentAngle, uint32_t timeoutMs = 50);
+bool Servo_QueryAngleMTurn(uint8_t servoId, float &currentAngle, uint32_t timeoutMs = 50);  // 声明接口 Servo_QueryAngleMTurn（ServoQuery角度MTurn），参数由此处的签名确定。
 
 // 先释放锁力，再重置累计圈数，随后在当前位置恢复锁力并回读。
 // 仅改变舵机的多圈计数，不下发旋转目标；返回 true 表示回读成功。
-bool Servo_ResetTurnCount(uint8_t servoId, float &newAngle);
+bool Servo_ResetTurnCount(uint8_t servoId, float &newAngle);  // 声明接口 Servo_ResetTurnCount（ServoResetTurn计数），参数由此处的签名确定。
 /** @brief 先释放锁力、设置原点(0x17，reset=0)、再恢复锁力；返回是否已下发。 */
-bool Servo_SetOrigin(uint8_t servoId);
+bool Servo_SetOrigin(uint8_t servoId);  // 声明接口 Servo_SetOrigin（ServoSet原点），参数由此处的签名确定。
 
 /** @brief 查询内部调节参数，顺序为Kp、Kd、Ki、PwmBias、HoldKp、HoldKd、HoldPwmBias。 */
-bool Servo_ReadPid(uint8_t servoId, uint16_t values[7]);
+bool Servo_ReadPid(uint8_t servoId, uint16_t values[7]);  // 声明接口 Servo_ReadPid（ServoReadPID），参数由此处的签名确定。
 /** @brief 保留参数块其他字节，释放锁力后写入7个调节参数，等待300ms再恢复锁力。 */
-bool Servo_WritePid(uint8_t servoId, const uint16_t values[7]);
+bool Servo_WritePid(uint8_t servoId, const uint16_t values[7]);  // 声明接口 Servo_WritePid（ServoWritePID），参数由此处的签名确定。
 
 /**
  * @brief 检测舵机是否在线 (Ping)
@@ -139,27 +142,27 @@ bool Servo_WritePid(uint8_t servoId, const uint16_t values[7]);
  * @param timeoutMs 超时时间 (默认 50ms)
  * @return true 在线, false 离线
  */
-bool Servo_Ping(uint8_t servoId, uint32_t timeoutMs = 50);
+bool Servo_Ping(uint8_t servoId, uint32_t timeoutMs = 50);  // 声明接口 Servo_Ping，参数由此处的签名确定。
 
 /**
  * @brief 进入阻尼模式 / 卸力 / 掉电
  * @param servoId 舵机 ID
  * @param power 维持阻尼阻力 (0 为完全自由，数值越大阻尼感越强，最大 1000)
  */
-void Servo_SetDamping(uint8_t servoId, uint16_t power = 0);
+void Servo_SetDamping(uint8_t servoId, uint16_t power = 0);  // 声明接口 Servo_SetDamping，参数由此处的签名确定。
 
 /**
  * @brief 轮式连续旋转模式 (可作电机用)
  * @param servoId 舵机 ID
  * @param speed 旋转速度 (单位: °/s, 正负代表方向, 0 为停止)
  */
-void Servo_SetWheelMode(uint8_t servoId, float speed);
+void Servo_SetWheelMode(uint8_t servoId, float speed);  // 声明接口 Servo_SetWheelMode（ServoSet轮模式），参数由此处的签名确定。
 
 /**
  * @brief 停止舵机运动 (保持当前角度)
  * @param servoId 舵机 ID
  */
-void Servo_Stop(uint8_t servoId);
-void Servo_HoldPosition(uint8_t servoId);
+void Servo_Stop(uint8_t servoId);  // 声明接口 Servo_Stop（Servo停止），参数由此处的签名确定。
+void Servo_HoldPosition(uint8_t servoId);  // 声明接口 Servo_HoldPosition（Servo保持位置），参数由此处的签名确定。
 
 #endif // FASHIONSTAR_SERVO_H

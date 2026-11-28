@@ -1,49 +1,52 @@
-#pragma once
-#include "motion_types.h"
+// 运动执行器的提交、启动、查询及取消接口。
+// 允许先排队再启动，串口层可先应答并发送作业编号。
+
+#pragma once  // 要求编译器在同一编译单元中只展开本头文件一次。
+#include "motion_types.h"  // 引入 motion_types.h 中的声明和定义。
 
 /**
  * @brief 创建统一运动任务及作业队列；后续底盘、机械臂和视觉闭环由该任务推进。
  * @return true 初始化成功，false 队列或任务创建失败。
  */
-bool MotionExecutorInit();
+bool MotionExecutorInit();  // 声明接口 MotionExecutorInit，参数由此处的签名确定。
 /**
  * @brief 按值复制动作请求到队列，不等待动作执行完成。
  * @param request 动作类型、目标位置及本轮任务数据。
  * @param launch true 立即允许执行；false 等串口回复 ACK 后调用 LaunchMotion 放行。
  * @return 非零作业编号；0 表示未提交。提交成功不等于动作完成。
  */
-uint32_t SubmitMotion(const MotionRequest &request,bool launch=true);
-uint32_t SubmitMotion(const MotionRequest &request,bool launch,MotionSubmitError *error);
+uint32_t SubmitMotion(const MotionRequest &request,bool launch=true);  // 声明接口 SubmitMotion，参数由此处的签名确定。
+uint32_t SubmitMotion(const MotionRequest &request,bool launch,MotionSubmitError *error);  // 声明接口 SubmitMotion，参数由此处的签名确定。
 /**
  * @brief 放行已入队的指定作业，并唤醒运动任务；用于保证串口 ACK 先于动作执行。
  * @param id SubmitMotion 返回的作业编号。
  */
-void LaunchMotion(uint32_t id);
-bool ResumeMaterialMotion(uint32_t id,uint32_t token);
+void LaunchMotion(uint32_t id);  // 声明接口 LaunchMotion，参数由此处的签名确定。
+bool ResumeMaterialMotion(uint32_t id,uint32_t token);  // 声明接口 ResumeMaterialMotion（Resume物料Motion），参数由此处的签名确定。
 /**
  * @brief 读取指定作业的状态快照，可查询当前作业及最近保留的终态。
  * @param id 提交动作时取得的作业编号。
  * @return 含执行状态、阶段、错误原因及底盘/机械臂完成标志的快照。
  */
-MotionStatus GetMotionStatus(uint32_t id);
+MotionStatus GetMotionStatus(uint32_t id);  // 声明接口 GetMotionStatus（GetMotion状态），参数由此处的签名确定。
 /**
  * @brief 判断是否存在排队中或执行中的运动作业。
  * @return true 表示执行器忙碌。
  */
-bool MotionExecutorActive();
+bool MotionExecutorActive();  // 声明接口 MotionExecutorActive（MotionExecutor活跃），参数由此处的签名确定。
 /**
  * @brief 取消当前作业代次并请求工作任务停车；旧作业不会在取消后继续执行。
  */
-void CancelMotion();
+void CancelMotion();  // 声明接口 CancelMotion，参数由此处的签名确定。
 /**
  * @brief 设置 OTA 占用状态；进入 OTA 时取消运动作业。
  * @param active true 进入 OTA，false 退出 OTA。
  */
-void MotionExecutorSetOta(bool active);
+void MotionExecutorSetOta(bool active);  // 声明接口 MotionExecutorSetOta（MotionExecutorSet固件更新），参数由此处的签名确定。
 /**
  * @brief 通知运动任务立即检查待执行作业、取消请求或新视觉反馈。
  */
-void WakeMotionExecutor();
+void WakeMotionExecutor();  // 声明接口 WakeMotionExecutor，参数由此处的签名确定。
 /**
  * @brief 读取当前运动作业编号，供运动任务内部输出分项日志。
  */
@@ -54,12 +57,12 @@ uint32_t CurrentMotionId(); // 仅供运动任务内部的分项日志使用。
  * @param id 待等待的作业编号。
  * @return true 作业 DONE，false 编号无效或作业失败、取消。
  */
-bool WaitMotion(uint32_t id);
+bool WaitMotion(uint32_t id);  // 声明接口 WaitMotion，参数由此处的签名确定。
 // 视觉任务只投递反馈；闭环发令由同一运动任务完成。
 /**
  * @brief 处理最新视觉反馈并推进一次底盘对齐闭环；由统一运动任务调用。
  */
-void TickVisualAlignment();
+void TickVisualAlignment();  // 声明接口 TickVisualAlignment（轮询VisualAlignment），参数由此处的签名确定。
 
-extern float MOTION_LOOK_LEAD_MM,MOTION_LOOK2_LEAD_MM;
-extern uint32_t ARM_FEEDBACK_ENABLED,ARM_GRIP_HOLD_MS,ARM_RELEASE_HOLD_MS;
+extern float MOTION_LOOK_LEAD_MM,MOTION_LOOK2_LEAD_MM;  // 声明外部定义 float MOTION_LOOK_LEAD_MM,MOTION_LOOK2_LEAD_MM，供本编译单元引用。
+extern uint32_t ARM_FEEDBACK_ENABLED,ARM_GRIP_HOLD_MS,ARM_RELEASE_HOLD_MS;  // 声明外部定义 uint32_t ARM_FEEDBACK_ENABLED,ARM_GRIP_HOLD_MS,ARM_REL…，供本编译单元引用。

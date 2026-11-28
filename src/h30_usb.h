@@ -1,12 +1,15 @@
-#pragma once
-#include "h30_protocol.h"
+// H30 USB 的采样与地图航向接口。
+// 样本年龄、样本时间和参考版本用于不同的读取场景，调用时应区分其含义。
+
+#pragma once  // 要求编译器在同一编译单元中只展开本头文件一次。
+#include "h30_protocol.h"  // 引入 h30_protocol.h 中的声明和定义。
 
 // 不等待设备接入；初始化失败不影响其他业务。
 /**
  * @brief 初始化H30 USB接收，不等待设备插入；失败不阻断其他业务。
  * @return true 初始化成功。
  */
-bool H30UsbBegin();
+bool H30UsbBegin();  // 声明接口 H30UsbBegin，参数由此处的签名确定。
 // 返回 nullptr 表示成功；否则 INIT/OFFLINE/NO_DATA/STALE。
 /**
  * @brief 读取最新原始姿态和数据年龄，不进行地图航向标定。
@@ -14,7 +17,7 @@ bool H30UsbBegin();
  * @param ageMs 输出数据年龄(ms)。
  * @return nullptr 成功，否则为初始化、离线、缺数据或过期原因。
  */
-const char *H30UsbGetAttitude(H30Attitude &sample, uint32_t &ageMs);
+const char *H30UsbGetAttitude(H30Attitude &sample, uint32_t &ageMs);  // 声明接口 H30UsbGetAttitude，参数由此处的签名确定。
 
 // 仅在车体实际朝向被确认时调用。失败会清除旧参考，绝不延迟绑定未来样本。
 /**
@@ -23,34 +26,34 @@ const char *H30UsbGetAttitude(H30Attitude &sample, uint32_t &ageMs);
  * @param keepReferenceOnFailure true 时保留原参考，false 时清除原参考。
  * @return nullptr 成功，否则为不可标定原因。
  */
-const char *H30UsbCalibrateHeading(float mapHeading,bool keepReferenceOnFailure=false);
+const char *H30UsbCalibrateHeading(float mapHeading,bool keepReferenceOnFailure=false);  // 声明接口 H30UsbCalibrateHeading（H30UsbCalibrate航向），参数由此处的签名确定。
 // 地图航向，0~360 deg；与 currentPose 的理想航向独立，不驱动电机。
 // 除原数据错误外，还可能返回 NOT_CALIBRATED。
 /**
  * @brief 读取标定后的地图航向及数据年龄，不驱动电机；成功返回 nullptr。
  */
-const char *H30UsbGetHeading(float &heading, uint32_t &ageMs);
+const char *H30UsbGetHeading(float &heading, uint32_t &ageMs);  // 声明接口 H30UsbGetHeading（H30UsbGet航向），参数由此处的签名确定。
 // 标定并输出 REFERENCE 事件；调用时不持有 USB 临界区。
 /**
  * @brief 建立地图航向参考并输出REFERENCE事件；heading为已确认的车体航向(deg)。
  */
-void CalibrateH30MapHeading(float heading);
+void CalibrateH30MapHeading(float heading);  // 声明接口 CalibrateH30MapHeading（CalibrateH30Map航向），参数由此处的签名确定。
 // 一致快照：采样时间与参考代次可用于闭环新鲜度及重标定检查。
 /**
  * @brief 读取同一快照中的地图航向、采样毫秒数和参考代次，供闭环判断新鲜度及重标定。
  */
-const char *H30UsbGetHeadingSnapshot(float &heading,uint32_t &sampleMs,uint32_t &referenceVersion);
+const char *H30UsbGetHeadingSnapshot(float &heading,uint32_t &sampleMs,uint32_t &referenceVersion);  // 声明接口 H30UsbGetHeadingSnapshot（H30UsbGet航向Snapshot），参数由此处的签名确定。
 // 同一帧的完整惯性数据与地图航向；停稳确认必须具备加速度和角速度。
 /**
  * @brief 读取同一帧完整惯性数据、地图航向及参考代次；停稳检查需要加速度和角速度字段。
  */
-const char *H30UsbGetMotionSnapshot(H30Attitude &sample,float &heading,uint32_t &referenceVersion);
+const char *H30UsbGetMotionSnapshot(H30Attitude &sample,float &heading,uint32_t &referenceVersion);  // 声明接口 H30UsbGetMotionSnapshot，参数由此处的签名确定。
 
 /** @brief 初始化后静置500ms，再采集3秒近静止Yaw，剔除离群值后求圆周平均；采集不阻塞。 */
-void H30UsbBeginHeadingAverage();
+void H30UsbBeginHeadingAverage();  // 声明接口 H30UsbBeginHeadingAverage（H30UsbBegin航向Average），参数由此处的签名确定。
 /** @brief 启停区确定后，将先前的Yaw平均值绑定到地图航向。 */
-void H30UsbBindHeadingAverage(float mapHeading);
+void H30UsbBindHeadingAverage(float mapHeading);  // 声明接口 H30UsbBindHeadingAverage（H30UsbBind航向Average），参数由此处的签名确定。
 /** @brief 推进开局标定：0采集中，1成功，-1无采样或IMU不可用；不延长窗口。 */
-int H30UsbPollHeadingAverage();
+int H30UsbPollHeadingAverage();  // 声明接口 H30UsbPollHeadingAverage（H30UsbPoll航向Average），参数由此处的签名确定。
 /** @brief 查询开局静置或采集窗口是否仍在运行，期间不执行开局斜移。 */
-bool H30UsbHeadingAverageActive();
+bool H30UsbHeadingAverageActive();  // 声明接口 H30UsbHeadingAverageActive（H30Usb航向Average活跃），参数由此处的签名确定。

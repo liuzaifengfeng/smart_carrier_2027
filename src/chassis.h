@@ -1,39 +1,42 @@
-#ifndef CHASSIS_H
-#define CHASSIS_H
+// 集中声明底盘、机械臂的标定常量与运动接口。
+// 修改轮径、轴比例或速度参数时，需沿调用点核对毫米、角度、转速和脉冲之间的换算。
 
-#include <Arduino.h>
-#include "turret_motor.h"
-#include "position_move_timing.h"
-#include <initializer_list>
-#include "vision_alignment.h"
+#ifndef CHASSIS_H  // 宏 CHASSIS_H 未定义时纳入此分支。
+#define CHASSIS_H  // 为后续文本展开定义宏 CHASSIS_H。
+
+#include <Arduino.h>  // 引入 Arduino.h 中的声明和定义。
+#include "turret_motor.h"  // 引入 turret_motor.h 中的声明和定义。
+#include "position_move_timing.h"  // 引入 position_move_timing.h 中的声明和定义。
+#include <initializer_list>  // 引入 initializer_list 中的声明和定义。
+#include "vision_alignment.h"  // 引入 vision_alignment.h 中的声明和定义。
 
 constexpr float ARM_HEIGHT_LIMIT_MM = 175.0f; // Maximum arm height (mm).
-constexpr float ARM_CLAW_MAX_DEG = 91.0f;
-constexpr float LimitArmClawAngle(float angle) {
+constexpr float ARM_CLAW_MAX_DEG = 91.0f;  // 将 91.0f 写入或初始化 ARM_CLAW_MAX_DEG（机械臂夹爪最大角度）。
+constexpr float LimitArmClawAngle(float angle) {  // 定义函数或成员 的入口 LimitArmClawAngle（限值机械臂夹爪角度），参数由此处的签名确定。
     // 负向等效角（如 -240° = 120°）也必须服从张爪上限。
-    return angle > ARM_CLAW_MAX_DEG || (angle < -180.0f && angle + 360.0f > ARM_CLAW_MAX_DEG)
-        ? ARM_CLAW_MAX_DEG : angle;
-}
+    return angle > ARM_CLAW_MAX_DEG || (angle < -180.0f && angle + 360.0f > ARM_CLAW_MAX_DEG)  // 结束当前函数并返回 angle > ARM_CLAW_MAX_DEG || (angle < -180.0f && angle …。
+        ? ARM_CLAW_MAX_DEG : angle;  // 续写上一行表达式的条件取值分支。
+}  // 结束此函数或控制块。
 // 总任务超时后锁止 MoveArm 的后续发令，上电/重新进入 Release 才清除。
-extern volatile bool taskMotionAborted;
+extern volatile bool taskMotionAborted;  // 声明外部定义 volatile bool taskMotionAborted，供本编译单元引用。
 // 转盘真实多圈角度边界，由线缆可运动范围决定。
-constexpr float TURRET_CABLE_MIN_DEG = -150.0f;
-constexpr float TURRET_CABLE_MAX_DEG = 360.0f;
+constexpr float TURRET_CABLE_MIN_DEG = -150.0f;  // 将 -150.0f 写入或初始化 TURRET_CABLE_MIN_DEG（转台CABLE最小角度）。
+constexpr float TURRET_CABLE_MAX_DEG = 360.0f;  // 将 360.0f 写入或初始化 TURRET_CABLE_MAX_DEG（转台CABLE最大角度）。
 
 // 机器人位姿结构体(世界坐标, 单位 mm / 度)
 // 注: 定位(如何获得真实位姿)方案待团队定, 本模块只维护运动原语与理想位姿
-struct RobotPose {
+struct RobotPose {  // 定义 RobotPose 的类型成员或作用域。
     float x;        // X (mm)
     float y;        // Y (mm)
     float theta;    // 航向角 (0-360, 度)
-};
+};  // 结束此类型定义。
 //机械臂位姿结构体(世界坐标, 单位 mm / 度)
-struct ArmPose {
+struct ArmPose {  // 定义 ArmPose（机械臂Pose） 的类型成员或作用域。
     float high;     // 高度 (mm)
     float length;      // 长度 (mm)
     float turret_angle;      // 转台角度 (度)
     float pawl_angle;      // 夹爪角度 (度)
-};
+};  // 结束此类型定义。
 
 extern RobotPose currentPose;   // 主控维护的"理想位姿"
 // 只读访问已生效的地图配置，供独立试跑规划使用。
@@ -41,7 +44,7 @@ extern RobotPose currentPose;   // 主控维护的"理想位姿"
  * @brief 按节点编号读取当前地图X/Y坐标(mm)，成功时写入x和y并返回true。
  */
 
-bool ChassisGetNodePosition(uint8_t node,float &x,float &y);
+bool ChassisGetNodePosition(uint8_t node,float &x,float &y);  // 声明接口 ChassisGetNodePosition（ChassisGet节点位置），参数由此处的签名确定。
 extern ArmPose currentArm;     // 升降/伸缩为最近下发的绝对目标，非驱动器实测位置。
 
 // 运动标定系数
@@ -58,7 +61,7 @@ extern float LENGTH_PULSE; // 伸缩机械臂 每毫米脉冲
 /**
  * @brief 按方向发送底盘速度命令；direction为前后左右及原地转向，speed单位RPM，stop=true停车。
  */
-void MovePose(int direction, float speed, bool stop);
+void MovePose(int direction, float speed, bool stop);  // 声明接口 MovePose，参数由此处的签名确定。
 
 // @brief 位置模式移动到位.
 // @param x 目标 X 位移 (mm)
@@ -68,7 +71,7 @@ void MovePose(int direction, float speed, bool stop);
 /**
  * @brief 使用旧位姿接口执行相对或绝对目标移动；x/y单位mm，theta单位deg。
  */
-void GotoPose(float x, float y, float theta, bool isRelative);
+void GotoPose(float x, float y, float theta, bool isRelative);  // 声明接口 GotoPose，参数由此处的签名确定。
 
 /**
  * @brief 相对位置移动：四轮位置命令同步启动，平移与旋转同时完成。
@@ -82,34 +85,34 @@ void GotoPose(float x, float y, float theta, bool isRelative);
  * 契约：位移、转角、速度和标定系数有效，由输入入口负责校验。
  * @return true 命令已下发并等待结束（开环估计），false 被取消或请求无法用单段圆弧表示。
  */
-bool MovePosition(float x,float y,float theta,float speed,bool (*shouldStop)()=nullptr,
-    uint8_t acceleration=POSITION_MOVE_DEFAULT_ACCELERATION);
+bool MovePosition(float x,float y,float theta,float speed,bool (*shouldStop)()=nullptr,  // 定义函数或成员 MovePosition（Move位置），参数由此处的签名确定。
+    uint8_t acceleration=POSITION_MOVE_DEFAULT_ACCELERATION);  // 将 POSITION_MOVE_DEFAULT_ACCELERATION) 写入或初始化 acceleration（加速度）。
 /**
  * @brief 初始化四轮同步相对位置动作，不等待估算行程结束；由TickPositionMove推进。
  * @return true 准备成功，false 请求无法执行。
  */
-bool BeginPositionMove(float x,float y,float theta,float speed,uint8_t acceleration=POSITION_MOVE_DEFAULT_ACCELERATION);
+bool BeginPositionMove(float x,float y,float theta,float speed,uint8_t acceleration=POSITION_MOVE_DEFAULT_ACCELERATION);  // 声明接口 BeginPositionMove（Begin位置Move），参数由此处的签名确定。
 /**
  * @brief 检查相对位置动作的估算时间并推进结束处理，不代表实测到位。
  */
-void TickPositionMove();
+void TickPositionMove();  // 声明接口 TickPositionMove（轮询位置Move），参数由此处的签名确定。
 /**
  * @brief 判断相对位置动作是否仍处于等待结束的运行状态。
  */
-bool PositionMoveActive();
+bool PositionMoveActive();  // 声明接口 PositionMoveActive（位置Move活跃），参数由此处的签名确定。
 /**
  * @brief 停止当前相对位置移动并清除运行状态。
  */
-void CancelPositionMove();
+void CancelPositionMove();  // 声明接口 CancelPositionMove（Cancel位置Move），参数由此处的签名确定。
 // 扫码直行：用四轮编码器记录完整行程或提前停车后的实际行程。
 /**
  * @brief 同步执行扫码往返直行，用编码器记录完整或提前停车后的行程；distance单位mm，speed单位RPM。
  */
-bool MoveScanPosition(float distance,float speed,bool (*shouldStop)() = nullptr);
+bool MoveScanPosition(float distance,float speed,bool (*shouldStop)() = nullptr);  // 声明接口 MoveScanPosition（Move扫码位置），参数由此处的签名确定。
 /**
  * @brief 同步执行接近后降速扫码，距离单位mm，速度单位RPM；收到任务码回调为true时停车。
  */
-bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t searchRpm, bool (*received)());
+bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t searchRpm, bool (*received)());  // 声明接口 MoveScanApproach（Move扫码Approach），参数由此处的签名确定。
 
 /**
  * @brief 麦克纳姆轮全向速度控制。
@@ -122,18 +125,18 @@ bool MoveScanApproach(float approach,float search,uint16_t approachRpm,uint16_t 
  * @param rotationVelocity 旋转速度权重，正值与 GotoPose theta 正方向一致
  * @param speedRpm         最大轮速，范围 0~5000 RPM；0 表示停车
  */
-void OmniMove(float xVelocity, float yVelocity, float rotationVelocity, uint16_t speedRpm);
+void OmniMove(float xVelocity, float yVelocity, float rotationVelocity, uint16_t speedRpm);  // 声明接口 OmniMove，参数由此处的签名确定。
 
 // 清除连续对齐 PID 的积分/微分历史；不会自行发送停车命令。
-void ResetDiscAlignmentPid();
+void ResetDiscAlignmentPid();  // 声明接口 ResetDiscAlignmentPid（Reset圆盘AlignmentPID），参数由此处的签名确定。
 
 // 通用单帧 PID：角差由调用方选择来源（DISC用H30实测-目标，其余用视觉）；true只代表这一帧进入死区。
-bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);
+bool AlignToVisionContinuous(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);  // 声明接口 AlignToVisionContinuous（AlignTo视觉Continuous），参数由此处的签名确定。
 
 // 非阻塞等待：仅在新帧到达时调用，同时更新 PID；连续达标帧达到模式要求后返回 true。
 // 调用方应在启停、断流、反馈丢帧或无效反馈时调用 ResetAlignmentWait。
-bool WaitForAlignment(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);
-void ResetAlignmentWait();
+bool WaitForAlignment(VisionStartMode mode, float angleErrorDeg, float visualXError, float visualYError, float dtSeconds, uint16_t speedRpm = 80);  // 声明接口 WaitForAlignment，参数由此处的签名确定。
+void ResetAlignmentWait();  // 声明接口 ResetAlignmentWait，参数由此处的签名确定。
 
 // @brief 机械臂移动到位.
 // 升降/伸缩使用 EMM V5 绝对位置模式，以开机当前位置清零为原点；-1 跳过该轴。
@@ -143,18 +146,18 @@ void ResetAlignmentWait();
 // 串口和参数入口负责校验；-1 跳过对应轴。
 // slowLower 将升降轴转速减半，并使用慢降加速度档位。
 // turretAcceleration 使用张大头原生加速度档位（0~255，0表示不使用加减速）。
-constexpr uint8_t ARM_EXTENSION_ACCELERATION = 240;
-constexpr uint8_t ARM_SLOW_LOWER_ACCELERATION = 248;
-bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed,
-    uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, bool slowLower=false,
-    uint8_t lengthAcceleration=ARM_EXTENSION_ACCELERATION,
-    uint8_t slowLowerAcceleration=ARM_SLOW_LOWER_ACCELERATION);
+constexpr uint8_t ARM_EXTENSION_ACCELERATION = 240;  // 将 240 写入或初始化 ARM_EXTENSION_ACCELERATION（机械臂伸缩加速度）。
+constexpr uint8_t ARM_SLOW_LOWER_ACCELERATION = 248;  // 将 248 写入或初始化 ARM_SLOW_LOWER_ACCELERATION（机械臂SLOWLOWER加速度）。
+bool MoveArm(float high, float length, float turret_angle, float pawl_angle, float speed,  // 定义函数或成员 MoveArm（Move机械臂），参数由此处的签名确定。
+    uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, bool slowLower=false,  // 续列跨行签名或声明中的参数，类型与名称为 uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, b…。
+    uint8_t lengthAcceleration=ARM_EXTENSION_ACCELERATION,  // 续列跨行签名或声明中的参数，类型与名称为 uint8_t lengthAcceleration=ARM_EXTENSION_ACCELERATION。
+    uint8_t slowLowerAcceleration=ARM_SLOW_LOWER_ACCELERATION);  // 将 ARM_SLOW_LOWER_ACCELERATION) 写入或初始化 slowLowerAcceleration（slowLower加速度）。
 
 // 读取7号张大头转盘实际多圈角度并检查线缆范围；失败时不改写 angle，也不更新目标缓存。
 /**
  * @brief 读取7号张大头转盘实际多圈角度(deg)，同时沿用现有线缆范围检查；成功写入angle并返回true。
  */
-bool ReadArmTurretAngle(float &angle);
+bool ReadArmTurretAngle(float &angle);  // 声明接口 ReadArmTurretAngle（Read机械臂转台角度），参数由此处的签名确定。
 
 // 两个入口均保留多圈绝对角度；规划入口的转台 -1 表示实际 -1 度，普通入口表示跳过。
 // 其他三轴仍以 -1 跳过；速度、计时、保护和返回值含义与 MoveArm 相同。
@@ -163,9 +166,9 @@ bool ReadArmTurretAngle(float &angle);
  * @param turretAcceleration 张大头原生加速度档位（0~255）。
  * @return true 指令下发成功，不表示实测到位。
  */
-bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed,
-    uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, bool slowLower=false,
-    uint16_t turretRpm=TURRET_MOTOR_POSITION_RPM);
+bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_angle, float speed,  // 定义函数或成员 MoveArmPlanned（Move机械臂Planned），参数由此处的签名确定。
+    uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, bool slowLower=false,  // 续列跨行签名或声明中的参数，类型与名称为 uint8_t turretAcceleration=TURRET_ACCELERATION_FAST, b…。
+    uint16_t turretRpm=TURRET_MOTOR_POSITION_RPM);  // 将 TURRET_MOTOR_POSITION_RPM) 写入或初始化 turretRpm（转台转速）。
 
 /**
  * @brief 按0~24节点导航：全部路段位置模式，到节点停车转向，不漂移切弯。
@@ -188,16 +191,16 @@ bool MoveArmPlanned(float high, float length, float turret_angle, float pawl_ang
  * @param finalHeading 终点车头的场地角度，默认 NaN 不约束；有限角度归一化到 0~360 度
  * @return true 路径有效且全部运动指令已执行；false 参数或路径无效
  */
-constexpr uint8_t FIELD_GRID_SIZE = 5;
-constexpr uint8_t FIELD_NODE_COUNT = 25;
-constexpr size_t MAX_NODE_PATH_LENGTH = 25;
+constexpr uint8_t FIELD_GRID_SIZE = 5;  // 将 5 写入或初始化 FIELD_GRID_SIZE（场地GRID大小）。
+constexpr uint8_t FIELD_NODE_COUNT = 25;  // 将 25 写入或初始化 FIELD_NODE_COUNT（场地节点计数）。
+constexpr size_t MAX_NODE_PATH_LENGTH = 25;  // 将 25 写入或初始化 MAX_NODE_PATH_LENGTH（最大节点路径长度）。
 
-bool MoveNodePath(const uint8_t *path, size_t pathLength, float speedMmS = 1200, uint8_t acceleration = 0, float finalHeading = NAN);
+bool MoveNodePath(const uint8_t *path, size_t pathLength, float speedMmS = 1200, uint8_t acceleration = 0, float finalHeading = NAN);  // 声明接口 MoveNodePath（Move节点路径），参数由此处的签名确定。
 
 // 可直接写 MoveNodePath({0, 1, 8, 7})，节点数量由初始化列表自动传入。
-inline bool MoveNodePath(std::initializer_list<uint8_t> path, float speedMmS = 1200, uint8_t acceleration = 0, float finalHeading = NAN) {
-    return MoveNodePath(path.begin(), path.size(), speedMmS, acceleration, finalHeading);
-}
+inline bool MoveNodePath(std::initializer_list<uint8_t> path, float speedMmS = 1200, uint8_t acceleration = 0, float finalHeading = NAN) {  // 定义函数或成员 的入口 MoveNodePath（Move节点路径），参数由此处的签名确定。
+    return MoveNodePath(path.begin(), path.size(), speedMmS, acceleration, finalHeading);  // 结束当前函数并返回 MoveNodePath(path.begin(), path.size(), speedMmS, acce…。
+}  // 结束此初始化列表或局部作用域。
 
 
 

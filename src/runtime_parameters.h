@@ -1,36 +1,39 @@
-#pragma once
+// 运行参数注册及串口访问入口。
+// 注册项直接引用业务变量，参数可写与否由调用方传入。
 
-#include <Arduino.h>
+#pragma once  // 要求编译器在同一编译单元中只展开本头文件一次。
+
+#include <Arduino.h>  // 引入 Arduino.h 中的声明和定义。
 
 // 注册可调参数，不暴露 PID 积分历史等运行状态。
 // 数组显示编号从 1 开始，内部仍使用原数组下标。
 /**
  * @brief 将浮点参数引用注册到运行时参数表，供串口读取和修改；name为上位机显示名称。
  */
-void RegisterRuntimeFloat(const char *name, float &value, float minimum, float maximum);
+void RegisterRuntimeFloat(const char *name, float &value, float minimum, float maximum);  // 声明接口 RegisterRuntimeFloat，参数由此处的签名确定。
 /**
  * @brief 将无符号整型参数引用注册到运行时参数表，保留名称及可写范围信息。
  */
-void RegisterRuntimeUInt(const char *name, uint32_t &value, float minimum, float maximum);
+void RegisterRuntimeUInt(const char *name, uint32_t &value, float minimum, float maximum);  // 声明接口 RegisterRuntimeUInt，参数由此处的签名确定。
 /**
  * @brief 注册底盘运动、视觉PID、死区、节点地图和脉冲标定参数。
  */
-void RegisterChassisParameters();
+void RegisterChassisParameters();  // 声明接口 RegisterChassisParameters，参数由此处的签名确定。
 // 在参数表末尾追加角点专用 PID，保持已有编号。
 /**
  * @brief 在参数表末尾追加角点专用PID，保持此前参数编号顺序。
  */
-void RegisterCornerAlignmentParameters();
+void RegisterCornerAlignmentParameters();  // 声明接口 RegisterCornerAlignmentParameters，参数由此处的签名确定。
 // 启动时应用从 robot_parameters.json 编译进固件的默认值；失败时禁止开始动作。
 /**
  * @brief 应用由robot_parameters.json生成并编译进固件的默认值。
  * @return true 所有默认值应用成功，false 存在参数应用错误。
  */
-bool ApplyCompiledParameterDefaults();
+bool ApplyCompiledParameterDefaults();  // 声明接口 ApplyCompiledParameterDefaults，参数由此处的签名确定。
 // 调用方持有对齐互斥锁；仅在调试模式且停止对齐时允许写入。
 // fields = [动作,事务编号,可选参数...]；解析结构由串口接收层完成。
 /**
  * @brief 处理CFG参数读取、写入等串口动作；由串口层提供已解析字段和可写状态。
  * @return true 已处理对应请求，false 请求无法处理。
  */
-bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writable);
+bool HandleRuntimeParameters(const char *const *fields, size_t size, bool writable);  // 声明接口 HandleRuntimeParameters，参数由此处的签名确定。

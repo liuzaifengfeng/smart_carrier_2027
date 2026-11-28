@@ -1,6 +1,9 @@
+// 地图几何的宏展开输入。
+// 宏参数以毫米为单位，描述场地、车体和障碍矩形。固件头文件与 Python 预览共同读取这些条目。
+
 // Shared map geometry, millimetres. Python preview and firmware both read this file.
-FIELD_BOUNDS(2400, 300)
-FIELD_OBSTACLE(550, 1000, 550, 1000)
-FIELD_OBSTACLE(1400, 1850, 550, 1000)
-FIELD_OBSTACLE(550, 1000, 1400, 1850)
-FIELD_OBSTACLE(1400, 1850, 1400, 1850)
+FIELD_BOUNDS(2400, 300)  // 依次指定正方形场地边长与方形车体边长，单位毫米。
+FIELD_OBSTACLE(550, 1000, 550, 1000)  // 按 X 下界、X 上界、Y 下界、Y 上界登记一块障碍矩形，单位毫米。
+FIELD_OBSTACLE(1400, 1850, 550, 1000)  // 按 X 下界、X 上界、Y 下界、Y 上界登记一块障碍矩形，单位毫米。
+FIELD_OBSTACLE(550, 1000, 1400, 1850)  // 按 X 下界、X 上界、Y 下界、Y 上界登记一块障碍矩形，单位毫米。
+FIELD_OBSTACLE(1400, 1850, 1400, 1850)  // 按 X 下界、X 上界、Y 下界、Y 上界登记一块障碍矩形，单位毫米。

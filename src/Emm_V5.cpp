@@ -1,50 +1,54 @@
-#include "Emm_V5.h"
-#include "motor_bus.h"
-#include "turret_motor.h"
+// 张大头驱动器的串口封包层。
+// 每个函数按照命令号填充字节数组，多字节参数逐字节拆分，最后写入电机串口。
+// 同步标志决定命令是立即执行还是等待广播触发。
+
+#include "Emm_V5.h"  // 引入 Emm_V5.h 中的声明和定义。
+#include "motor_bus.h"  // 引入 motor_bus.h 中的声明和定义。
+#include "turret_motor.h"  // 引入 turret_motor.h 中的声明和定义。
 
 /**
   * @brief    初始化电机
   * @retval   无
   */
-void Emm_V5_Init(void)
-{
-  MotorBusInit();
-  MotorBusGuard transaction;
-  Serial1.begin(115200, SERIAL_8N1, SERIAL1_RXD_PIN, SERIAL1_TXD_PIN);
-  delay(100);
-  Emm_V5_Reset_Clog_Pro(0);
-  delay(10);
+void Emm_V5_Init(void)  // 定义函数或成员 Emm_V5_Init，参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusInit();  // 调用 MotorBusInit（Motor总线Init），使用无参形式推进相应操作。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  Serial1.begin(115200, SERIAL_8N1, SERIAL1_RXD_PIN, SERIAL1_TXD_PIN);  // 调用 Serial1.begin，传入 115200, SERIAL_8N1, SERIAL1_RXD_PIN, SERIAL1_TXD_PIN。
+  delay(100);  // 调用 delay（延时），传入 100。
+  Emm_V5_Reset_Clog_Pro(0);  // 调用 Emm_V5_Reset_Clog_Pro，传入 0。
+  delay(10);  // 调用 delay（延时），传入 10。
   // 保留1~4号底盘清零；5号升降轴只使能，不执行回零；6号伸缩轴返回已保存的单圈零点。
-  for (uint8_t addr = 1; addr <= 4; ++addr) {
-    Emm_V5_Reset_CurPos_To_Zero(addr);
-    Serial1.flush();
-    delay(10);
-  }
-  Serial.println("[Emm_V5] startup position zero issued to chassis motors 1-4");
+  for (uint8_t addr = 1; addr <= 4; ++addr) {  // 按 uint8_t addr = 1; addr <= 4; ++addr 组织循环的初值、继续条件和步进。
+    Emm_V5_Reset_CurPos_To_Zero(addr);  // 调用 Emm_V5_Reset_CurPos_To_Zero（EmmV5ResetCur位置To零点），传入 addr。
+    Serial1.flush();  // 调用 Serial1.flush。
+    delay(10);  // 调用 delay（延时），传入 10。
+  }  // 结束此循环体。
+  Serial.println("[Emm_V5] startup position zero issued to chassis motors 1-4");  // 调用 Serial.println，传入 "[Emm_V5] startup position zero issued to chassis moto…。
   // 5号升降轴只使能，不触发回零。
-  Emm_V5_En_Control(5, true, false);
-  delay(10);
+  Emm_V5_En_Control(5, true, false);  // 调用 Emm_V5_En_Control，传入 5, true, false。
+  delay(10);  // 调用 delay（延时），传入 10。
   // 6号伸缩轴使能后触发单圈就近回零，不重新设置零点。
-  Emm_V5_En_Control(6, true, false);
-  delay(10);
-  Emm_V5_Origin_Trigger_Return(6, 0, false);
-  Serial1.flush();
-  delay(10);
+  Emm_V5_En_Control(6, true, false);  // 调用 Emm_V5_En_Control，传入 6, true, false。
+  delay(10);  // 调用 delay（延时），传入 10。
+  Emm_V5_Origin_Trigger_Return(6, 0, false);  // 调用 Emm_V5_Origin_Trigger_Return（EmmV5原点TriggerReturn），传入 6, 0, false。
+  Serial1.flush();  // 调用 Serial1.flush。
+  delay(10);  // 调用 delay（延时），传入 10。
   // 转盘只使能，保留驱动器当前位置，不自动旋转或清零。
-  Emm_V5_En_Control(TURRET_MOTOR_ID, true, false);
-  Serial1.flush();
-  Serial.println("[Emm_V5] initialized! UART initialized on SERIAL1");
-}
+  Emm_V5_En_Control(TURRET_MOTOR_ID, true, false);  // 调用 Emm_V5_En_Control，传入 TURRET_MOTOR_ID, true, false。
+  Serial1.flush();  // 调用 Serial1.flush。
+  Serial.println("[Emm_V5] initialized! UART initialized on SERIAL1");  // 调用 Serial.println，传入 "[Emm_V5] initialized! UART initialized on SERIAL1"。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    将当前位置清零
   * @param    addr  ：电机地址
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_Reset_CurPos_To_Zero(uint8_t addr)
-{
-  MotorBusGuard transaction;
-  uint8_t cmd[16] = {0};
+void Emm_V5_Reset_CurPos_To_Zero(uint8_t addr)  // 定义函数或成员 Emm_V5_Reset_CurPos_To_Zero（EmmV5ResetCur位置To零点），参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t cmd[16] = {0};  // 将 {0} 写入或初始化 cmd[16]。
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -53,18 +57,18 @@ void Emm_V5_Reset_CurPos_To_Zero(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, 4);
-}
+  Serial1.write(cmd, 4);  // 调用 Serial1.write，传入 cmd, 4。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    解除堵转保护
   * @param    addr  ：电机地址
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_Reset_Clog_Pro(uint8_t addr)
-{
-  MotorBusGuard transaction;
-  uint8_t cmd[16] = {0};
+void Emm_V5_Reset_Clog_Pro(uint8_t addr)  // 定义函数或成员 Emm_V5_Reset_Clog_Pro，参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t cmd[16] = {0};  // 将 {0} 写入或初始化 cmd[16]。
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -73,8 +77,8 @@ void Emm_V5_Reset_Clog_Pro(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, 4);
-}
+  Serial1.write(cmd, 4);  // 调用 Serial1.write，传入 cmd, 4。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    读取系统参数
@@ -82,39 +86,39 @@ void Emm_V5_Reset_Clog_Pro(uint8_t addr)
   * @param    s     ：系统参数类型
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_Read_Sys_Params(uint8_t addr, SysParams_t s)
-{
-  MotorBusGuard transaction;
-  uint8_t i = 0;
-  uint8_t cmd[16] = {0};
+void Emm_V5_Read_Sys_Params(uint8_t addr, SysParams_t s)  // 定义函数或成员 Emm_V5_Read_Sys_Params，参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t i = 0;  // 将 0 写入或初始化 i。
+  uint8_t cmd[16] = {0};  // 将 {0} 写入或初始化 cmd[16]。
   
   // 装载命令
   cmd[i] = addr; ++i;                   // 地址
 
   switch(s)                             // 功能码
-  {
-    case S_VER  : cmd[i] = 0x1F; ++i; break;
-    case S_RL   : cmd[i] = 0x20; ++i; break;
-    case S_PID  : cmd[i] = 0x21; ++i; break;
-    case S_VBUS : cmd[i] = 0x24; ++i; break;
-    case S_CPHA : cmd[i] = 0x27; ++i; break;
-    case S_ENCL : cmd[i] = 0x31; ++i; break;
-    case S_TPOS : cmd[i] = 0x33; ++i; break;
-    case S_VEL  : cmd[i] = 0x35; ++i; break;
-    case S_CPOS : cmd[i] = 0x36; ++i; break;
-    case S_PERR : cmd[i] = 0x37; ++i; break;
-    case S_FLAG : cmd[i] = 0x3A; ++i; break;
-    case S_ORG  : cmd[i] = 0x3B; ++i; break;
-    case S_Conf : cmd[i] = 0x42; ++i; cmd[i] = 0x6C; ++i; break;
-    case S_State: cmd[i] = 0x43; ++i; cmd[i] = 0x7A; ++i; break;
-    default: break;
-  }
+  {  // 为当前列表或跨行表达式提供这一项 {。
+    case S_VER  : cmd[i] = 0x1F; ++i; break;  // 当前值匹配 S_VER 时从这里执行。
+    case S_RL   : cmd[i] = 0x20; ++i; break;  // 当前值匹配 S_RL 时从这里执行。
+    case S_PID  : cmd[i] = 0x21; ++i; break;  // 当前值匹配 S_PID 时从这里执行。
+    case S_VBUS : cmd[i] = 0x24; ++i; break;  // 当前值匹配 S_VBUS 时从这里执行。
+    case S_CPHA : cmd[i] = 0x27; ++i; break;  // 当前值匹配 S_CPHA 时从这里执行。
+    case S_ENCL : cmd[i] = 0x31; ++i; break;  // 当前值匹配 S_ENCL 时从这里执行。
+    case S_TPOS : cmd[i] = 0x33; ++i; break;  // 当前值匹配 S_TPOS 时从这里执行。
+    case S_VEL  : cmd[i] = 0x35; ++i; break;  // 当前值匹配 S_VEL 时从这里执行。
+    case S_CPOS : cmd[i] = 0x36; ++i; break;  // 当前值匹配 S_CPOS 时从这里执行。
+    case S_PERR : cmd[i] = 0x37; ++i; break;  // 当前值匹配 S_PERR 时从这里执行。
+    case S_FLAG : cmd[i] = 0x3A; ++i; break;  // 当前值匹配 S_FLAG 时从这里执行。
+    case S_ORG  : cmd[i] = 0x3B; ++i; break;  // 当前值匹配 S_ORG 时从这里执行。
+    case S_Conf : cmd[i] = 0x42; ++i; cmd[i] = 0x6C; ++i; break;  // 当前值匹配 S_Conf 时从这里执行。
+    case S_State: cmd[i] = 0x43; ++i; cmd[i] = 0x7A; ++i; break;  // 当前值匹配 S_State 时从这里执行。
+    default: break;  // 没有匹配的 case 时走此默认分支。
+  }  // 结束此函数或控制块。
 
   cmd[i] = 0x6B; ++i;                   // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, i);
-}
+  Serial1.write(cmd, i);  // 调用 Serial1.write，传入 cmd, i。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    修改开环/闭环控制模式
@@ -123,10 +127,10 @@ void Emm_V5_Read_Sys_Params(uint8_t addr, SysParams_t s)
   * @param    ctrl_mode：控制模式（对应屏幕上的P_Pul菜单），0是关闭脉冲输入引脚，1是开环模式，2是闭环模式，3是让En端口复用为多圈限位开关输入引脚，Dir端口复用为到位输出高电平功能
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_Modify_Ctrl_Mode(uint8_t addr, bool svF, uint8_t ctrl_mode)
-{
-  MotorBusGuard transaction;
-  uint8_t cmd[16] = {0};
+void Emm_V5_Modify_Ctrl_Mode(uint8_t addr, bool svF, uint8_t ctrl_mode)  // 定义函数或成员 Emm_V5_Modify_Ctrl_Mode（EmmV5ModifyCtrl模式），参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t cmd[16] = {0};  // 将 {0} 写入或初始化 cmd[16]。
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -137,8 +141,8 @@ void Emm_V5_Modify_Ctrl_Mode(uint8_t addr, bool svF, uint8_t ctrl_mode)
   cmd[5] =  0x6B;                       // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, 6);
-}
+  Serial1.write(cmd, 6);  // 调用 Serial1.write，传入 cmd, 6。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    使能信号控制
@@ -147,10 +151,10 @@ void Emm_V5_Modify_Ctrl_Mode(uint8_t addr, bool svF, uint8_t ctrl_mode)
   * @param    snF   ：多机同步标志 ，false为不启用，true为启用
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_En_Control(uint8_t addr, bool state, bool snF)
-{
-  MotorBusGuard transaction;
-  uint8_t cmd[16] = {0};
+void Emm_V5_En_Control(uint8_t addr, bool state, bool snF)  // 定义函数或成员 Emm_V5_En_Control，参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t cmd[16] = {0};  // 将 {0} 写入或初始化 cmd[16]。
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -161,27 +165,27 @@ void Emm_V5_En_Control(uint8_t addr, bool state, bool snF)
   cmd[5] =  0x6B;                       // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, 6);
-}
+  Serial1.write(cmd, 6);  // 调用 Serial1.write，传入 cmd, 6。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    底盘电机使能控制
   * @param    state ：使能状态     ，true为使能电机，false为关闭电机
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_En_Control_all(bool state){
-  MotorBusGuard transaction;
-  vTaskDelay(pdMS_TO_TICKS(10));
-  Emm_V5_En_Control(4, state, false);
-  vTaskDelay(pdMS_TO_TICKS(10));
-  Emm_V5_En_Control(1, state, false);
-  vTaskDelay(pdMS_TO_TICKS(10));
-  Emm_V5_En_Control(2, state, false);
-  vTaskDelay(pdMS_TO_TICKS(10));
-  Emm_V5_En_Control(3, state, false);
-  vTaskDelay(pdMS_TO_TICKS(10));
+void Emm_V5_En_Control_all(bool state){  // 定义函数或成员 的入口 Emm_V5_En_Control_all，参数由此处的签名确定。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  vTaskDelay(pdMS_TO_TICKS(10));  // 让当前 FreeRTOS 任务延时，等待期间调度其他任务。
+  Emm_V5_En_Control(4, state, false);  // 调用 Emm_V5_En_Control，传入 4, state, false。
+  vTaskDelay(pdMS_TO_TICKS(10));  // 让当前 FreeRTOS 任务延时，等待期间调度其他任务。
+  Emm_V5_En_Control(1, state, false);  // 调用 Emm_V5_En_Control，传入 1, state, false。
+  vTaskDelay(pdMS_TO_TICKS(10));  // 让当前 FreeRTOS 任务延时，等待期间调度其他任务。
+  Emm_V5_En_Control(2, state, false);  // 调用 Emm_V5_En_Control，传入 2, state, false。
+  vTaskDelay(pdMS_TO_TICKS(10));  // 让当前 FreeRTOS 任务延时，等待期间调度其他任务。
+  Emm_V5_En_Control(3, state, false);  // 调用 Emm_V5_En_Control，传入 3, state, false。
+  vTaskDelay(pdMS_TO_TICKS(10));  // 让当前 FreeRTOS 任务延时，等待期间调度其他任务。
 
-}
+}  // 结束此函数或控制块。
 
 /**
   * @brief    速度模式
@@ -192,10 +196,10 @@ void Emm_V5_En_Control_all(bool state){
   * @param    snF ：多机同步标志，false为不启用，true为启用
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_Vel_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, bool snF)
-{
-  MotorBusGuard transaction;
-  uint8_t cmd[16] = {0};
+void Emm_V5_Vel_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, bool snF)  // 定义函数或成员 Emm_V5_Vel_Control（EmmV5速度Control），参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t cmd[16] = {0};  // 将 {0} 写入或初始化 cmd[16]。
 
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -208,8 +212,8 @@ void Emm_V5_Vel_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, bo
   cmd[7] =  0x6B;                       // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, 8);
-}
+  Serial1.write(cmd, 8);  // 调用 Serial1.write，传入 cmd, 8。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    位置模式
@@ -222,10 +226,10 @@ void Emm_V5_Vel_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, bo
   * @param    snF ：多机同步标志 ，false为不启用，true为启用
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_Pos_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, uint32_t clk, bool raF, bool snF)
-{
-  MotorBusGuard transaction;
-  uint8_t cmd[16] = {0};
+void Emm_V5_Pos_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, uint32_t clk, bool raF, bool snF)  // 定义函数或成员 Emm_V5_Pos_Control（EmmV5位置Control），参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t cmd[16] = {0};  // 将 {0} 写入或初始化 cmd[16]。
 
   // 装载命令
   cmd[0]  =  addr;                      // 地址
@@ -243,8 +247,8 @@ void Emm_V5_Pos_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, ui
   cmd[12] =  0x6B;                      // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, 13);
-}
+  Serial1.write(cmd, 13);  // 调用 Serial1.write，传入 cmd, 13。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    立即停止（所有控制模式都通用）
@@ -252,10 +256,10 @@ void Emm_V5_Pos_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, ui
   * @param    snF   ：多机同步标志，false为不启用，true为启用
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_Stop_Now(uint8_t addr, bool snF)
-{
-  MotorBusGuard transaction;
-  uint8_t cmd[16] = {0};
+void Emm_V5_Stop_Now(uint8_t addr, bool snF)  // 定义函数或成员 Emm_V5_Stop_Now（EmmV5停止Now），参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t cmd[16] = {0};  // 将 {0} 写入或初始化 cmd[16]。
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -265,18 +269,18 @@ void Emm_V5_Stop_Now(uint8_t addr, bool snF)
   cmd[4] =  0x6B;                       // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, 5);
-}
+  Serial1.write(cmd, 5);  // 调用 Serial1.write，传入 cmd, 5。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    多机同步运动
   * @param    addr  ：电机地址
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_Synchronous_motion(uint8_t addr)
-{
-  MotorBusGuard transaction;
-  uint8_t cmd[16] = {0};
+void Emm_V5_Synchronous_motion(uint8_t addr)  // 定义函数或成员 Emm_V5_Synchronous_motion，参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t cmd[16] = {0};  // 将 {0} 写入或初始化 cmd[16]。
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -285,8 +289,8 @@ void Emm_V5_Synchronous_motion(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, 4);
-}
+  Serial1.write(cmd, 4);  // 调用 Serial1.write，传入 cmd, 4。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    设置单圈回零的零点位置
@@ -294,10 +298,10 @@ void Emm_V5_Synchronous_motion(uint8_t addr)
   * @param    svF   ：是否存储标志，false为不存储，true为存储
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_Origin_Set_O(uint8_t addr, bool svF)
-{
-  MotorBusGuard transaction;
-  uint8_t cmd[16] = {0};
+void Emm_V5_Origin_Set_O(uint8_t addr, bool svF)  // 定义函数或成员 Emm_V5_Origin_Set_O（EmmV5原点SetO），参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t cmd[16] = {0};  // 将 {0} 写入或初始化 cmd[16]。
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -307,8 +311,8 @@ void Emm_V5_Origin_Set_O(uint8_t addr, bool svF)
   cmd[4] =  0x6B;                       // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, 5);
-}
+  Serial1.write(cmd, 5);  // 调用 Serial1.write，传入 cmd, 5。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    修改回零参数
@@ -324,10 +328,10 @@ void Emm_V5_Origin_Set_O(uint8_t addr, bool svF)
   * @param    potF   ：上电自动触发回零，false为不使能，true为使能
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_Origin_Modify_Params(uint8_t addr, bool svF, uint8_t o_mode, uint8_t o_dir, uint16_t o_vel, uint32_t o_tm, uint16_t sl_vel, uint16_t sl_ma, uint16_t sl_ms, bool potF)
-{
-  MotorBusGuard transaction;
-  uint8_t cmd[32] = {0};
+void Emm_V5_Origin_Modify_Params(uint8_t addr, bool svF, uint8_t o_mode, uint8_t o_dir, uint16_t o_vel, uint32_t o_tm, uint16_t sl_vel, uint16_t sl_ma, uint16_t sl_ms, bool potF)  // 定义函数或成员 Emm_V5_Origin_Modify_Params（EmmV5原点ModifyParams），参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t cmd[32] = {0};  // 将 {0} 写入或初始化 cmd[32]。
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -352,8 +356,8 @@ void Emm_V5_Origin_Modify_Params(uint8_t addr, bool svF, uint8_t o_mode, uint8_t
   cmd[19] =  0x6B;                      // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, 20);
-}
+  Serial1.write(cmd, 20);  // 调用 Serial1.write，传入 cmd, 20。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    触发回零
@@ -362,10 +366,10 @@ void Emm_V5_Origin_Modify_Params(uint8_t addr, bool svF, uint8_t o_mode, uint8_t
   * @param    snF   ：多机同步标志，false为不启用，true为启用
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_Origin_Trigger_Return(uint8_t addr, uint8_t o_mode, bool snF)
-{
-  MotorBusGuard transaction;
-  uint8_t cmd[16] = {0};
+void Emm_V5_Origin_Trigger_Return(uint8_t addr, uint8_t o_mode, bool snF)  // 定义函数或成员 Emm_V5_Origin_Trigger_Return（EmmV5原点TriggerReturn），参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t cmd[16] = {0};  // 将 {0} 写入或初始化 cmd[16]。
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -375,18 +379,18 @@ void Emm_V5_Origin_Trigger_Return(uint8_t addr, uint8_t o_mode, bool snF)
   cmd[4] =  0x6B;                       // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, 5);
-}
+  Serial1.write(cmd, 5);  // 调用 Serial1.write，传入 cmd, 5。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    强制中断并退出回零
   * @param    addr  ：电机地址
   * @retval   地址 + 功能码 + 命令状态 + 校验字节
   */
-void Emm_V5_Origin_Interrupt(uint8_t addr)
-{
-  MotorBusGuard transaction;
-  uint8_t cmd[16] = {0};
+void Emm_V5_Origin_Interrupt(uint8_t addr)  // 定义函数或成员 Emm_V5_Origin_Interrupt（EmmV5原点Interrupt），参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  uint8_t cmd[16] = {0};  // 将 {0} 写入或初始化 cmd[16]。
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -395,8 +399,8 @@ void Emm_V5_Origin_Interrupt(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-  Serial1.write(cmd, 4);
-}
+  Serial1.write(cmd, 4);  // 调用 Serial1.write，传入 cmd, 4。
+}  // 结束此函数或控制块。
 
 /**
   * @brief    接收数据
@@ -404,42 +408,42 @@ void Emm_V5_Origin_Interrupt(uint8_t addr)
   * @param    rxCount : 接收到的数据长度
   * @retval   无
   */
-void Emm_V5_Receive_Data(uint8_t *rxCmd, uint8_t *rxCount)
-{
-  MotorBusGuard transaction;
-  int i = 0;
+void Emm_V5_Receive_Data(uint8_t *rxCmd, uint8_t *rxCount)  // 定义函数或成员 Emm_V5_Receive_Data（EmmV5Receive数据），参数由此处的签名确定。
+{  // 为当前列表或跨行表达式提供这一项 {。
+  MotorBusGuard transaction;  // 声明 transaction，类型和可用范围由所在声明决定。
+  int i = 0;  // 将 0 写入或初始化 i。
   unsigned long lTime;                    // 上一时刻的时间
   unsigned long cTime;                    // 当前时刻的时间
 
   // 记录当前的时间
-  lTime = cTime = millis();
+  lTime = cTime = millis();  // 将 cTime = millis() 写入或初始化 lTime（l时间）。
 
   // 开始接收数据
-  for(int j = 0; j < 100; j++)
-  {
+  for(int j = 0; j < 100; j++)  // 按 int j = 0; j < 100; j++ 组织循环的初值、继续条件和步进。
+  {  // 为当前列表或跨行表达式提供这一项 {。
     if(Serial1.available() > 0)            // 串口有数据进来
-    {
+    {  // 为当前列表或跨行表达式提供这一项 {。
       if(i <= 128)                        // 防止数组溢出，该值需要小于数组的长度
-      {
+      {  // 为当前列表或跨行表达式提供这一项 {。
         rxCmd[i++] = Serial1.read();      // 电机总线，不能误读上位机Serial0
 
         lTime = millis();                 // 更新上一时刻的时间
-      }
+      }  // 结束此条件分支。
       //break; 
-    }
+    }  // 结束此条件分支。
     else                                  // 串口有没有数据
-    {
+    {  // 为当前列表或跨行表达式提供这一项 {。
       cTime = millis();                   // 获取当前时刻的时间
 
       if((int)(cTime - lTime) > 10)      // 10毫秒内串口没有数据进来，就判定一帧数据接收结束
-      {
+      {  // 为当前列表或跨行表达式提供这一项 {。
         *rxCount = i;                     // 数据长度
         
         break;                            // 退出while(1)循环
-      }
-    }
-    vTaskDelay(pdMS_TO_TICKS(1));
-   }
-   Serial.println("Receive Data : " + String(*rxCount) + " bytes");
+      }  // 结束此条件分支。
+    }  // 结束此条件分支。
+    vTaskDelay(pdMS_TO_TICKS(1));  // 让当前 FreeRTOS 任务延时，等待期间调度其他任务。
+   }  // 结束此循环体。
+   Serial.println("Receive Data : " + String(*rxCount) + " bytes");  // 调用 Serial.println，传入 "Receive Data : " + String(*rxCount) + " bytes"。
 
-}
+}  // 结束此函数或控制块。
