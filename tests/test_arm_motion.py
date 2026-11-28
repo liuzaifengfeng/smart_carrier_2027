@@ -8,7 +8,8 @@ def build_arm_motion():
     cache.mkdir(parents=True, exist_ok=True)
     runtime = (ROOT / "src/runtime_parameters.cpp").read_text(encoding="utf-8")
     helpers = runtime[runtime.index("void registerTransferDelays("):runtime.index("// 所有搬运速度")]
-    tail = runtime[runtime.index("    registerMaterialDelays();"):runtime.index("\n}\n\nbool parseUnsigned")]
+    tail_start = runtime.index("    registerMaterialDelays();")
+    tail = runtime[tail_start:runtime.index("\n}", tail_start)]
     (cache / "delay_registry_actual.inc").write_text(helpers + "\nvoid registrationTail(){\n" + tail + "\n}\n", encoding="utf-8")
     return build_native("arm", ["tests/arm_motion_native.cpp", "src/arm_motion.cpp", "src/material_transfer.cpp"])
 
@@ -17,6 +18,9 @@ class ArmMotionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.binary = build_arm_motion()
+
+    def test_black_material_height_offsets(self):
+        run_native(self.binary, "black")
 
     def test_nine_forward_groups_and_three_heights(self):
         run_native(self.binary, "forward")

@@ -67,7 +67,7 @@ void above(Program &p,const MaterialStationPose &pose,float claw,const MaterialA
  * @brief 构建到位、下降、夹紧、抬升及可选缩回的取料序列；retract和together选择缩回衔接方式。
  */
 void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelays &d,bool retract,bool together,const float *angle,  // 定义函数或成员 pick，参数由此处的签名确定。
-          uint8_t cargo=0,uint8_t extensionAcceleration=ARM_EXTENSION_ACCELERATION) {  // 将 0,uint8_t extensionAcceleration=ARM_EXTENSION_ACCELERA… 写入或初始化 cargo（货位）。
+          uint8_t color,uint8_t cargo=0,uint8_t extensionAcceleration=ARM_EXTENSION_ACCELERATION) {  // 将 0,uint8_t extensionAcceleration=ARM_EXTENSION_ACCELERA… 写入或初始化 cargo（货位）。
     // 来源不同会影响张爪角。
     // 先保存接近步骤的下标，above 展开多个步骤后再通过该下标设置第一步的伸缩加速度。
     const float openAngle=cargo?materialTransferLayout.cargoClawOpenAngle:materialTransferLayout.clawOpenAngle;  // 将 cargo?materialTransferLayout.cargoClawOpenAngle:materi… 写入或初始化 openAngle（open角度）。
@@ -75,7 +75,7 @@ void pick(Program &p,const MaterialStationPose &pose,const MaterialTransferDelay
     above(p,pose,openAngle,d.pickAbove,angle);  // 调用 above，传入 p,pose,openAngle,d.pickAbove,angle。
     p.steps[approach].lengthAcceleration=extensionAcceleration;  // 将 extensionAcceleration 写入或初始化 lengthAcceleration（长度加速度）。
     if(cargo)prepareTray(p,cargo,true);  // 当 cargo 成立时进入此分支，否则继续后续流程。
-    arm(p,"PICK_DESCEND",pose.high,-1,-1,-1,materialMotionSteps.pickDescendSpeed,d.pickDescendMs);  // 调用 arm（机械臂），传入 p,"PICK_DESCEND",pose.high,-1,-1,-1,materialMotionStep…。
+    arm(p,"PICK_DESCEND",MaterialPickHeight(pose.high,color),-1,-1,-1,materialMotionSteps.pickDescendSpeed,d.pickDescendMs);  // 调用 arm（机械臂），传入 p,"PICK_DESCEND",MaterialPickHeight(pose.high,color),-1,-1,-1,materialMotionStep…。
     arm(p,"PICK_GRIP",-1,-1,-1,materialTransferLayout.clawClosedAngle,materialMotionSteps.pickGripSpeed,d.pickGripMs,false,ARM_GRIP_HOLD_MS);  // 调用 arm（机械臂），传入 p,"PICK_GRIP",-1,-1,-1,materialTransferLayout.clawClos…。
     arm(p,"PICK_LIFT",materialTransferLayout.approachHeight,together?0:-1,-1,-1,materialMotionSteps.pickLiftSpeed,d.pickLiftMs);  // 调用 arm（机械臂），传入 p,"PICK_LIFT",materialTransferLayout.approachHeight,to…。
     if(retract&&!together) {  // 当 retract&&!together 成立时进入此分支，否则继续后续流程。
@@ -174,9 +174,13 @@ const char *transfer(const MotionRequest &r,Program &p) {  // 定义函数或成
         const auto &cargo=materialTransferLayout.cargo,&work=materialTransferLayout.workArea[works[i]-1];  // 将 materialTransferLayout.cargo,&work=materialTransferLay… 写入或初始化 cargo（货位）。
         const auto &d=retrieve?workAreaToCargoDelays[works[i]-1][cargos[i]-1]:cargoToWorkAreaDelays[cargos[i]-1][works[i]-1];  // 将 retrieve?workAreaToCargoDelays[works[i]-1][cargos[i]-1… 写入或初始化 d。
         const auto &source=retrieve?work:cargo,&destination=retrieve?cargo:work;  // 将 retrieve?work:cargo,&destination=retrieve?cargo:work 写入或初始化 source。
-        const float height=destination.high+(retrieve?0:(r.layer-1)*materialTransferLayout.secondLayerOffset);  // 将 destination.high+(retrieve?0:(r.layer-1)*materialTrans… 写入或初始化 height（高度）。
+        const uint8_t color=retrieve?(demo?MATERIAL_RED:single?r.color:r.colors[i])
+                                    :cargoPlatforms[cargos[i]-1].material;
+        const float height=!retrieve&&r.layer>1
+            ?MaterialStackHeight(destination.high+(r.layer-1)*materialTransferLayout.secondLayerOffset,color)
+            :destination.high;  // 将 destination.high+(retrieve?0:(r.layer-1)*materialTrans… 写入或初始化 height（高度）。
         prepareTray(p,cargos[i],false);  // 调用 prepareTray（prepare料盘），传入 p,cargos[i],false。
-        pick(p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i],retrieve?0:cargos[i],WORK_TRANSFER_EXTENSION_ACCELERATION);  // 调用 pick，传入 p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i]…。
+        pick(p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i],color,retrieve?0:cargos[i],WORK_TRANSFER_EXTENSION_ACCELERATION);  // 调用 pick，传入 p,source,d,!retrieve,retrieve,&selected.anglesDeg[2*i]…。
         place(p,destination,height,d,true,&selected.anglesDeg[2*i+1],!retrieve&&r.layer==1,  // 调用 place，传入 p,destination,height,d,true,&selected.anglesDeg[2*i+1]…。
               retrieve?0:works[i],retrieve?0:cargos[i],retrieve?cargos[i]:0,  // 为当前列表或跨行表达式提供这一项 retrieve?0:works[i],retrieve?0:cargos[i],retrieve?carg…。
               !retrieve&&r.ringCorrection,  // 为当前列表或跨行表达式提供这一项 !retrieve&&r.ringCorrection。
@@ -187,7 +191,7 @@ const char *transfer(const MotionRequest &r,Program &p) {  // 定义函数或成
         }  // 结束此条件分支。
         p.steps[p.count-1].materialEvent=retrieve?"WORK_PICK":"WORK_PLACE";  // 将 retrieve?"WORK_PICK":"WORK_PLACE" 写入或初始化 materialEvent（物料Event）。
         p.steps[p.count-1].materialPosition=works[i];  // 将 works[i] 写入或初始化 materialPosition（物料位置）。
-        commit(p,cargos[i],retrieve?(demo?MATERIAL_RED:single?r.color:r.colors[i]):MATERIAL_NONE);  // 调用 commit，传入 p,cargos[i],retrieve?(demo?MATERIAL_RED:single?r.color…。
+        commit(p,cargos[i],retrieve?color:MATERIAL_NONE);  // 调用 commit，传入 p,cargos[i],retrieve?(demo?MATERIAL_RED:single?r.color…。
     }  // 结束此循环体。
     return nullptr;  // 结束当前函数并返回 nullptr。
 }  // 结束此函数或控制块。
@@ -268,15 +272,17 @@ const char *BuildArmProgram(const MotionRequest &r,Program &p) {  // 定义函�
                 if(positionGrab) {  // 当 positionGrab 成立时进入此分支，否则继续后续流程。
                     const size_t approach=p.count;  // 将 p.count 写入或初始化 approach。
                     const float length=r.position==2?0:150,angle=r.position==1?71:r.position==2?90:102;  // 将 r.position==2?0:150,angle=r.position==1?71:r.position=… 写入或初始化 length（长度）。
-                    arm(p,"DISC_APPROACH",80,length,angle,80,armSpeed,350);  // 调用 arm（机械臂），传入 p,"DISC_APPROACH",80,length,angle,80,armSpeed,350。
-                    arm(p,"DISC_GRIP",80,length,angle,-8,armSpeed,400,false,ARM_GRIP_HOLD_MS);  // 调用 arm（机械臂），传入 p,"DISC_GRIP",80,length,angle,-8,armSpeed,400,false,AR…。
+                    const float height=MaterialPickHeight(80,color);
+                    arm(p,"DISC_APPROACH",height,length,angle,80,armSpeed,350);  // 调用 arm（机械臂），传入 p,"DISC_APPROACH",80,length,angle,80,armSpeed,350。
+                    arm(p,"DISC_GRIP",height,length,angle,-8,armSpeed,400,false,ARM_GRIP_HOLD_MS);  // 调用 arm（机械臂），传入 p,"DISC_GRIP",80,length,angle,-8,armSpeed,400,false,AR…。
                     arm(p,"DISC_LIFT",materialTransferLayout.approachHeight,0,-1,-1,armSpeed,commonMaterialDelays.pickLiftMs);  // 调用 arm（机械臂），传入 p,"DISC_LIFT",materialTransferLayout.approachHeight,0,…。
                     for(size_t step=approach;step<p.count;++step)p.steps[step].lengthAcceleration=245;  // 按 size_t step=approach;step<p.count;++step)p.steps[step]… 组织循环的初值、继续条件和步进。
-                } else if(r.position==4||r.kind==MotionKind::LOAD_ROUND)pick(p,materialTransferLayout.disc,commonMaterialDelays,false,true,nullptr);  // 仅在先前条件均不成立时，当 r.position==4||r.kind==MotionKind::LOAD_ROUND 成立时进入此分支，否则继续后续流程。
+                } else if(r.position==4||r.kind==MotionKind::LOAD_ROUND)pick(p,materialTransferLayout.disc,commonMaterialDelays,false,true,nullptr,color);  // 仅在先前条件均不成立时，当 r.position==4||r.kind==MotionKind::LOAD_ROUND 成立时进入此分支，否则继续后续流程。
                 else {  // 前一个判断不成立时执行此分支。
                     const auto &d=materialMotionSteps.discApproach;  // 将 materialMotionSteps.discApproach 写入或初始化 d。
-                    arm(p,"DISC_APPROACH",d.high,d.length,d.turretAngle,materialMotionSteps.discOpenAngle,materialMotionSteps.discApproachSpeed,materialAuxiliaryDelays.discApproachMs);  // 调用 arm（机械臂），传入 p,"DISC_APPROACH",d.high,d.length,d.turretAngle,materi…。
-                    arm(p,"DISC_GRIP",d.high,d.length,d.turretAngle,materialTransferLayout.clawClosedAngle,materialMotionSteps.discGripSpeed,commonMaterialDelays.pickGripMs,false,ARM_GRIP_HOLD_MS);  // 调用 arm（机械臂），传入 p,"DISC_GRIP",d.high,d.length,d.turretAngle,materialTr…。
+                    const float height=MaterialPickHeight(d.high,color);
+                    arm(p,"DISC_APPROACH",height,d.length,d.turretAngle,materialMotionSteps.discOpenAngle,materialMotionSteps.discApproachSpeed,materialAuxiliaryDelays.discApproachMs);  // 调用 arm（机械臂），传入 p,"DISC_APPROACH",d.high,d.length,d.turretAngle,materi…。
+                    arm(p,"DISC_GRIP",height,d.length,d.turretAngle,materialTransferLayout.clawClosedAngle,materialMotionSteps.discGripSpeed,commonMaterialDelays.pickGripMs,false,ARM_GRIP_HOLD_MS);  // 调用 arm（机械臂），传入 p,"DISC_GRIP",d.high,d.length,d.turretAngle,materialTr…。
                     arm(p,"DISC_LIFT",materialTransferLayout.approachHeight,0,-1,-1,materialMotionSteps.discLiftSpeed,commonMaterialDelays.pickLiftMs);  // 调用 arm（机械臂），传入 p,"DISC_LIFT",materialTransferLayout.approachHeight,0,…。
                 }  // 结束此条件分支。
             } else {  // 前一个判断不成立时执行此分支。

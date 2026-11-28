@@ -132,7 +132,7 @@
           "integer": false
         },
         "搬运/安全高度(mm)": {
-          "value": 155.0,
+          "value": 170.0,
           "description": "转向目标、抓取后抬升、放置后抬升时使用的高度。",
           "minimum": 0.0,
           "maximum": 175.0,

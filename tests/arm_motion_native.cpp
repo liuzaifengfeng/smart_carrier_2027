@@ -367,8 +367,50 @@ void registry() {
     assert(entries[250].name=="圆环纠偏/超时(ms)"&&entries[250].address==&ring::configuredTimeoutMs());
     assert(entries[250].minimum==0&&entries[250].integer&&ring::configuredTimeoutMs()==1100);
 }
+void blackMaterialHeights() {
+    motion::Program program;
+    auto height = [&](const char *name) {
+        for (size_t i = 0; i < program.count; ++i) {
+            if (!strcmp(program.steps[i].name, name)) return program.steps[i].high;
+        }
+        assert(false);
+        return 0.0f;
+    };
+    MotionRequest request;
+    request.kind = MotionKind::DISC_GRAB;
+    request.cargo = 1;
+    request.color = MATERIAL_BLACK;
+    for (uint8_t position : {0, 1, 2, 3, 4}) {
+        request.position = position;
+        assert(!BuildArmProgram(request, program));
+        if (position == 4) {
+            assert(height("PICK_DESCEND") == materialTransferLayout.disc.high + 5);
+        } else {
+            const float expected = (position ? 80 : materialMotionSteps.discApproach.high) + 5;
+            assert(height("DISC_APPROACH") == expected);
+            assert(height("DISC_GRIP") == expected);
+        }
+    }
+    request.kind = MotionKind::RETRIEVE;
+    request.work = 1;
+    assert(!BuildArmProgram(request, program));
+    assert(height("PICK_DESCEND") == materialTransferLayout.workArea[0].high + 5);
+
+    request.kind = MotionKind::TRANSFER;
+    request.debug = true;
+    request.layer = 2;
+    const float stackHeight = materialTransferLayout.workArea[0].high + materialTransferLayout.secondLayerOffset;
+    for (auto color : {MATERIAL_BLACK, MATERIAL_RED, MATERIAL_NONE}) {
+        cargoPlatforms[0].material = color;
+        assert(!BuildArmProgram(request, program));
+        assert(height("PICK_DESCEND") == materialTransferLayout.cargo.high + (color == MATERIAL_BLACK ? 5 : 0));
+        assert(height("PLACE_DESCEND") == stackHeight + (color == MATERIAL_BLACK ? 12 : 0));
+    }
+}
+
 int main(int argc,char **argv) {
     assert(argc==2);
+    if (!strcmp(argv[1], "black")) { blackMaterialHeights(); return 0; }
     if(!strcmp(argv[1],"ring")) {
         MotionRequest r;
         motion::Program p;

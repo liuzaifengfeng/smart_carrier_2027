@@ -191,12 +191,12 @@ bool moveAbove(const MaterialStationPose &pose, float clawAngle,  // 定义函�
 bool pickAt(const MaterialStationPose &pose,  // 定义函数或成员 pickAt，参数由此处的签名确定。
             const MaterialTransferDelays &delays = commonMaterialDelays,  // 将 commonMaterialDelays, 写入或初始化 delays。
             bool retractAfterGrip = false, bool retractWithLift = false,  // 续列跨行签名或声明中的参数，类型与名称为 bool retractAfterGrip = false, bool retractWithLift = …。
-            const float *plannedAngle = nullptr, uint8_t turretAcceleration = TURRET_ACCELERATION_FAST, uint8_t cargoCode = 0) {  // 将 nullptr, uint8_t turretAcceleration = TURRET_ACCELERAT… 写入或初始化 plannedAngle（planned角度）。
+            const float *plannedAngle = nullptr, uint8_t turretAcceleration = TURRET_ACCELERATION_FAST, uint8_t cargoCode = 0, uint8_t color = MATERIAL_NONE) {  // 将 nullptr, uint8_t turretAcceleration = TURRET_ACCELERAT… 写入或初始化 plannedAngle（planned角度）。
     // 载物台出料先抬升、等待后再缩回；工作区取回可同时抬升并缩回到 0。
     const float openAngle = cargoCode ? materialTransferLayout.cargoClawOpenAngle : materialTransferLayout.clawOpenAngle;  // 将 cargoCode ? materialTransferLayout.cargoClawOpenAngle … 写入或初始化 openAngle（open角度）。
     if (!moveAbove(pose, openAngle, delays.pickAbove, plannedAngle, turretAcceleration)) return false;  // 若 !moveAbove(pose, openAngle, delays.pickAbove, plannedA…，立即返回 false。
     if (cargoCode && !waitForTrayAngle(cargoTrayAngles[cargoCode - 1])) return false;  // 若 cargoCode && !waitForTrayAngle(cargoTrayAngles[cargoCo…，立即返回 false。
-    if (!MoveArm(pose.high, -1, -1, -1,  // 当 !MoveArm(pose.high, -1, -1, -1, 成立时进入此分支，否则继续后续流程。
+    if (!MoveArm(MaterialPickHeight(pose.high, color), -1, -1, -1,  // 当 !MoveArm(MaterialPickHeight(pose.high, color), -1, -1, -1, 成立时进入此分支，否则继续后续流程。
                  materialMotionSteps.pickDescendSpeed)) return false;  // 续写当前声明或运算，提供 materialMotionSteps.pickDescendSpeed)) return false;。
     waitForArm(delays.pickDescendMs);  // 调用 waitForArm（waitFor机械臂），传入 delays.pickDescendMs。
     if (!MoveArm(-1, -1, -1, materialTransferLayout.clawClosedAngle,  // 当 !MoveArm(-1, -1, -1, materialTransferLayout.clawClosed… 成立时进入此分支，否则继续后续流程。
@@ -320,7 +320,7 @@ bool waitForTrayAngle(float target) {  // 定义函数或成员 的入口 waitFo
 
 bool executeWorkTransfer(uint8_t cargoCode, const MaterialStationPose &source, const MaterialStationPose &destination,  // 定义函数或成员 executeWorkTransfer（execute工位Transfer），参数由此处的签名确定。
                          float height, const MaterialTransferDelays &delays, bool retrieve,  // 续列跨行签名或声明中的参数，类型与名称为 float height, const MaterialTransferDelays &delays, bo…。
-                         const float *angles = nullptr, uint8_t layer = 1) {  // 将 nullptr, uint8_t layer = 1) { 写入或初始化 angles。
+                         const float *angles = nullptr, uint8_t layer = 1, uint8_t retrievedColor = MATERIAL_NONE) {  // 将 nullptr, uint8_t layer = 1) { 写入或初始化 angles。
     TurretPathPlan plan;  // 声明 plan，类型和可用范围由所在声明决定。
     if (!angles) {  // 当 !angles 成立时进入此分支，否则继续后续流程。
         const float targets[] = {source.turretAngle, destination.turretAngle};  // 声明 targets，类型和可用范围由所在声明决定。
@@ -330,7 +330,8 @@ bool executeWorkTransfer(uint8_t cargoCode, const MaterialStationPose &source, c
     // 使用局部规划，不污染普通 MoveArm 和圆盘流程；每次旋转由底层再次回读校验。
     const uint8_t turretAcceleration=retrieve||layer!=1?TURRET_ACCELERATION_FAST:TURRET_ACCELERATION_SLOW;  // 将 retrieve||layer!=1?TURRET_ACCELERATION_FAST:TURRET_ACC… 写入或初始化 turretAcceleration（转台加速度）。
     startCargoTray(cargoCode);  // 调用 startCargoTray（起点货位料盘），传入 cargoCode。
-    return pickAt(source, delays, !retrieve, retrieve, angles, turretAcceleration, retrieve ? 0 : cargoCode)  // 结束当前函数并返回 pickAt(source, delays, !retrieve, retrieve, angles, tu…。
+    const uint8_t color = retrieve ? retrievedColor : cargoPlatforms[cargoCode - 1].material;
+    return pickAt(source, delays, !retrieve, retrieve, angles, turretAcceleration, retrieve ? 0 : cargoCode, color)  // 结束当前函数并返回 pickAt(source, delays, !retrieve, retrieve, angles, tu…。
         && placeAt(destination, height, delays, true, angles + 1, turretAcceleration, !retrieve,  // 继续上一行的组合条件，本行提供 && placeAt(destination, height, delays, true, angles + 1, turretAcceleration, !retrieve,。
                    retrieve ? 0 : cargoCode, retrieve ? cargoCode : 0);  // 续写当前声明或运算，提供 retrieve ? 0 : cargoCode, retrieve ? cargoCode : 0);。
 }  // 结束此初始化列表或局部作用域。
@@ -388,7 +389,7 @@ bool MoveDiscToCargo(uint8_t materialCode, uint8_t cargoCode) {  // 定义函数
     Serial.printf("[Material] disc -> cargo %u, material %u\n", cargoCode, materialCode);  // 调用 Serial.printf，传入 "[Material] disc -> cargo %u, material %u\n", cargoCod…。
     // 先从圆盘抓起，再放到指定载物台；完成后才更新载物台状态。
     startCargoTray(cargoCode);  // 调用 startCargoTray（起点货位料盘），传入 cargoCode。
-    if (!pickAt(materialTransferLayout.disc, commonMaterialDelays, false, true)  // 当 !pickAt(materialTransferLayout.disc, commonMaterialDel… 成立时进入此分支，否则继续后续流程。
+    if (!pickAt(materialTransferLayout.disc, commonMaterialDelays, false, true, nullptr, TURRET_ACCELERATION_FAST, 0, materialCode)  // 当 !pickAt(materialTransferLayout.disc, commonMaterialDel… 成立时进入此分支，否则继续后续流程。
             || !placeAt(destination, destination.high, commonMaterialDelays, true, nullptr,  // 继续上一行的组合条件，本行提供 || !placeAt(destination, destination.high, commonMaterialDelays, true, nullptr,。
                         TURRET_ACCELERATION_FAST, false, 0, cargoCode)) return false;  // 声明 0，类型和可用范围由所在声明决定。
     cargo.material = static_cast<MaterialType>(materialCode);  // 将 static_cast<MaterialType>(materialCode) 写入或初始化 cargo.material。
@@ -494,7 +495,7 @@ bool DemoStackCargoToWorkArea() {  // 定义函数或成员 的入口 DemoStackC
     float releaseHeights[MATERIAL_STATION_COUNT];  // 声明 releaseHeights，类型和可用范围由所在声明决定。
     for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {  // 按 uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i 组织循环的初值、继续条件和步进。
         const MaterialStationPose &destination = materialTransferLayout.workArea[i];  // 将 materialTransferLayout.workArea[i] 写入或初始化 destination。
-        releaseHeights[i] = destination.high + materialTransferLayout.secondLayerOffset;  // 将 destination.high + materialTransferLayout.secondLayerO… 写入或初始化 releaseHeights[i]。
+        releaseHeights[i] = MaterialStackHeight(destination.high + materialTransferLayout.secondLayerOffset, cargoPlatforms[i].material);  // 将 destination.high + materialTransferLayout.secondLayerO… 写入或初始化 releaseHeights[i]。
         // 三个位置全部检查通过后才抓料，避免执行到一半才发现高度越界。
         if (!validateAction(materialTransferLayout.cargo, destination)) return false;  // 若 !validateAction(materialTransferLayout.cargo, destinat…，立即返回 false。
         if (!isfinite(releaseHeights[i]) || releaseHeights[i] > ARM_HEIGHT_LIMIT_MM) {  // 当 !isfinite(releaseHeights[i]) || releaseHeights[i] > AR… 成立时进入此分支，否则继续后续流程。
@@ -527,7 +528,7 @@ bool DemoStackCargoToWorkArea3() {  // 定义函数或成员 的入口 DemoStack
     float releaseHeights[MATERIAL_STATION_COUNT];  // 声明 releaseHeights，类型和可用范围由所在声明决定。
     for (uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i) {  // 按 uint8_t i = 0; i < MATERIAL_STATION_COUNT; ++i 组织循环的初值、继续条件和步进。
         const MaterialStationPose &destination = materialTransferLayout.workArea[i];  // 将 materialTransferLayout.workArea[i] 写入或初始化 destination。
-        releaseHeights[i] = destination.high + materialTransferLayout.secondLayerOffset * 2;  // 将 destination.high + materialTransferLayout.secondLayerO… 写入或初始化 releaseHeights[i]。
+        releaseHeights[i] = MaterialStackHeight(destination.high + materialTransferLayout.secondLayerOffset * 2, cargoPlatforms[i].material);  // 将 destination.high + materialTransferLayout.secondLayerO… 写入或初始化 releaseHeights[i]。
         // 三个位置全部检查通过后才抓料，避免执行到一半才发现高度越界。
         if (!validateAction(materialTransferLayout.cargo, destination)) return false;  // 若 !validateAction(materialTransferLayout.cargo, destinat…，立即返回 false。
         if (!isfinite(releaseHeights[i]) || releaseHeights[i] > ARM_HEIGHT_LIMIT_MM) {  // 当 !isfinite(releaseHeights[i]) || releaseHeights[i] > AR… 成立时进入此分支，否则继续后续流程。
@@ -585,7 +586,7 @@ bool MoveWorkAreaToCargo(uint8_t materialCode, uint8_t workAreaCode, uint8_t car
                   workAreaCode, cargoCode, materialCode);  // 声明 cargoCode（货位Code），类型和可用范围由所在声明决定。
     // 取回：同时抬升、缩回 -> 等待 -> 缩回转向 -> 等待 -> 同时伸出、下降。
     const auto &delays = workAreaToCargoDelays[workAreaCode - 1][cargoCode - 1];  // 将 workAreaToCargoDelays[workAreaCode - 1][cargoCode - 1] 写入或初始化 delays。
-    if (!executeWorkTransfer(cargoCode, source, destination, destination.high, delays, true)) return false;  // 若 !executeWorkTransfer(cargoCode, source, destination, d…，立即返回 false。
+    if (!executeWorkTransfer(cargoCode, source, destination, destination.high, delays, true, nullptr, 1, materialCode)) return false;  // 若 !executeWorkTransfer(cargoCode, source, destination, d…，立即返回 false。
     // 抓取成功并放到车上以后，记录该载物台装入了什么颜色的物料。
     cargo.material = static_cast<MaterialType>(materialCode);  // 将 static_cast<MaterialType>(materialCode) 写入或初始化 cargo.material。
     return true;  // 结束当前函数并返回 true。
@@ -606,7 +607,7 @@ bool StackCargoToWorkArea(uint8_t cargoCode, uint8_t workAreaCode) {  // 定义�
         materialTransferLayout.workArea[workAreaCode - 1];  // 续写当前声明或运算，提供 materialTransferLayout.workArea[workAreaCode - 1];。
     // 第二层的放置高度 = 第一层标定高度 + 一个物料的码放高度。
     const float secondLayerHeight =  // 续写当前声明或运算，提供 const float secondLayerHeight =。
-        destination.high + materialTransferLayout.secondLayerOffset;  // 续写当前声明或运算，提供 destination.high + materialTransferLayout.secondLayerO…。
+        MaterialStackHeight(destination.high + materialTransferLayout.secondLayerOffset, cargo.material);  // 续写当前声明或运算，提供 destination.high + materialTransferLayout.secondLayerO…。
     if (!validateAction(source, destination)) return false;  // 若 !validateAction(source, destination)，立即返回 false。
     if (secondLayerHeight > ARM_HEIGHT_LIMIT_MM) {  // 当 secondLayerHeight > ARM_HEIGHT_LIMIT_MM 成立时进入此分支，否则继续后续流程。
         Serial.println("[Material] ERR: invalid second-layer height");  // 调用 Serial.println，传入 "[Material] ERR: invalid second-layer height"。
@@ -660,6 +661,9 @@ bool PlaceTaskCargoToWorkArea(  // 定义函数或成员 PlaceTaskCargoToWorkAre
         releaseHeights[i] = destination.high  // 将 destination.high 写入或初始化 releaseHeights[i]。
             + static_cast<float>(layer - 1) * materialTransferLayout.secondLayerOffset;  // 声明接口 float>，参数由此处的签名确定。
         if (!validateAction(source, destination)) return false;  // 若 !validateAction(source, destination)，立即返回 false。
+        if (layer > 1) {
+            releaseHeights[i] = MaterialStackHeight(releaseHeights[i], cargoPlatforms[CargoForGrabIndex(i) - 1].material);
+        }
         if (!isfinite(releaseHeights[i]) || releaseHeights[i] < 0.0f  // 当 !isfinite(releaseHeights[i]) || releaseHeights[i] < 0.… 成立时进入此分支，否则继续后续流程。
                 || releaseHeights[i] > ARM_HEIGHT_LIMIT_MM) {  // 继续上一行的组合条件，本行提供 || releaseHeights[i] > ARM_HEIGHT_LIMIT_MM) {。
             Serial.println("[Material] ERR: invalid stacking height");  // 调用 Serial.println，传入 "[Material] ERR: invalid stacking height"。
@@ -712,7 +716,7 @@ bool RetrieveRoundToCargo(  // 定义函数或成员 RetrieveRoundToCargo（Retr
         const auto &delays = workAreaToCargoDelays[positionCodes[i] - 1][cargoCode - 1];  // 将 workAreaToCargoDelays[positionCodes[i] - 1][cargoCode … 写入或初始化 delays。
         if (!executeWorkTransfer(cargoCode, materialTransferLayout.workArea[positionCodes[i] - 1], destination,  // 当 !executeWorkTransfer(cargoCode, materialTransferLayout… 成立时进入此分支，否则继续后续流程。
                                  destination.high, delays, true,  // 为当前列表或跨行表达式提供这一项 destination.high, delays, true。
-                                 &plan.anglesDeg[2 * i])) return false;  // 续写当前声明或运算，提供 &plan.anglesDeg[2 * i])) return false;。
+                                 &plan.anglesDeg[2 * i], 1, materialCodes[i])) return false;  // 续写当前声明或运算，提供 &plan.anglesDeg[2 * i])) return false;。
         cargoPlatforms[cargoCode - 1].material = static_cast<MaterialType>(materialCodes[i]);  // 将 static_cast<MaterialType>(materialCodes[i]) 写入或初始化 material（物料）。
     }  // 结束此循环体。
     return true;  // 结束当前函数并返回 true。
@@ -752,13 +756,13 @@ bool GrabDiscMaterial(uint8_t materialCode, uint8_t cargoCode, bool force) {  //
             || materialMotionSteps.discLiftHeight < 0  // 继续上一行的组合条件，本行提供 || materialMotionSteps.discLiftHeight < 0。
             || materialMotionSteps.discLiftHeight > ARM_HEIGHT_LIMIT_MM) return false;  // 继续上一行的组合条件，本行提供 || materialMotionSteps.discLiftHeight > ARM_HEIGHT_LIMIT_MM) return false;。
     startCargoTray(cargoCode);  // 调用 startCargoTray（起点货位料盘），传入 cargoCode。
-    if (!MoveArm(materialMotionSteps.discApproach.high,  // 当 !MoveArm(materialMotionSteps.discApproach.high, 成立时进入此分支，否则继续后续流程。
+    if (!MoveArm(MaterialPickHeight(materialMotionSteps.discApproach.high, materialCode),  // 当 !MoveArm(MaterialPickHeight(materialMotionSteps.discApproach.high, materialCode), 成立时进入此分支，否则继续后续流程。
                  materialMotionSteps.discApproach.length,  // 为当前列表或跨行表达式提供这一项 materialMotionSteps.discApproach.length。
                  materialMotionSteps.discApproach.turretAngle,  // 为当前列表或跨行表达式提供这一项 materialMotionSteps.discApproach.turretAngle。
                  materialMotionSteps.discOpenAngle,  // 为当前列表或跨行表达式提供这一项 materialMotionSteps.discOpenAngle。
                  materialMotionSteps.discApproachSpeed, 20)) return false;  // 续写当前声明或运算，提供 materialMotionSteps.discApproachSpeed, 20)) return fal…。
     waitForArm(materialAuxiliaryDelays.discApproachMs);  // 调用 waitForArm（waitFor机械臂），传入 materialAuxiliaryDelays.discApproachMs。
-    if (!MoveArm(materialMotionSteps.discApproach.high,  // 当 !MoveArm(materialMotionSteps.discApproach.high, 成立时进入此分支，否则继续后续流程。
+    if (!MoveArm(MaterialPickHeight(materialMotionSteps.discApproach.high, materialCode),  // 当 !MoveArm(MaterialPickHeight(materialMotionSteps.discApproach.high, materialCode), 成立时进入此分支，否则继续后续流程。
                  materialMotionSteps.discApproach.length,  // 为当前列表或跨行表达式提供这一项 materialMotionSteps.discApproach.length。
                  materialMotionSteps.discApproach.turretAngle,  // 为当前列表或跨行表达式提供这一项 materialMotionSteps.discApproach.turretAngle。
                  materialTransferLayout.clawClosedAngle,  // 为当前列表或跨行表达式提供这一项 materialTransferLayout.clawClosedAngle。

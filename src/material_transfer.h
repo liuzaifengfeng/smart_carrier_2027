@@ -29,6 +29,14 @@ struct CargoPlatform {  // 定义 CargoPlatform（货位Platform） 的类型成
 // ================= 单个工位的机械臂位姿 =================
 // 这里保存的是小车停稳后，机械臂相对于车体抓取或放置物料时的位置。
 // 夹爪的张开、夹紧角度不放在这里，由搬运流程统一控制。
+constexpr float MaterialPickHeight(float height, uint8_t color) {
+    return height + (color == MATERIAL_BLACK ? 5.0f : 0.0f);
+}
+
+constexpr float MaterialStackHeight(float height, uint8_t color) {
+    return height + (color == MATERIAL_BLACK ? 12.0f : 0.0f);
+}
+
 struct MaterialStationPose {  // 定义 MaterialStationPose（物料StationPose） 的类型成员或作用域。
     float high;          // 升降高度 (mm)
     float length;        // 伸出长度 (mm)
